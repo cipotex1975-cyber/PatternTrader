@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "pattern-trader"
@@ -54,6 +54,9 @@ dev = [
     "flake8>=7.0.0",
     "pre-commit>=3.6.0",
 ]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.black]
 line-length = 100

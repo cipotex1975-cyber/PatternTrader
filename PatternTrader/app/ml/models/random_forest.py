@@ -5,11 +5,21 @@ from typing import Any
 
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    average_precision_score,
+    confusion_matrix,
+)
 
 from app.core.logger import get_logger
 from app.ml.base import BaseMLModel
 from app.ml.factory import MLModelFactory
+
+
 
 logger = get_logger("RandomForestModel")
 
@@ -24,11 +34,13 @@ class RandomForestModel(BaseMLModel):
     ) -> None:
         super().__init__()
         self._model = RandomForestClassifier(
-            n_estimators=n_estimators,
-            max_depth=max_depth,
-            random_state=random_state,
-            **kwargs,
-        )
+    n_estimators=n_estimators,
+    max_depth=max_depth,
+    class_weight="balanced",
+    random_state=random_state,
+    n_jobs=-1,
+    **kwargs,
+)
 
     @property
     def name(self) -> str:
@@ -63,12 +75,18 @@ class RandomForestModel(BaseMLModel):
 
     def evaluate(self, X: np.ndarray, y: np.ndarray) -> dict[str, float]:
         predictions = self.predict(X)
-        return {
+        probabilities = self.predict_proba(X)[:, 1]
+        metrics = {
             "accuracy": accuracy_score(y, predictions),
             "precision": precision_score(y, predictions, zero_division=0),
             "recall": recall_score(y, predictions, zero_division=0),
             "f1": f1_score(y, predictions, zero_division=0),
+            "roc_auc": roc_auc_score(y, probabilities),
+            "pr_auc": average_precision_score(y, probabilities),
+            "confusion_matrix": confusion_matrix(y, predictions),
+            "probabilities": probabilities,
         }
+        return metrics
 
     def save(self, path: str) -> None:
         with open(path, "wb") as f:

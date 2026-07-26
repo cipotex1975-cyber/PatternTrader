@@ -45,6 +45,7 @@ PatternTrader/
 │   ├── signals/        # Generación de señales
 │   ├── telegram/       # Notificaciones
 │   ├── database/       # Modelos de base de datos
+│   ├── datos_test/     # Archivos para trainin y test del modelo
 │   ├── api/            # Endpoints REST
 │   ├── strategy/       # Estrategias de trading
 │   ├── optimizer/      # Optimización de parámetros
