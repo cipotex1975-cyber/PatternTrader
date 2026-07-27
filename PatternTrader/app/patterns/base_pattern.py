@@ -17,6 +17,11 @@ class PatternType(str, Enum):
     NEUTRAL = "neutral"
 
 
+class TradeDirection(str, Enum):
+    LONG = "LONG"
+    SHORT = "SHORT"
+
+
 class PatternStatus(str, Enum):
     DETECTED = "DETECTED"
     FORMING = "FORMING"
@@ -39,6 +44,7 @@ class PatternResult(BaseModel):
     pattern_type: PatternType
     symbol: str
     timeframe: str
+    direction: TradeDirection = TradeDirection.LONG
     status: PatternStatus = PatternStatus.DETECTED
     confidence: float = Field(ge=0.0, le=1.0)
     health: float = Field(ge=0.0, le=100.0, default=100.0)

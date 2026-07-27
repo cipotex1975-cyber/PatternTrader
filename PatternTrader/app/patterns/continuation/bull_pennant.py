@@ -6,7 +6,7 @@ import numpy as np
 
 from app.core.logger import get_logger
 from app.market.candles.models import Candle
-from app.patterns.base_pattern import BasePattern, PatternResult, PatternType, PatternStatus
+from app.patterns.base_pattern import BasePattern, PatternResult, PatternType, PatternStatus, TradeDirection
 from app.patterns.registry import register_pattern
 
 logger = get_logger("BullPennantPattern")
@@ -73,6 +73,7 @@ class BullPennantPattern(BasePattern):
             pattern_type=self.pattern_type,
             symbol=symbol,
             timeframe=timeframe,
+            direction=TradeDirection.LONG,
             confidence=self._calculate_confidence(pole_height, pennant_height, high_slope, low_slope),
             key_levels={
                 "pole_high": pattern_high,

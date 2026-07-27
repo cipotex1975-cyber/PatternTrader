@@ -31,7 +31,7 @@ PatternTrader detecta y evalúa patrones chartistas clásicos utilizando anális
 **Ejemplo de uso**:
 
 ```python
-from app.patterns.reversal.double_top import DoubleTopPattern
+from app.patterns.base_pattern import BasePattern, PatternResult, PatternType, TradeDirection
 from app.market.candles.models import Candle, CandleData
 from datetime import datetime, timezone
 
@@ -60,6 +60,7 @@ result = detector.detect(candles, "BTCUSDT", "1h")
 
 if result:
     print(f"Patrón detectado: {result.pattern_name}")
+    print(f"Dirección: {result.direction.value}")  # SHORT para double_top
     print(f"Confianza: {result.confidence:.2%}")
     print(f"Niveles clave:")
     for level, price in result.key_levels.items():
@@ -276,7 +277,7 @@ if result:
 Todos los patrones heredan de `BasePattern`:
 
 ```python
-from app.patterns.base_pattern import BasePattern, PatternResult, PatternType
+from app.patterns.base_pattern import BasePattern, PatternResult, PatternType, TradeDirection
 
 class BasePattern(ABC):
     @property
@@ -313,6 +314,57 @@ class BasePattern(ABC):
         ...
 ```
 
+### Campo `direction` (TradeDirection)
+
+Cada patrón tiene un campo `direction` que indica la dirección del trade:
+
+```python
+class TradeDirection(str, Enum):
+    LONG = "LONG"    # Comprar (patrón alcista)
+    SHORT = "SHORT"  # Vender (patrón bajista)
+```
+
+**Dirección por patrón:**
+
+| Patrón | Dirección | Razón |
+|--------|-----------|-------|
+| `double_top` | SHORT | Reversión bajista |
+| `double_bottom` | LONG | Reversión alcista |
+| `head_and_shoulders` | SHORT | Reversión bajista |
+| `inverse_head_and_shoulders` | LONG | Reversión alcista |
+| `bull_flag` | LONG | Continuación alcista |
+| `bear_flag` | SHORT | Continuación bajista |
+| `bull_pennant` | LONG | Continuación alcista |
+| `bear_pennant` | SHORT | Continuación bajista |
+
+**Ejemplo de uso:**
+
+```python
+from app.patterns.base_pattern import PatternResult, TradeDirection
+
+# Crear patrón con dirección
+pattern = PatternResult(
+    pattern_name="double_top",
+    pattern_type=PatternType.REVERSAL,
+    symbol="BTCUSDT",
+    timeframe="1h",
+    direction=TradeDirection.SHORT,  # Trade bajista
+    confidence=0.85,
+    key_levels={
+        "peak1": 52000,
+        "peak2": 51800,
+        "neckline": 50500,
+        "target": 49000,
+    },
+)
+
+# Verificar dirección
+if pattern.direction == TradeDirection.SHORT:
+    print("Patrón bajista - abrir posición SHORT")
+elif pattern.direction == TradeDirection.LONG:
+    print("Patrón alcista - abrir posición LONG")
+```
+
 ---
 
 ## Crear un Nuevo Patrón
@@ -328,7 +380,7 @@ from __future__ import annotations
 from typing import Optional
 import numpy as np
 from app.market.candles.models import Candle
-from app.patterns.base_pattern import BasePattern, PatternResult, PatternType
+from app.patterns.base_pattern import BasePattern, PatternResult, PatternType, TradeDirection
 from app.patterns.registry import register_pattern
 
 @register_pattern
@@ -360,7 +412,9 @@ class MiPatron(BasePattern):
         lows = np.array([c.data.low for c in candles])
         
         # Ejemplo: detectar dos mínimos similares
-        troughs = self._find_troughs(lows)
+        # Usar scipy.signal.find_peaks (implementado en C, ~50-100x más rápido)
+        from scipy.signal import find_peaks
+        troughs, _ = find_peaks(-lows, distance=3)
         if len(troughs) < 2:
             return None
         
@@ -380,6 +434,7 @@ class MiPatron(BasePattern):
             pattern_type=self.pattern_type,
             symbol=symbol,
             timeframe=timeframe,
+            direction=TradeDirection.LONG,  # Patrón alcista
             confidence=0.85,
             key_levels={
                 "trough1": trough1,
@@ -420,13 +475,10 @@ class MiPatron(BasePattern):
         return min(100.0, score)
     
     def _find_troughs(self, data: np.ndarray, distance: int = 3) -> list[int]:
-        """Encontrar mínimos locales."""
-        troughs = []
-        for i in range(distance, len(data) - distance):
-            if all(data[i] <= data[i - j] for j in range(1, distance + 1)) and \
-               all(data[i] <= data[i + j] for j in range(1, distance + 1)):
-                troughs.append(i)
-        return troughs
+        """Encontrar mínimos locales usando scipy (C-level)."""
+        from scipy.signal import find_peaks
+        idx, _ = find_peaks(-data, distance=distance)
+        return idx.tolist()
 ```
 
 ### Paso 3: Registrar
@@ -587,6 +639,7 @@ async def analyze_market():
         if result:
             print(f"\n{'='*50}")
             print(f"Patrón detectado: {result.pattern_name}")
+            print(f"Dirección: {result.direction.value}")  # LONG o SHORT
             print(f"Confianza: {result.confidence:.2%}")
             
             # Registrar en lifecycle

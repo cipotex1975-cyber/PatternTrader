@@ -69,8 +69,10 @@ class BacktestEngine:
             if trade.stop_loss:
                 if trade.direction == TradeDirection.LONG and candle.data.low <= trade.stop_loss:
                     self._close_trade(trade, trade.stop_loss, candle.data.timestamp, "SL_HIT")
+                    continue
                 elif trade.direction == TradeDirection.SHORT and candle.data.high >= trade.stop_loss:
                     self._close_trade(trade, trade.stop_loss, candle.data.timestamp, "SL_HIT")
+                    continue
 
             if trade.take_profit:
                 if trade.direction == TradeDirection.LONG and candle.data.high >= trade.take_profit:
@@ -89,6 +91,9 @@ class BacktestEngine:
             if pattern.status.value not in ["CONFIRMED", "SIGNAL_SENT"]:
                 continue
 
+            if pattern.detected_at and candle.data.timestamp < pattern.detected_at:
+                continue
+
             existing = any(
                 t.metadata.get("pattern_id") == str(pattern_id) for t in self._trades
             )
@@ -98,7 +103,7 @@ class BacktestEngine:
             self._open_trade(pattern, candle)
 
     def _open_trade(self, pattern: PatternResult, candle: Candle) -> None:
-        entry_price = candle.data.close
+        entry_price = pattern.entry_price if pattern.entry_price else candle.data.close
         stop_loss = pattern.stop_loss
         take_profit = pattern.take_profit
 
@@ -111,7 +116,7 @@ class BacktestEngine:
             id=str(uuid.uuid4()),
             symbol=pattern.symbol,
             timeframe=pattern.timeframe,
-            direction=TradeDirection.LONG,
+            direction=TradeDirection(pattern.direction.value),
             entry_price=entry_price,
             entry_time=candle.data.timestamp,
             stop_loss=stop_loss,

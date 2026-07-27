@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import Optional
 
 import numpy as np
+from scipy.signal import find_peaks as _scipy_find_peaks
 
 from app.core.logger import get_logger
 from app.market.candles.models import Candle
-from app.patterns.base_pattern import BasePattern, PatternResult, PatternType, PatternStatus
+from app.patterns.base_pattern import BasePattern, PatternResult, PatternType, PatternStatus, TradeDirection
 from app.patterns.registry import register_pattern
 
 logger = get_logger("DoubleBottomPattern")
@@ -68,6 +69,7 @@ class DoubleBottomPattern(BasePattern):
                 pattern_type=self.pattern_type,
                 symbol=symbol,
                 timeframe=timeframe,
+                direction=TradeDirection.LONG,
                 confidence=self._calculate_confidence(trough1_price, trough2_price, neckline),
                 key_levels={
                     "trough1": trough1_price,
@@ -116,13 +118,8 @@ class DoubleBottomPattern(BasePattern):
         return min(100.0, score)
 
     def _find_troughs(self, data: np.ndarray, distance: int = 3) -> list[int]:
-        troughs = []
-        for i in range(distance, len(data) - distance):
-            if all(data[i] <= data[i - j] for j in range(1, distance + 1)) and all(
-                data[i] <= data[i + j] for j in range(1, distance + 1)
-            ):
-                troughs.append(i)
-        return troughs
+        idx, _ = _scipy_find_peaks(-data, distance=distance)
+        return idx.tolist()
 
     def _calculate_confidence(self, trough1: float, trough2: float, neckline: float) -> float:
         trough_diff = abs(trough1 - trough2) / max(trough1, trough2)

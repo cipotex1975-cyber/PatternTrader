@@ -6,7 +6,7 @@ import numpy as np
 
 from app.core.logger import get_logger
 from app.market.candles.models import Candle
-from app.patterns.base_pattern import BasePattern, PatternResult, PatternType, PatternStatus
+from app.patterns.base_pattern import BasePattern, PatternResult, PatternType, PatternStatus, TradeDirection
 from app.patterns.registry import register_pattern
 
 logger = get_logger("BearFlagPattern")
@@ -37,7 +37,6 @@ class BearFlagPattern(BasePattern):
 
         highs = np.array([c.data.high for c in candles])
         lows = np.array([c.data.low for c in candles])
-        closes = np.array([c.data.close for c in candles])
 
         pole_end = self._find_pole_end(highs, lows)
         if pole_end is None or pole_end < 5:
@@ -46,11 +45,11 @@ class BearFlagPattern(BasePattern):
         flag_highs = highs[pole_end:]
         flag_lows = lows[pole_end:]
 
-        if len(flag_highs) < 3:
+        if len(flag_highs) < 5:
             return None
 
         flag_slope = self._calculate_slope(flag_lows)
-        if flag_slope <= 0:
+        if flag_slope < -0.001:
             return None
 
         pole_height = highs[0] - lows[pole_end]
@@ -58,7 +57,7 @@ class BearFlagPattern(BasePattern):
             return None
 
         flag_height = np.max(flag_highs) - np.min(flag_lows)
-        if flag_height > pole_height * 0.5:
+        if flag_height > pole_height * 0.6:
             return None
 
         pattern_high = np.max(flag_highs)
@@ -69,6 +68,7 @@ class BearFlagPattern(BasePattern):
             pattern_type=self.pattern_type,
             symbol=symbol,
             timeframe=timeframe,
+            direction=TradeDirection.SHORT,
             confidence=self._calculate_confidence(pole_height, flag_height, flag_slope),
             key_levels={
                 "pole_low": pattern_low,
@@ -109,7 +109,8 @@ class BearFlagPattern(BasePattern):
         return min(100.0, score)
 
     def _find_pole_end(self, highs: np.ndarray, lows: np.ndarray) -> Optional[int]:
-        min_idx = np.argmin(lows[: len(lows) // 2])
+        search_end = max(len(lows) // 3, 10)
+        min_idx = np.argmin(lows[:search_end])
         return min_idx if min_idx > 0 else None
 
     def _calculate_slope(self, values: np.ndarray) -> float:

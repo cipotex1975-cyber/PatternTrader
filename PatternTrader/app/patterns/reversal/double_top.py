@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import Optional
 
 import numpy as np
+from scipy.signal import find_peaks as _scipy_find_peaks
 
 from app.core.logger import get_logger
 from app.market.candles.models import Candle
-from app.patterns.base_pattern import BasePattern, PatternResult, PatternType, PatternStatus
+from app.patterns.base_pattern import BasePattern, PatternResult, PatternType, PatternStatus, TradeDirection
 from app.patterns.registry import register_pattern
 
 logger = get_logger("DoubleTopPattern")
@@ -63,11 +64,15 @@ class DoubleTopPattern(BasePattern):
             if pattern_height / peak1_price < 0.01:
                 continue
 
+            if closes[-1] >= neckline:
+                continue
+
             return PatternResult(
                 pattern_name=self.name,
                 pattern_type=self.pattern_type,
                 symbol=symbol,
                 timeframe=timeframe,
+                direction=TradeDirection.SHORT,
                 confidence=self._calculate_confidence(peak1_price, peak2_price, neckline),
                 key_levels={
                     "peak1": peak1_price,
@@ -116,13 +121,8 @@ class DoubleTopPattern(BasePattern):
         return min(100.0, score)
 
     def _find_peaks(self, data: np.ndarray, distance: int = 3) -> list[int]:
-        peaks = []
-        for i in range(distance, len(data) - distance):
-            if all(data[i] >= data[i - j] for j in range(1, distance + 1)) and all(
-                data[i] >= data[i + j] for j in range(1, distance + 1)
-            ):
-                peaks.append(i)
-        return peaks
+        idx, _ = _scipy_find_peaks(data, distance=distance)
+        return idx.tolist()
 
     def _calculate_confidence(self, peak1: float, peak2: float, neckline: float) -> float:
         peak_diff = abs(peak1 - peak2) / max(peak1, peak2)

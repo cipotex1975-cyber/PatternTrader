@@ -28,6 +28,84 @@ PatternTrader incluye un motor de backtesting completo para evaluar estrategias 
 
 ## Uso Básico
 
+### Script de Backtesting con Datos Reales
+
+El proyecto incluye un script completo `run_backtest.py` que carga datos históricos, detecta patrones automáticamente y ejecuta el backtest:
+
+```bash
+# Ejecutar backtest con todos los datos (default)
+python run_backtest.py
+
+# Usar un archivo de datos específico
+python run_backtest.py --data /ruta/a/misdatos.txt
+
+# Limitar a N velas
+python run_backtest.py --max-candles 20000
+
+# Ejecución rápida (mayor step = menos ventanas = más rápido)
+python run_backtest.py --step 200 --max-patterns 300
+
+# Excluir patrones perdedores
+python run_backtest.py --exclude bear_flag,double_top
+
+# Excluir + ejecución rápida
+python run_backtest.py --exclude bear_flag --step 200 --max-candles 30000
+```
+
+**Parámetros CLI** de `run_backtest.py`:
+
+| Parámetro | Valor por defecto | Descripción |
+|-----------|-------------------|-------------|
+| `--data` | `app/datos_test/USDCAD_H1_201005311000_202606010000.txt` | Ruta al archivo de datos |
+| `--max-candles` | `None` (todas) | Número máximo de velas a usar |
+| `--step` | `100` | Paso entre ventanas deslizantes (mayor = más rápido, pero pierde patrones) |
+| `--max-patterns` | `500` | Número máximo de patrones a detectar |
+| `--exclude` | `None` (todos) | Patrones a excluir, separados por coma |
+| `--min-rr` | `1.0` | Ratio Riesgo/Recompensa mínimo para aceptar un trade |
+
+**Patrones disponibles**: `double_bottom`, `double_top`, `inverse_head_and_shoulders`, `head_and_shoulders`, `bull_flag`, `bear_flag`, `bull_pennant`, `bear_pennant`
+
+> **Nota sobre `--step`**: Un step más grande analiza menos ventanas, lo que acelera la ejecución pero puede omitir patrones. Para el backtest final serio, usa `step=100` o menor.
+
+> **Nota sobre `--exclude`**: Los patrones SHORT (`bear_flag`, `double_top`) tienden a perder en mercados en tendencia alcista. Excluirlos puede mejorar significativamente los resultados.
+
+**Parámetros internos** configurables directamente en el script:
+
+| Parámetro | Valor por defecto | Descripción |
+|-----------|-------------------|-------------|
+| `window` | 200 | Tamaño de la ventana deslizante (número de velas por ventana) |
+| `initial_capital` | 100000 | Capital inicial |
+| `risk_per_trade` | 0.02 | Riesgo por operación (2%) |
+
+### ¿Qué es una ventana deslizante?
+
+El detector de patrones usa una **ventana deslizante** para escanear todo el histórico de velas. Cada ventana es un bloque连续 de velas que se analiza para detectar formaciones chartistas:
+
+```
+Velas: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, ...]
+
+Con window=200, step=100:
+
+Ventana 1: [vela 1 ... vela 200]    ← analiza estas 200 velas
+Ventana 2: [vela 101 ... vela 300]  ← se mueve 100 velas hacia adelante
+Ventana 3: [vela 201 ... vela 400]  ← se mueve 100 más
+...
+```
+
+- **`window`**: Cuántas velas analiza cada detector (mínimo necesario para formar un patrón)
+- **`step`**: Cuánto se mueve la ventana entre cada iteración
+
+Con 50,000 velas y `step=100`, se analizan ~500 ventanas × 8 detectores = ~4,000 llamadas de detección.
+
+**Pipeline del script:**
+
+1. **Carga de datos**: Lee archivos tab-delimited (formato MT4/MT5)
+2. **Detección de patrones**: Ventana deslizante con todos los detectores registrados
+3. **Deduplicación**: Evita patrones duplicados por ventana
+4. **Preparación SL/TP**: Calcula stop loss y take profit según el patrón
+5. **Ejecución del backtest**: Motor de trading con gestión de posiciones
+6. **Análisis de resultados**: Métricas por patrón, mejores/peores trades
+
 ### Ejemplo Simple
 
 ```python
@@ -35,7 +113,7 @@ import asyncio
 from app.backtesting.engine import BacktestEngine
 from app.backtesting.models import BacktestConfig
 from app.market.candles.models import Candle, CandleData
-from app.patterns.base_pattern import PatternResult, PatternType, PatternStatus
+from app.patterns.base_pattern import PatternResult, PatternType, PatternStatus, TradeDirection
 from datetime import datetime, timezone, timedelta
 import random
 
@@ -72,6 +150,7 @@ async def simple_backtest():
             pattern_type=PatternType.REVERSAL,
             symbol="BTCUSDT",
             timeframe="1h",
+            direction=TradeDirection.LONG,
             confidence=0.8,
             status=PatternStatus.CONFIRMED,
             entry_price=50500,
@@ -83,6 +162,7 @@ async def simple_backtest():
             pattern_type=PatternType.CONTINUATION,
             symbol="BTCUSDT",
             timeframe="1h",
+            direction=TradeDirection.LONG,
             confidence=0.85,
             status=PatternStatus.CONFIRMED,
             entry_price=51000,
@@ -444,7 +524,7 @@ import asyncio
 from app.backtesting.engine import BacktestEngine
 from app.backtesting.models import BacktestConfig, BacktestResult
 from app.market.candles.models import Candle, CandleData
-from app.patterns.base_pattern import PatternResult, PatternType, PatternStatus
+from app.patterns.base_pattern import PatternResult, PatternType, PatternStatus, TradeDirection
 from datetime import datetime, timezone, timedelta
 import random
 

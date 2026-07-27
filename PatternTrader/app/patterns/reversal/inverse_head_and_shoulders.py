@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import Optional
 
 import numpy as np
+from scipy.signal import find_peaks as _scipy_find_peaks
 
 from app.core.logger import get_logger
 from app.market.candles.models import Candle
-from app.patterns.base_pattern import BasePattern, PatternResult, PatternType, PatternStatus
+from app.patterns.base_pattern import BasePattern, PatternResult, PatternType, PatternStatus, TradeDirection
 from app.patterns.registry import register_pattern
 
 logger = get_logger("InverseHeadAndShouldersPattern")
@@ -73,6 +74,7 @@ class InverseHeadAndShouldersPattern(BasePattern):
                 pattern_type=self.pattern_type,
                 symbol=symbol,
                 timeframe=timeframe,
+                direction=TradeDirection.LONG,
                 confidence=self._calculate_confidence(left_price, head_price, right_price, neckline),
                 key_levels={
                     "left_shoulder": left_price,
@@ -118,13 +120,8 @@ class InverseHeadAndShouldersPattern(BasePattern):
         return min(100.0, score)
 
     def _find_troughs(self, data: np.ndarray, distance: int = 3) -> list[int]:
-        troughs = []
-        for i in range(distance, len(data) - distance):
-            if all(data[i] <= data[i - j] for j in range(1, distance + 1)) and all(
-                data[i] <= data[i + j] for j in range(1, distance + 1)
-            ):
-                troughs.append(i)
-        return troughs
+        idx, _ = _scipy_find_peaks(-data, distance=distance)
+        return idx.tolist()
 
     def _calculate_confidence(
         self, left: float, head: float, right: float, neckline: float
