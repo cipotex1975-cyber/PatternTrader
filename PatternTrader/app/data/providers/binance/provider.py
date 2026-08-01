@@ -8,7 +8,7 @@ import ccxt.async_support as ccxt
 
 from app.core.config.settings import get_settings
 from app.core.logger import get_logger
-from app.data.providers.base import IDataProvider, OHLCV, OrderBook, TickerData
+from app.data.providers.base import OHLCV, IDataProvider, OrderBook, TickerData
 from app.data.providers.factory import DataProviderFactory
 
 logger = get_logger("BinanceProvider")

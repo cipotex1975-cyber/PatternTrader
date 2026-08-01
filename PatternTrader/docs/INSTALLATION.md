@@ -70,6 +70,20 @@ pip install -e .
 pip install -e ".[dev]"
 ```
 
+#### Dependencias Opcionales por Proveedor
+
+Los proveedores de datos requieren dependencias adicionales solo si los vas a usar:
+
+| Proveedor | Paquete | Comando |
+|-----------|---------|---------|
+| Binance / Bybit | `ccxt` | incluido |
+| Yahoo Finance | `yfinance` | incluido |
+| Polygon / AlphaVantage | `httpx` | incluido |
+| MetaTrader 5 | `MetaTrader5` | `pip install MetaTrader5` |
+| Interactive Brokers | `ib_async` | `pip install ib_async` |
+
+> **Nota**: MetaTrader 5 requiere además un terminal MT5 corriendo localmente. Interactive Brokers requiere IB Gateway o TWS con acceso API habilitado. La plataforma funciona sin estos paquetes; los proveedores correspondientes solo fallarán si intentas usarlos sin instalar su dependencia.
+
 ### 5. Configurar PostgreSQL
 
 ```bash

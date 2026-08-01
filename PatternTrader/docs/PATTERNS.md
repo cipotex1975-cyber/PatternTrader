@@ -588,7 +588,7 @@ El score combina múltiples factores:
 
 ```python
 import asyncio
-from app.data.providers.binance import BinanceProvider
+from app.data.providers import DataProviderFactory
 from app.market.candles.models import Candle, CandleData
 from app.market.indicators.calculator import IndicatorCalculator
 from app.patterns.registry import PatternRegistry
@@ -596,8 +596,9 @@ from app.scoring.engine import ScoringEngine
 from app.lifecycle.engine import LifecycleEngine
 
 async def analyze_market():
-    # 1. Conectar al proveedor
-    provider = BinanceProvider()
+    # 1. Conectar al proveedor (binance, bybit, yahoo, polygon,
+    #    alphavantage, metatrader, interactive_brokers)
+    provider = DataProviderFactory.create("binance")
     await provider.connect()
     
     # 2. Obtener datos

@@ -98,8 +98,46 @@ data_providers:
     testnet: true
   
   yahoo:
+    enabled: true                 # Yahoo Finance (sin API key requerida)
+  
+  polygon:
+    api_key: "${POLYGON_API_KEY}" # API key de Polygon.io
     enabled: true
+  
+  alphavantage:
+    api_key: "${ALPHAVANTAGE_API_KEY}"  # API key de AlphaVantage
+    enabled: true
+  
+  metatrader:
+    enabled: false                # Requiere terminal MetaTrader 5 local
+    login: 0                      # Login de la cuenta
+    password: "${METATRADER_PASSWORD}"
+    server: ""                    # Servidor del broker
+    path: ""                      # Ruta del terminal MT5
+  
+  interactive_brokers:
+    enabled: false                # Requiere IB Gateway o TWS con API
+    host: "127.0.0.1"
+    port: 7497                    # 7497=paper, 7496=live
+    client_id: 1
 ```
+
+### Proveedores Disponibles
+
+| Proveedor | Clave | Fuente de datos | Dependencia |
+|-----------|-------|-----------------|-------------|
+| Binance | `binance` | Exchange (CCXT) | `ccxt` |
+| Bybit | `bybit` | Exchange (CCXT) | `ccxt` |
+| Yahoo Finance | `yahoo` | RestAPI de Yahoo | `yfinance` |
+| Polygon.io | `polygon` | REST API | `httpx` |
+| AlphaVantage | `alphavantage` | REST API | `httpx` |
+| MetaTrader 5 | `metatrader` | Terminal MT5 local | `MetaTrader5` (opcional) |
+| Interactive Brokers | `interactive_brokers` | IB Gateway/TWS | `ib_async` (opcional) |
+
+**Notas**:
+- `MetaTrader5` e `ib_async` son dependencias opcionales: instálalas solo si vas a usar esos proveedores (`pip install MetaTrader5`, `pip install ib_async`).
+- La normalización de símbolos depende del proveedor: `BTCUSDT` → `BTC/USDT` (Bybit), `BTC-USD` (Yahoo), `X:BTCUSDT` (Polygon), `BTC` + `USDT` (AlphaVantage crypto), `BTCUSDT` (MT5/IB).
+- AlphaVantage free tier limita a 25 requests/día; Polygon free tier ~5 requests/min.
 
 ### Market
 
@@ -132,6 +170,17 @@ market:
     bb_period: 20
     bb_std: 2.0
     vwap_enabled: true
+    momentum_period: 10          # Período del momentum (ROC, en %)
+
+  # Configuración de estructura de mercado (MarketEngine)
+  structure:
+    pivot_lookback: 2            # Barras a cada lado de un pivot swing
+    fractal_window: 2            # Ventana de Bill Williams para fractales
+    zigzag_threshold: 0.03       # Umbral % mínimo de retrazo del ZigZag
+    zigzag_atr_multiplier: 1.5   # Multiplicador ATR para el umbral del ZigZag
+    trend_min_pivots: 2          # Pivots mínimos para construir una trendline
+    trend_strength_lookback: 5   # Ventana para medir la fuerza de la tendencia
+    channel_slope_tolerance: 0.15  # Tolerancia relativa de pendientes (canales)
 ```
 
 ### Patterns
@@ -241,6 +290,9 @@ export BINANCE_API_KEY="tu_api_key"
 export BINANCE_API_SECRET="tu_api_secret"
 export BYBIT_API_KEY="tu_api_key"
 export BYBIT_API_SECRET="tu_api_secret"
+export POLYGON_API_KEY="tu_api_key"
+export ALPHAVANTAGE_API_KEY="tu_api_key"
+export METATRADER_PASSWORD="tu_password"
 ```
 
 ### Archivo .env
@@ -259,6 +311,14 @@ TELEGRAM_CHAT_ID=-1001234567890
 
 BINANCE_API_KEY=your_api_key_here
 BINANCE_API_SECRET=your_api_secret_here
+
+BYBIT_API_KEY=your_api_key_here
+BYBIT_API_SECRET=your_api_secret_here
+
+POLYGON_API_KEY=your_polygon_api_key
+ALPHAVANTAGE_API_KEY=your_alphavantage_api_key
+
+METATRADER_PASSWORD=your_mt5_password
 ```
 
 ---
@@ -418,6 +478,29 @@ data_providers:
     api_key: "${BINANCE_API_KEY}"
     api_secret: "${BINANCE_API_SECRET}"
     testnet: false  # Production
+  bybit:
+    api_key: "${BYBIT_API_KEY}"
+    api_secret: "${BYBIT_API_SECRET}"
+    testnet: false
+  yahoo:
+    enabled: true
+  polygon:
+    api_key: "${POLYGON_API_KEY}"
+    enabled: true
+  alphavantage:
+    api_key: "${ALPHAVANTAGE_API_KEY}"
+    enabled: false  # Rate limit bajo (25 req/día)
+  metatrader:
+    enabled: false
+    login: 0
+    password: "${METATRADER_PASSWORD}"
+    server: ""
+    path: ""
+  interactive_brokers:
+    enabled: false
+    host: "127.0.0.1"
+    port: 7497
+    client_id: 1
 
 market:
   default_timeframes:

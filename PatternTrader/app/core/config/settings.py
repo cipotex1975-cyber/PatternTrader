@@ -22,7 +22,9 @@ class DatabaseSettings(BaseSettings):
 
     @property
     def url(self) -> str:
-        return f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+        return (
+            f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+        )
 
 
 class TelegramSettings(BaseSettings):
@@ -47,11 +49,42 @@ class YahooSettings(BaseSettings):
     enabled: bool = True
 
 
+class PolygonSettings(BaseSettings):
+    api_key: str = ""
+    enabled: bool = True
+
+
+class AlphaVantageSettings(BaseSettings):
+    api_key: str = ""
+    enabled: bool = True
+
+
+class MetaTraderSettings(BaseSettings):
+    enabled: bool = False
+    login: int = 0
+    password: str = ""
+    server: str = ""
+    path: str = ""
+
+
+class InteractiveBrokersSettings(BaseSettings):
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 7497
+    client_id: int = 1
+
+
 class DataProviderSettings(BaseSettings):
     default: str = "binance"
     binance: BinanceSettings = Field(default_factory=BinanceSettings)
     bybit: BybitSettings = Field(default_factory=BybitSettings)
     yahoo: YahooSettings = Field(default_factory=YahooSettings)
+    polygon: PolygonSettings = Field(default_factory=PolygonSettings)
+    alphavantage: AlphaVantageSettings = Field(default_factory=AlphaVantageSettings)
+    metatrader: MetaTraderSettings = Field(default_factory=MetaTraderSettings)
+    interactive_brokers: InteractiveBrokersSettings = Field(
+        default_factory=InteractiveBrokersSettings
+    )
 
 
 class IndicatorSettings(BaseSettings):
@@ -65,12 +98,24 @@ class IndicatorSettings(BaseSettings):
     bb_period: int = 20
     bb_std: float = 2.0
     vwap_enabled: bool = True
+    momentum_period: int = 10
+
+
+class MarketStructureSettings(BaseSettings):
+    pivot_lookback: int = 2
+    fractal_window: int = 2
+    zigzag_threshold: float = 0.03
+    zigzag_atr_multiplier: float = 1.5
+    trend_min_pivots: int = 2
+    trend_strength_lookback: int = 5
+    channel_slope_tolerance: float = 0.15
 
 
 class MarketSettings(BaseSettings):
     default_timeframes: list[str] = ["1m", "5m", "15m", "1h", "4h", "1d"]
     default_symbols: list[str] = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
     indicators: IndicatorSettings = Field(default_factory=IndicatorSettings)
+    structure: MarketStructureSettings = Field(default_factory=MarketStructureSettings)
 
 
 class ScoringWeights(BaseSettings):
@@ -127,14 +172,48 @@ class BacktestingSettings(BaseSettings):
     monte_carlo_simulations: int = 1000
 
 
+class RandomForestModelSettings(BaseSettings):
+    n_estimators: int = 100
+    max_depth: int = 10
+
+
+class XGBoostModelSettings(BaseSettings):
+    n_estimators: int = 100
+    max_depth: int = 6
+    learning_rate: float = 0.1
+
+
+class LightGBMModelSettings(BaseSettings):
+    n_estimators: int = 100
+    max_depth: int = 6
+    learning_rate: float = 0.1
+
+
+class LSTMModelSettings(BaseSettings):
+    sequence_length: int = 60
+    hidden_size: int = 128
+    num_layers: int = 2
+    dropout: float = 0.2
+
+
+class MLModelsSettings(BaseSettings):
+    random_forest: RandomForestModelSettings = Field(default_factory=RandomForestModelSettings)
+    xgboost: XGBoostModelSettings = Field(default_factory=XGBoostModelSettings)
+    lightgbm: LightGBMModelSettings = Field(default_factory=LightGBMModelSettings)
+    lstm: LSTMModelSettings = Field(default_factory=LSTMModelSettings)
+
+
 class MLSettings(BaseSettings):
     model_path: str = "./models/"
     training_data_path: str = "./data/training/"
+    models: MLModelsSettings = Field(default_factory=MLModelsSettings)
 
 
 class LoggingSettings(BaseSettings):
     level: str = "INFO"
-    format: str = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}"
+    format: str = (
+        "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}"
+    )
     rotation: str = "100 MB"
     retention: str = "30 days"
     compression: str = "gz"

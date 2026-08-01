@@ -6,6 +6,7 @@ from collections import defaultdict
 
 import numpy as np
 import pandas as pd
+import yaml
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -24,11 +25,41 @@ import app.patterns.continuation.bull_pennant
 import app.patterns.continuation.bear_pennant
 from datetime import datetime, timezone
 
-SYMBOL = "USDCAD"
-TIMEFRAME = "H1"
+CONFIG_PATH = Path(__file__).parent / "config" / "pairs.yaml"
 
 
-def load_candles(file_path: str, max_candles: int | None = None) -> list[Candle]:
+def load_pairs_config() -> dict:
+    with open(CONFIG_PATH) as f:
+        return yaml.safe_load(f)
+
+
+def get_pair_config(pair_name: str | None) -> dict:
+    config = load_pairs_config()
+    default = config.get("default", {})
+    pairs = config.get("pairs", {})
+
+    if pair_name and pair_name in pairs:
+        pair = pairs[pair_name]
+    else:
+        pair = {}
+
+    merged = {
+        "window": pair.get("window", default.get("window", 200)),
+        "step": pair.get("step", default.get("step", 100)),
+        "max_patterns": pair.get("max_patterns", default.get("max_patterns", 500)),
+        "exclude": pair.get("exclude", default.get("exclude", [])),
+        "sl_tp": {**default.get("sl_tp", {}), **pair.get("sl_tp", {})},
+    }
+
+    return merged
+
+
+def load_candles(
+    file_path: str,
+    symbol: str,
+    timeframe: str,
+    max_candles: int | None = None,
+) -> list[Candle]:
     df = pd.read_csv(file_path, sep="\t")
     df.columns = [c.strip() for c in df.columns]
 
@@ -58,8 +89,8 @@ def load_candles(file_path: str, max_candles: int | None = None) -> list[Candle]
     candles = []
     for _, row in df.iterrows():
         candles.append(Candle(
-            symbol=SYMBOL,
-            timeframe=TIMEFRAME,
+            symbol=symbol,
+            timeframe=timeframe,
             data=CandleData(
                 timestamp=row["datetime"].to_pydatetime().replace(tzinfo=timezone.utc),
                 open=float(row["open"]),
@@ -75,6 +106,8 @@ def load_candles(file_path: str, max_candles: int | None = None) -> list[Candle]
 
 def detect_all_patterns(
     candles: list[Candle],
+    symbol: str,
+    timeframe: str,
     window: int = 200,
     step: int = 200,
     max_patterns: int = 200,
@@ -116,7 +149,7 @@ def detect_all_patterns(
         window_candles = candles[start:end]
 
         for detector in detectors:
-            result = detector.detect(window_candles, SYMBOL, TIMEFRAME)
+            result = detector.detect(window_candles, symbol, timeframe)
             if result is None:
                 continue
 
@@ -132,14 +165,17 @@ def detect_all_patterns(
     return all_patterns
 
 
-def prepare_patterns_for_backtest(patterns: list[PatternResult]) -> list[PatternResult]:
+def prepare_patterns_for_backtest(
+    patterns: list[PatternResult],
+    sl_tp_config: dict,
+) -> list[PatternResult]:
     prepared: list[PatternResult] = []
 
     for pattern in patterns:
         if not pattern.key_levels:
             continue
 
-        sl, tp = _derive_sl_tp(pattern)
+        sl, tp = _derive_sl_tp(pattern, sl_tp_config)
         if sl is None or tp is None:
             continue
 
@@ -151,56 +187,84 @@ def prepare_patterns_for_backtest(patterns: list[PatternResult]) -> list[Pattern
     return prepared
 
 
-def _derive_sl_tp(pattern: PatternResult) -> tuple[float | None, float | None]:
+def _derive_sl_tp(
+    pattern: PatternResult,
+    sl_tp_config: dict,
+) -> tuple[float | None, float | None]:
     kl = pattern.key_levels
     name = pattern.pattern_name
+    cfg = sl_tp_config.get(name, {})
+    method = cfg.get("sl_method", "peaks")
+    buffer = cfg.get("sl_buffer", 0.002)
 
     if name == "double_top":
         peak1 = kl.get("peak1", 0)
         peak2 = kl.get("peak2", 0)
+        neckline = kl.get("neckline")
         target = kl.get("target")
-        if peak1 and peak2 and target:
-            return max(peak1, peak2) * 1.002, target
+        if not (peak1 and peak2 and target):
+            return None, None
+
+        if method == "neckline" and neckline:
+            sl = neckline * (1 + buffer)
+        elif method == "peaks_midpoint" and neckline:
+            sl = (neckline + max(peak1, peak2)) / 2 * (1 + buffer)
+        else:
+            sl = max(peak1, peak2) * (1 + buffer)
+        return sl, target
 
     if name == "double_bottom":
         neckline = kl.get("neckline")
         target = kl.get("target")
         trough = min(kl.get("trough1", float("inf")), kl.get("trough2", float("inf")))
-        if neckline and target:
-            return trough * 0.998, target
+        if not (neckline and target):
+            return None, None
+        return trough * (1 - buffer), target
 
     if name in ("bull_flag", "bull_pennant"):
         flag_low = kl.get("flag_low")
         target = kl.get("target")
-        if flag_low and target:
-            return flag_low * 0.998, target
+        if not (flag_low and target):
+            return None, None
+        return flag_low * (1 - buffer), target
 
     if name in ("bear_flag", "bear_pennant"):
         flag_high = kl.get("flag_high")
         target = kl.get("target")
-        if flag_high and target:
-            return flag_high * 1.002, target
+        if not (flag_high and target):
+            return None, None
+        return flag_high * (1 + buffer), target
 
     if name == "head_and_shoulders":
         head = kl.get("head", 0)
+        neckline = kl.get("neckline")
         target = kl.get("target")
-        if head and target:
-            return head * 1.002, target
+        if not (head and target):
+            return None, None
+
+        if method == "neckline" and neckline:
+            sl = neckline * (1 + buffer)
+        elif method == "peaks_midpoint" and neckline:
+            sl = (neckline + head) / 2 * (1 + buffer)
+        else:
+            sl = head * (1 + buffer)
+        return sl, target
 
     if name == "inverse_head_and_shoulders":
         neckline = kl.get("neckline")
         target = kl.get("target")
-        if neckline and target:
-            return neckline * 0.998, target
+        if not (neckline and target):
+            return None, None
+        return neckline * (1 - buffer), target
 
     return None, None
 
 
-def print_results(result) -> None:
+def print_results(result, symbol: str, timeframe: str) -> None:
     print("=" * 70)
     print("RESULTADOS DEL BACKTEST")
     print("=" * 70)
-    print(f"Par:              {SYMBOL} ({TIMEFRAME})")
+    print(f"Par:              {symbol} ({timeframe})")
     print(f"Periodo:          {result.start_date.date()} a {result.end_date.date()}")
     print(f"Capital inicial:  ${result.initial_capital:,.2f}")
     print(f"Capital final:    ${result.final_capital:,.2f}")
@@ -258,28 +322,26 @@ def print_results(result) -> None:
 def main() -> None:
     import argparse
 
-    default_data = Path(__file__).parent / "app" / "datos_test" / "USDCAD_H1_201005311000_202606010000.txt"
-
     parser = argparse.ArgumentParser(description="Backtest de patrones chartistas")
+    parser.add_argument(
+        "--pair", type=str, default=None,
+        help="Par de divisas para usar configuracion (ej: USDCAD, USDJPY)",
+    )
+    parser.add_argument(
+        "--data", type=str, default=None,
+        help="Ruta al archivo de datos (si no se especifica, busca automaticamente)",
+    )
     parser.add_argument(
         "--max-candles", type=int, default=None,
         help="Numero maximo de velas a usar (default: todas)",
     )
     parser.add_argument(
-        "--data", type=str, default=str(default_data),
-        help=f"Ruta al archivo de datos (default: {default_data.name})",
+        "--step", type=int, default=None,
+        help="Paso entre ventanas deslizantes (default: segun config del par)",
     )
     parser.add_argument(
-        "--step", type=int, default=100,
-        help="Paso entre ventanas deslizantes (default: 100, mayor = mas rapido)",
-    )
-    parser.add_argument(
-        "--max-patterns", type=int, default=500,
-        help="Numero maximo de patrones a detectar (default: 500)",
-    )
-    parser.add_argument(
-        "--min-rr", type=float, default=1.0,
-        help="Ratio Riesgo/Recompensa minimo para aceptar un trade (default: 1.0)",
+        "--max-patterns", type=int, default=None,
+        help="Numero maximo de patrones a detectar (default: segun config del par)",
     )
     parser.add_argument(
         "--exclude", type=str, default=None,
@@ -287,28 +349,49 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    data_path = Path(args.data)
+    pair_cfg = get_pair_config(args.pair)
+    symbol = args.pair or "USDCAD"
+    timeframe = "H1"
 
-    max_candles = args.max_candles
+    window = pair_cfg["window"]
+    step = args.step if args.step is not None else pair_cfg["step"]
+    max_patterns = args.max_patterns if args.max_patterns is not None else pair_cfg["max_patterns"]
 
-    print(f"Cargando datos desde: {data_path}")
-    if max_candles:
-        print(f"Usando ultimas {max_candles} velas")
+    excluded = set(args.exclude.split(",")) if args.exclude else set(pair_cfg.get("exclude", []))
+
+    if args.data:
+        data_path = Path(args.data)
+    else:
+        data_dir = Path(__file__).parent / "app" / "datos_test"
+        candidates = list(data_dir.glob(f"{symbol}_{timeframe}_*.txt"))
+        if not candidates:
+            print(f"Error: no se encontro archivo de datos para {symbol}")
+            print(f"Buscando en: {data_dir}")
+            return
+        data_path = sorted(candidates)[-1]
+
+    print(f"Par: {symbol} ({timeframe})")
+    print(f"Config: window={window}, step={step}, max_patterns={max_patterns}")
+    print(f"SL/TP config: {list(pair_cfg['sl_tp'].keys())}")
+    if excluded:
+        print(f"Patrones excluidos: {', '.join(sorted(excluded))}")
+
+    print(f"\nCargando datos desde: {data_path}")
+    if args.max_candles:
+        print(f"Usando ultimas {args.max_candles} velas")
     else:
         print("Usando todos los datos")
-    candles = load_candles(str(data_path), max_candles=max_candles)
+    candles = load_candles(str(data_path), symbol, timeframe, max_candles=args.max_candles)
     print(f"Velas cargadas: {len(candles)}")
     print(f"Rango: {candles[0].data.timestamp.date()} a {candles[-1].data.timestamp.date()}")
 
-    print(f"\nDetectando patrones (ventana deslizante, step={args.step})...")
+    print(f"\nDetectando patrones (ventana deslizante, step={step})...")
     raw_patterns = detect_all_patterns(
-        candles, window=200, step=args.step, max_patterns=args.max_patterns,
+        candles, symbol, timeframe, window=window, step=step, max_patterns=max_patterns,
     )
 
-    if args.exclude:
-        excluded = set(args.exclude.split(","))
+    if excluded:
         raw_patterns = [p for p in raw_patterns if p.pattern_name not in excluded]
-        print(f"Patrones excluidos: {', '.join(sorted(excluded))}")
 
     print(f"Patrones detectados: {len(raw_patterns)}")
 
@@ -319,7 +402,7 @@ def main() -> None:
         for name, cnt in sorted(counts.items()):
             print(f"  {name}: {cnt}")
 
-    patterns = prepare_patterns_for_backtest(raw_patterns)
+    patterns = prepare_patterns_for_backtest(raw_patterns, pair_cfg["sl_tp"])
     print(f"\nPatrones con SL/TP validos: {len(patterns)}")
 
     if not patterns:
@@ -343,7 +426,7 @@ def main() -> None:
     result = engine.run(candles, patterns)
 
     print()
-    print_results(result)
+    print_results(result, symbol, timeframe)
 
 
 if __name__ == "__main__":

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from typing import Optional
-
 import numpy as np
 import pandas as pd
 
 from app.core.config.settings import get_settings
 from app.core.logger import get_logger
-from app.market.candles.models import Candle, CandleData
+from app.market.candles.models import Candle
 
 logger = get_logger("IndicatorCalculator")
 
@@ -44,7 +42,11 @@ class IndicatorCalculator:
 
         df["atr"] = self._calculate_atr(df, self._config.atr_period)
 
-        bb = self._calculate_bollinger_bands(df["close"], self._config.bb_period, self._config.bb_std)
+        df["momentum"] = df["close"].pct_change(periods=self._config.momentum_period) * 100.0
+
+        bb = self._calculate_bollinger_bands(
+            df["close"], self._config.bb_period, self._config.bb_std
+        )
         df["bb_upper"] = bb["upper"]
         df["bb_middle"] = bb["middle"]
         df["bb_lower"] = bb["lower"]
@@ -56,7 +58,7 @@ class IndicatorCalculator:
             timestamp = candle.data.timestamp.isoformat()
             indicators[timestamp] = {}
             for col in df.columns:
-                if col not in ["open", "high", "low", "close", "volume"]:
+                if col not in ["timestamp", "open", "high", "low", "close", "volume"]:
                     value = df[col].iloc[i]
                     if pd.notna(value):
                         indicators[timestamp][col] = float(value)

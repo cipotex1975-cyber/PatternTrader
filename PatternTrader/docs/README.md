@@ -107,14 +107,15 @@ python -m app.main
 
 ```python
 import asyncio
-from app.data.providers.binance import BinanceProvider
+from app.data.providers import DataProviderFactory
 from app.market.candles.models import Candle, CandleData
 from app.patterns.reversal.double_top import DoubleTopPattern
 from datetime import datetime, timezone
 
 async def detect_patterns():
-    # Crear proveedor de datos
-    provider = BinanceProvider()
+    # Crear proveedor de datos (binance, bybit, yahoo, polygon,
+    # alphavantage, metatrader, interactive_brokers)
+    provider = DataProviderFactory.create("binance")
     await provider.connect()
     
     # Obtener datos históricos
@@ -474,8 +475,8 @@ class MyNewPattern(BasePattern):
 
 - [x] Estructura base del proyecto
 - [x] Core modules (Config, Logger, Events)
-- [x] Data Providers (Binance)
-- [x] Market Engine (Candles, Indicators)
+- [x] Data Providers (Binance, Bybit, Yahoo, Polygon, AlphaVantage, MetaTrader, IB)
+- [x] Market Engine (Candles, Indicators, Pivots, ZigZag, Fractals, Trendlines)
 - [x] Pattern Detection (8 patrones)
 - [x] Lifecycle Engine
 - [x] Scoring System
@@ -489,7 +490,6 @@ class MyNewPattern(BasePattern):
 - [x] REST API
 - [ ] Dashboard UI completo
 - [ ] Más patrones (20+)
-- [ ] Más proveedores (Bybit, IBKR)
 - [ ] LSTM/Transformer models
 - [ ] Walk Forward Optimization
 - [ ] Monte Carlo Simulation

@@ -167,6 +167,11 @@ from app.ml.factory import MLModelFactory
 # Crear proveedor
 provider = DataProviderFactory.create("binance")
 
+# Listar proveedores registrados
+providers = DataProviderFactory.get_all()
+# -> binance, bybit, yahoo, polygon, alphavantage,
+#    metatrader, interactive_brokers
+
 # Crear modelo ML
 model = MLModelFactory.create("random_forest")
 ```
@@ -277,6 +282,13 @@ await engine.transition(
 └──────┬───────┘
        │
        ▼
+┌──────────────────┐
+│  Market Engine   │ ──→ Construye la estructura del mercado
+│ (pivots, zigzag, │     (pivots, fractales, ZigZag, trendlines,
+│  fractals, trend)│      canales y tendencia) en un MarketStructure
+└──────┬───────────┘
+       │
+       ▼
 ┌──────────────┐
 │   Patterns   │ ──→ Detecta patrones chartistas
 └──────┬───────┘
@@ -360,19 +372,34 @@ class SignalEngine:
 
 ## Extensibilidad
 
+### Proveedores de Datos Implementados
+
+| Proveedor | Módulo | Estado |
+|-----------|--------|--------|
+| Binance | `app/data/providers/binance/` | ✅ |
+| Bybit | `app/data/providers/bybit/` | ✅ |
+| Yahoo Finance | `app/data/providers/yahoo/` | ✅ |
+| Polygon.io | `app/data/providers/polygon/` | ✅ |
+| AlphaVantage | `app/data/providers/alphavantage/` | ✅ |
+| MetaTrader 5 | `app/data/providers/metatrader/` | ✅ (dependencia opcional) |
+| Interactive Brokers | `app/data/providers/interactive_brokers/` | ✅ (dependencia opcional) |
+
+Todos implementan la interfaz `IDataProvider` y se registran automáticamente en `DataProviderFactory` al importar `app.data.providers`.
+
 ### Agregar un Nuevo Proveedor de Datos
 
-1. Crear implementación de `IDataProvider`
+1. Crear implementación de `IDataProvider` en `app/data/providers/<nombre>/`
 2. Registrar en `DataProviderFactory`
+3. Agregar la configuración en `app/core/config/settings.py` y `config/settings.yaml`
 
 ```python
 from app.data.providers.base import IDataProvider
 from app.data.providers.factory import DataProviderFactory
 
-class BybitProvider(IDataProvider):
+class KrakenProvider(IDataProvider):
     @property
     def name(self) -> str:
-        return "bybit"
+        return "kraken"
     
     async def connect(self):
         pass
@@ -383,8 +410,10 @@ class BybitProvider(IDataProvider):
     # ... otros métodos
 
 # Registrar
-DataProviderFactory.register("bybit", BybitProvider)
+DataProviderFactory.register("kraken", KrakenProvider)
 ```
+
+> **Importante**: Al importar `app.data.providers`, los módulos registran sus proveedores automáticamente. Agregar un proveedor nunca modifica el resto del proyecto.
 
 ### Agregar un Nuevo Modelo ML
 
@@ -421,6 +450,44 @@ class ExtendedIndicatorCalculator(IndicatorCalculator):
     def calculate_custom_indicator(self, data):
         # Nuevo indicador
         pass
+```
+
+### Motor de Mercado (Market Engine)
+
+El `MarketEngine` orquesta todos los detectores de estructura y agrupa su
+resultado en un modelo `MarketStructure`:
+
+| Módulo | Detecta | Modelos |
+|--------|---------|---------|
+| `app/market/pivots/` | Swing highs/lows | `Pivot`, `PivotType` |
+| `app/market/fractals/` | Fractales de Bill Williams | `Fractal`, `FractalType` |
+| `app/market/zigzag/` | Pivotes ZigZag (umbral %/ATR) | `ZigZagPoint`, `ZigZagType` |
+| `app/market/trendlines/` | Trendlines, tendencia y canales | `Trendline`, `Trend`, `Channel` |
+| `app/market/engine.py` | Orquesta los detectores | `MarketEngine`, `MarketStructure` |
+
+```python
+from app.market import MarketEngine
+
+engine = MarketEngine()
+structure = engine.analyze(candles, symbol="BTCUSDT", timeframe="1h")
+
+structure.trend.direction          # uptrend | downtrend | sideways
+structure.latest_indicators["rsi"] # Indicadores técnicos
+structure.pivots                   # List[Pivot]
+structure.zigzag                   # List[ZigZagPoint]
+structure.trendlines               # List[Trendline]
+structure.channels                 # List[Channel]
+```
+
+Cada detector puede usarse de forma independiente y acepta parámetros propios
+que sobreescriben la configuración de `market.structure`:
+
+```python
+from app.market.pivots import PivotDetector
+from app.market.trendlines import TrendlineDetector
+
+pivots = PivotDetector(lookback=2).find_pivots(candles)
+trendlines = TrendlineDetector(min_pivots=3).detect_from_pivots(candles, pivots)
 ```
 
 ---

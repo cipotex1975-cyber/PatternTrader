@@ -44,6 +44,23 @@ data_providers:
     testnet: true
   yahoo:
     enabled: true
+  polygon:
+    api_key: "${POLYGON_API_KEY}"
+    enabled: true
+  alphavantage:
+    api_key: "${ALPHAVANTAGE_API_KEY}"
+    enabled: true
+  metatrader:
+    enabled: false
+    login: 0
+    password: "${METATRADER_PASSWORD}"
+    server: ""
+    path: ""
+  interactive_brokers:
+    enabled: false
+    host: "127.0.0.1"
+    port: 7497
+    client_id: 1
 
 market:
   default_timeframes:
@@ -68,6 +85,16 @@ market:
     bb_period: 20
     bb_std: 2.0
     vwap_enabled: true
+    momentum_period: 10
+
+  structure:
+    pivot_lookback: 2
+    fractal_window: 2
+    zigzag_threshold: 0.03
+    zigzag_atr_multiplier: 1.5
+    trend_min_pivots: 2
+    trend_strength_lookback: 5
+    channel_slope_tolerance: 0.15
 
 patterns:
   scoring:

@@ -1,0 +1,133 @@
+# Configuración de parámetros por par de divisas
+# Cada par puede tener sus propios ajustes de detección, SL/TP y filtros
+
+default:
+  window: 200
+  step: 100
+  max_patterns: 500
+  sl_tp:
+    double_top:
+      sl_method: peaks_midpoint   # peaks, peaks_midpoint, neckline
+      sl_buffer: 0.002
+    double_bottom:
+      sl_method: troughs
+      sl_buffer: 0.002
+    head_and_shoulders:
+      sl_method: peaks_midpoint
+      sl_buffer: 0.002
+    inverse_head_and_shoulders:
+      sl_method: neckline
+      sl_buffer: 0.002
+    bull_flag:
+      sl_method: flag_low
+      sl_buffer: 0.002
+    bear_flag:
+      sl_method: flag_high
+      sl_buffer: 0.002
+    bull_pennant:
+      sl_method: flag_low
+      sl_buffer: 0.002
+    bear_pennant:
+      sl_method: flag_high
+      sl_buffer: 0.002
+  exclude: []
+
+pairs:
+  USDCAD:
+    timeframe: H1
+    window: 200
+    step: 100
+    sl_tp:
+      double_bottom:
+        sl_method: troughs
+        sl_buffer: 0.002
+      head_and_shoulders:
+        sl_method: peaks_midpoint
+        sl_buffer: 0.002
+      bear_flag:
+        sl_method: flag_high
+        sl_buffer: 0.002
+    exclude:
+      - double_top                     # 35% WR, -$11,681
+      - inverse_head_and_shoulders     # 47.6% WR, -$3,867
+      - bull_flag                      # 0% WR (2 trades)
+
+  USDJPY:
+    timeframe: H1
+    window: 150
+    step: 75
+    sl_tp:
+      double_top:
+        sl_method: neckline
+        sl_buffer: 0.004
+      double_bottom:
+        sl_method: troughs
+        sl_buffer: 0.004
+      head_and_shoulders:
+        sl_method: neckline
+        sl_buffer: 0.004
+      inverse_head_and_shoulders:
+        sl_method: neckline
+        sl_buffer: 0.003
+    exclude:
+      - double_top         # 36.7% WR - SHORT en uptrend
+      - head_and_shoulders # 33.3% WR - peor performer
+      - double_bottom      # 43.6% WR, 78 trades = muchas falsas señales
+
+  EURUSD:
+    timeframe: H1
+    window: 200
+    step: 100
+    sl_tp:
+      double_top:
+        sl_method: peaks_midpoint
+        sl_buffer: 0.003
+      double_bottom:
+        sl_method: troughs
+        sl_buffer: 0.003
+    exclude: []
+
+  GBPUSD:
+    timeframe: H1
+    window: 200
+    step: 100
+    sl_tp:
+      double_top:
+        sl_method: peaks_midpoint
+        sl_buffer: 0.003
+      double_bottom:
+        sl_method: troughs
+        sl_buffer: 0.003
+    exclude: []
+
+  AUDUSD:
+    timeframe: H1
+    window: 180
+    step: 90
+    sl_tp:
+      double_top:
+        sl_method: neckline
+        sl_buffer: 0.003
+      double_bottom:
+        sl_method: troughs
+        sl_buffer: 0.003
+    exclude: []
+
+  XAUUSD:
+    timeframe: H1
+    window: 150
+    step: 75
+    sl_tp:
+      double_top:
+        sl_method: peaks_midpoint
+        sl_buffer: 0.005
+      double_bottom:
+        sl_method: troughs
+        sl_buffer: 0.005
+      head_and_shoulders:
+        sl_method: peaks_midpoint
+        sl_buffer: 0.005
+      inverse_head_and_shoulders:
+        sl_method: neckline
+        sl_buffer: 0.005
+    exclude: []

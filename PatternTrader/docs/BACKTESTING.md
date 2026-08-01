@@ -30,52 +30,88 @@ PatternTrader incluye un motor de backtesting completo para evaluar estrategias 
 
 ### Script de Backtesting con Datos Reales
 
-El proyecto incluye un script completo `run_backtest.py` que carga datos históricos, detecta patrones automáticamente y ejecuta el backtest:
+El proyecto incluye un script completo `run_backtest.py` que carga datos históricos, detecta patrones automáticamente y ejecuta el backtest. Cada par de divisas tiene su propia configuración en `config/pairs.yaml`.
 
 ```bash
-# Ejecutar backtest con todos los datos (default)
-python run_backtest.py
+# Ejecutar backtest para un par (usa configuración del par)
+python run_backtest.py --pair USDCAD
+python run_backtest.py --pair USDJPY
 
-# Usar un archivo de datos específico
-python run_backtest.py --data /ruta/a/misdatos.txt
+# Sobreescribir exclude desde CLI
+python run_backtest.py --pair USDJPY --exclude "head_and_shoulders"
+
+# Usar archivo de datos específico
+python run_backtest.py --pair USDCAD --data /ruta/a/misdatos.txt
 
 # Limitar a N velas
-python run_backtest.py --max-candles 20000
+python run_backtest.py --pair USDCAD --max-candles 20000
 
-# Ejecución rápida (mayor step = menos ventanas = más rápido)
-python run_backtest.py --step 200 --max-patterns 300
-
-# Excluir patrones perdedores
-python run_backtest.py --exclude bear_flag,double_top
-
-# Excluir + ejecución rápida
-python run_backtest.py --exclude bear_flag --step 200 --max-candles 30000
+# Ejecución rápida
+python run_backtest.py --pair USDCAD --step 200 --max-patterns 300
 ```
 
 **Parámetros CLI** de `run_backtest.py`:
 
 | Parámetro | Valor por defecto | Descripción |
 |-----------|-------------------|-------------|
-| `--data` | `app/datos_test/USDCAD_H1_201005311000_202606010000.txt` | Ruta al archivo de datos |
+| `--pair` | `None` (USDCAD) | Par de divisas para usar configuración (ej: USDCAD, USDJPY) |
+| `--data` | auto (según par) | Ruta al archivo de datos |
 | `--max-candles` | `None` (todas) | Número máximo de velas a usar |
-| `--step` | `100` | Paso entre ventanas deslizantes (mayor = más rápido, pero pierde patrones) |
-| `--max-patterns` | `500` | Número máximo de patrones a detectar |
-| `--exclude` | `None` (todos) | Patrones a excluir, separados por coma |
-| `--min-rr` | `1.0` | Ratio Riesgo/Recompensa mínimo para aceptar un trade |
+| `--step` | según par | Paso entre ventanas deslizantes |
+| `--max-patterns` | según par | Número máximo de patrones a detectar |
+| `--exclude` | según par | Patrones a excluir, separados por coma |
 
 **Patrones disponibles**: `double_bottom`, `double_top`, `inverse_head_and_shoulders`, `head_and_shoulders`, `bull_flag`, `bear_flag`, `bull_pennant`, `bear_pennant`
 
-> **Nota sobre `--step`**: Un step más grande analiza menos ventanas, lo que acelera la ejecución pero puede omitir patrones. Para el backtest final serio, usa `step=100` o menor.
+### Configuración por Par
 
-> **Nota sobre `--exclude`**: Los patrones SHORT (`bear_flag`, `double_top`) tienden a perder en mercados en tendencia alcista. Excluirlos puede mejorar significativamente los resultados.
+Cada par tiene sus propios parámetros en `config/pairs.yaml`:
 
-**Parámetros internos** configurables directamente en el script:
+```yaml
+default:                    # Valores por defecto para todos los pares
+  window: 200
+  step: 100
+  sl_tp:
+    double_top:
+      sl_method: peaks_midpoint
+      sl_buffer: 0.002
 
-| Parámetro | Valor por defecto | Descripción |
-|-----------|-------------------|-------------|
-| `window` | 200 | Tamaño de la ventana deslizante (número de velas por ventana) |
-| `initial_capital` | 100000 | Capital inicial |
-| `risk_per_trade` | 0.02 | Riesgo por operación (2%) |
+pairs:
+  USDCAD:                   # Configuración específica de USDCAD
+    timeframe: H1
+    window: 200
+    step: 100
+    exclude: []
+
+  USDJPY:                   # Configuración específica de USDJPY
+    timeframe: H1
+    window: 150             # Ventana más corta
+    step: 75
+    sl_tp:
+      double_top:
+        sl_method: neckline
+        sl_buffer: 0.004    # Stop más amplio
+    exclude: []
+```
+
+**SL methods disponibles:**
+
+| Método | Descripción | Ejemplo |
+|--------|-------------|---------|
+| `peaks` | Encima de los peaks (original) | `max(peak1, peak2) * (1 + buffer)` |
+| `peaks_midpoint` | Punto medio entre neckline y peaks | `(neckline + max(peak1, peak2)) / 2 * (1 + buffer)` |
+| `neckline` | Encima del neckline (tight) | `neckline * (1 + buffer)` |
+| `troughs` | Debajo de los troughs | `min(trough1, trough2) * (1 - buffer)` |
+| `flag_low` | Debajo del最低点 del flag | `flag_low * (1 - buffer)` |
+| `flag_high` | Encima del最高点 del flag | `flag_high * (1 + buffer)` |
+
+**Cómo elegir la configuración:**
+
+1. **Mercado en tendencia**: Excluir patrones SHORT (`--exclude bear_flag,double_top`)
+2. **Mercado volátil**: Usar `sl_buffer` más amplio (0.004-0.005)
+3. **Mercado lateral**: Usar `sl_buffer` más ajustado (0.001-0.002)
+4. **Más señales**: Reducir `window` y `step`
+5. **Mejor calidad**: Aumentar `window` y usar `--exclude` para patrones débiles
 
 ### ¿Qué es una ventana deslizante?
 

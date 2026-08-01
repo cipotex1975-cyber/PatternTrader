@@ -1,3 +1,3 @@
-from app.data.providers.binance import BinanceProvider
+from app.data.providers.binance.provider import BinanceProvider
 
 __all__ = ["BinanceProvider"]

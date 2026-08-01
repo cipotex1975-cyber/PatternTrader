@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from app.core.logger import get_logger
-from app.market.candles.models import Candle, CandleData
+from app.market.candles.models import Candle
 
 logger = get_logger("CandleStore")
 
@@ -16,13 +16,11 @@ class CandleStore:
         self._max_candles = max_candles
 
     def add(self, candle: Candle) -> None:
-        key = f"{candle.symbol}:{candle.timeframe}"
-        self._candles[candle.symbol][candle.timeframe].append(candle)
+        bucket = self._candles[candle.symbol][candle.timeframe]
+        bucket.append(candle)
 
-        if len(self._candles[candle.symbol][candle.timeframe]) > self._max_candles:
-            self._candles[candle.symbol][candle.timeframe] = self._candles[candle.symbol][
-                candle.timeframe
-            ][-self._max_candles :]
+        if len(bucket) > self._max_candles:
+            bucket[:] = bucket[-self._max_candles :]  # noqa: E203
 
     def get(
         self,
