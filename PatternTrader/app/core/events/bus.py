@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from functools import partial
 from typing import Any, Callable, Coroutine
 
 from app.core.events.models import Event, EventType
@@ -13,16 +12,22 @@ logger = get_logger("EventBus")
 
 class EventBus:
     def __init__(self) -> None:
-        self._handlers: dict[EventType, list[Callable[..., Coroutine[Any, Any, None]]]] = defaultdict(list)
+        self._handlers: dict[EventType, list[Callable[..., Coroutine[Any, Any, None]]]] = (
+            defaultdict(list)
+        )
         self._queue: asyncio.Queue[Event] = asyncio.Queue()
         self._running = False
         self._task: asyncio.Task | None = None
 
-    def subscribe(self, event_type: EventType, handler: Callable[..., Coroutine[Any, Any, None]]) -> None:
+    def subscribe(
+        self, event_type: EventType, handler: Callable[..., Coroutine[Any, Any, None]]
+    ) -> None:
         self._handlers[event_type].append(handler)
         logger.debug(f"Handler {handler.__name__} subscribed to {event_type.value}")
 
-    def unsubscribe(self, event_type: EventType, handler: Callable[..., Coroutine[Any, Any, None]]) -> None:
+    def unsubscribe(
+        self, event_type: EventType, handler: Callable[..., Coroutine[Any, Any, None]]
+    ) -> None:
         if handler in self._handlers[event_type]:
             self._handlers[event_type].remove(handler)
             logger.debug(f"Handler {handler.__name__} unsubscribed from {event_type.value}")
@@ -40,7 +45,9 @@ class EventBus:
                     try:
                         await handler(event)
                     except Exception as e:
-                        logger.error(f"Error in handler {handler.__name__} for event {event.type.value}: {e}")
+                        logger.error(
+                            f"Error in handler {handler.__name__} for event {event.type.value}: {e}"
+                        )
             except asyncio.TimeoutError:
                 continue
             except Exception as e:

@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-from typing import Optional
-
-from app.core.config.settings import get_settings
-from app.core.logger import get_logger
-from app.market.candles.models import Candle
-from app.patterns.base_pattern import PatternResult
 from app.confirmation.models import (
     ConfirmationCheck,
     ConfirmationResult,
     ConfirmationRule,
     ConfirmationStatus,
 )
+from app.core.logger import get_logger
+from app.market.candles.models import Candle
+from app.patterns.base_pattern import PatternResult
 
 logger = get_logger("ConfirmationEngine")
 
@@ -58,6 +55,18 @@ class ConfirmationEngine:
                 required=False,
                 weight=0.4,
             ),
+            ConfirmationRule(
+                name="liquidity",
+                description="Market has sufficient sustained liquidity",
+                required=False,
+                weight=0.5,
+            ),
+            ConfirmationRule(
+                name="distance_to_support",
+                description="Distance to nearest support/resistance is reasonable",
+                required=False,
+                weight=0.6,
+            ),
         ]
 
     def confirm(
@@ -86,6 +95,12 @@ class ConfirmationEngine:
         spread_check = self._check_spread(indicators)
         checks.append(spread_check)
 
+        liquidity_check = self._check_liquidity(candles)
+        checks.append(liquidity_check)
+
+        distance_check = self._check_distance_to_support(pattern, indicators, candles)
+        checks.append(distance_check)
+
         passed = sum(1 for c in checks if c.status == ConfirmationStatus.PASSED)
         failed = sum(1 for c in checks if c.status == ConfirmationStatus.FAILED)
 
@@ -111,9 +126,7 @@ class ConfirmationEngine:
             },
         )
 
-    def _check_breakout(
-        self, pattern: PatternResult, candles: list[Candle]
-    ) -> ConfirmationCheck:
+    def _check_breakout(self, pattern: PatternResult, candles: list[Candle]) -> ConfirmationCheck:
         rule = self._get_rule("breakout")
         if not candles:
             return ConfirmationCheck(
@@ -180,9 +193,7 @@ class ConfirmationEngine:
             message=f"Volume ratio: {ratio:.2f}",
         )
 
-    def _check_atr(
-        self, indicators: dict[str, float], candles: list[Candle]
-    ) -> ConfirmationCheck:
+    def _check_atr(self, indicators: dict[str, float], candles: list[Candle]) -> ConfirmationCheck:
         rule = self._get_rule("atr_sufficient")
         atr = indicators.get("atr", 0)
 
@@ -218,7 +229,6 @@ class ConfirmationEngine:
         rule = self._get_rule("trend_alignment")
         ema_21 = indicators.get("ema_21", 0)
         ema_50 = indicators.get("ema_50", 0)
-        ema_200 = indicators.get("ema_200", 0)
 
         if ema_21 == 0 or ema_50 == 0:
             return ConfirmationCheck(
@@ -269,6 +279,81 @@ class ConfirmationEngine:
             rule=rule,
             status=ConfirmationStatus.PASSED,
             message="Spread check passed (placeholder)",
+        )
+
+    def _check_liquidity(self, candles: list[Candle]) -> ConfirmationCheck:
+        rule = self._get_rule("liquidity")
+        if not candles or len(candles) < 20:
+            return ConfirmationCheck(
+                rule=rule,
+                status=ConfirmationStatus.PENDING,
+                message="Insufficient volume data",
+            )
+
+        volumes = [c.data.volume for c in candles[-20:]]
+        avg_volume = sum(volumes) / len(volumes)
+
+        if avg_volume == 0:
+            return ConfirmationCheck(
+                rule=rule,
+                status=ConfirmationStatus.FAILED,
+                message="No liquidity (zero average volume)",
+            )
+
+        variance = sum((v - avg_volume) ** 2 for v in volumes) / len(volumes)
+        std_volume = variance**0.5
+        cv = std_volume / avg_volume
+        passed = cv <= 1.5
+
+        return ConfirmationCheck(
+            rule=rule,
+            status=ConfirmationStatus.PASSED if passed else ConfirmationStatus.FAILED,
+            value=cv,
+            threshold=1.5,
+            message=f"Volume CV: {cv:.2f}",
+        )
+
+    def _check_distance_to_support(
+        self,
+        pattern: PatternResult,
+        indicators: dict[str, float],
+        candles: list[Candle],
+    ) -> ConfirmationCheck:
+        rule = self._get_rule("distance_to_support")
+        if not candles:
+            return ConfirmationCheck(
+                rule=rule,
+                status=ConfirmationStatus.PENDING,
+                message="No candles data available",
+            )
+
+        atr = indicators.get("atr", 0)
+        if atr == 0:
+            return ConfirmationCheck(
+                rule=rule,
+                status=ConfirmationStatus.PENDING,
+                message="ATR not available",
+            )
+
+        price = candles[-1].data.close
+        levels = [v for v in pattern.key_levels.values() if v and v > 0]
+        if not levels:
+            return ConfirmationCheck(
+                rule=rule,
+                status=ConfirmationStatus.PENDING,
+                message="No key levels defined",
+            )
+
+        nearest = min(abs(price - level) for level in levels)
+        distance_atr = nearest / atr
+        passed = 1.0 <= distance_atr <= 10.0
+
+        return ConfirmationCheck(
+            rule=rule,
+            status=ConfirmationStatus.PASSED if passed else ConfirmationStatus.FAILED,
+            value=distance_atr,
+            threshold=2.0,
+            message=f"Distance: {distance_atr:.2f} ATR",
         )
 
     def _get_rule(self, name: str) -> ConfirmationRule:

@@ -1,5 +1,5 @@
-import pytest
 from datetime import datetime, timezone
+
 from app.market.candles.models import Candle, CandleData
 from app.patterns.base_pattern import PatternResult, PatternType
 from app.scoring.engine import ScoringEngine

@@ -683,6 +683,205 @@ asyncio.run(complete_backtest_analysis())
 
 ---
 
+## Motor Independiente de Backtesting
+
+Además del `BacktestEngine` clásico, la plataforma incluye un conjunto de módulos independientes para ejecutar y validar estrategias de forma profesional: `BacktestRunner`, validaciones temporales, simulaciones Monte Carlo y optimización de parámetros.
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                       BacktestRunner                                │
+│  simple · múltiple · paralelo (ThreadPool)                          │
+├────────────────────────────────────────────────────────────────────┤
+│  Validación                Optimización              Métricas      │
+│  ┌───────────────────┐   ┌───────────────────┐   ┌──────────────┐  │
+│  │ Walk Forward      │   │ Grid Search       │   │ Sharpe       │  │
+│  │ Out of Sample     │   │ Random Search     │   │ Sortino      │  │
+│  │ Rolling Window    │   │ Bayesiana (Optuna)│   │ Calmar       │  │
+│  │ Cross Validation  │   └───────────────────┘   │ Ulcer Index  │  │
+│  │ Monte Carlo       │                           │ Expectancy   │  │
+│  └───────────────────┘                           │ Precision…   │  │
+│                                                   └──────────────┘  │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### Módulos
+
+| Módulo | Clase | Descripción |
+|--------|-------|-------------|
+| `app/backtesting/runner.py` | `BacktestRunner` | Backtest simple, múltiple y paralelo |
+| `app/backtesting/validation.py` | `WalkForwardValidator` | Validación walk-forward anclada |
+| | `OutOfSampleValidator` | División entrenamiento/test |
+| | `RollingWindowValidator` | Ventanas rodantes de tamaño fijo |
+| | `CrossValidator` | Validación cruzada por bloques temporales |
+| | `MonteCarloSimulator` | Re-muestreo de trades y percentiles |
+| | `TimeSeriesSplitter` | Splits temporales reutilizables |
+| `app/backtesting/optimization.py` | `BacktestOptimizer` | Grid, random y bayesiana (Optuna) |
+| `app/backtesting/metrics.py` | `MetricsCalculator` | Métricas profesionales + clasificación |
+
+### Backtest Simple y Múltiple
+
+```python
+from app.backtesting.runner import BacktestRunner
+from app.backtesting.models import BacktestConfig
+
+runner = BacktestRunner()
+
+# Simple
+result = runner.run(candles, patterns)
+
+# Múltiple: probar varias configuraciones
+results = runner.run_multiple([
+    {"name": "conservador", "candles": candles, "patterns": patterns,
+     "config": BacktestConfig(risk_per_trade=0.01)},
+    {"name": "agresivo", "candles": candles, "patterns": patterns,
+     "config": BacktestConfig(risk_per_trade=0.03)},
+])
+
+# Comparar
+comparison = runner.compare(results)  # ranking por return/sharpe/win_rate/PF
+```
+
+### Walk Forward
+
+```python
+from app.backtesting.validation import WalkForwardValidator
+from app.backtesting.engine import BacktestEngine
+
+def evaluate(test_candles):
+    result = BacktestEngine().run(test_candles, patterns)
+    return {
+        "total_return": result.total_return,
+        "sharpe_ratio": result.metrics.sharpe_ratio,
+        "win_rate": result.metrics.win_rate,
+    }
+
+validator = WalkForwardValidator(
+    train_size=300,   # velas de entrenamiento acumulado
+    test_size=100,    # velas de test consecutivas
+    step=100,         # desplazamiento entre folds
+    evaluate_fn=evaluate,
+)
+result = validator.run(candles)
+# result.aggregate -> {"sharpe_ratio": {"mean": ..., "std": ..., "min": ..., "max": ...}}
+```
+
+### Out Of Sample y Rolling Window
+
+```python
+from app.backtesting.validation import OutOfSampleValidator, RollingWindowValidator
+
+# Fuera de muestra: últimos 30% como test
+oos = OutOfSampleValidator(test_ratio=0.3, evaluate_fn=evaluate).run(candles)
+
+# Rolling window: ventanas fijas deslizantes
+rolling = RollingWindowValidator(window_size=200, step=50, evaluate_fn=evaluate).run(candles)
+```
+
+### Validación Cruzada
+
+```python
+from app.backtesting.validation import CrossValidator
+
+cv = CrossValidator(n_splits=5, evaluate_fn=evaluate).run(candles)
+# Agrega media/desviación de cada métrica entre folds
+```
+
+### Monte Carlo
+
+```python
+from app.backtesting.validation import MonteCarloSimulator
+
+# Usar los trades de un backtest previo
+simulator = MonteCarloSimulator(random_state=42)
+mc = simulator.simulate(
+    trades=result.trades,
+    n_simulations=1000,
+    initial_capital=100000,
+)
+
+mc.probability_of_profit   # % de simulaciones rentables
+mc.percentiles             # {"p5": ..., "p50": ..., "p95": ...}
+mc.var_95                  # Value at Risk (pérdida en el peor 5%)
+mc.cvar_95                 # Conditional VaR (pérdida media del peor 5%)
+mc.max_drawdowns           # drawdown por simulación
+```
+
+### Optimización de Parámetros
+
+```python
+from app.backtesting.optimization import BacktestOptimizer
+from app.backtesting.engine import BacktestEngine
+from app.backtesting.models import BacktestConfig
+
+def objective(**params):
+    cfg = BacktestConfig(**params)
+    return BacktestEngine(cfg).run(candles, patterns).metrics.sharpe_ratio
+
+optimizer = BacktestOptimizer(random_state=42)
+
+# Grid search
+grid = optimizer.grid_search({"risk_per_trade": [0.01, 0.02, 0.03]}, objective)
+
+# Random search
+random = optimizer.random_search({"risk_per_trade": [0.005, 0.01, 0.02, 0.03, 0.05]},
+                                 objective, n_iter=50)
+
+# Optimización bayesiana (Optuna / TPE)
+bayes = optimizer.bayesian_optimization(
+    {"risk_per_trade": [0.005, 0.01, 0.02, 0.03, 0.05]},
+    objective, n_trials=100,
+)
+
+bayes["best_params"]  # mejores parámetros encontrados
+bayes["best_score"]   # mejor métrica alcanzada
+```
+
+---
+
+## Métricas de Resultado
+
+### Métricas Automáticas (`MetricsCalculator`)
+
+El motor calcula automáticamente sobre cada backtest:
+
+| Métrica | Campo | Descripción |
+|---------|-------|-------------|
+| Win Rate | `win_rate` | % de operaciones ganadoras |
+| Profit Factor | `profit_factor` | Beneficio bruto / pérdida bruta |
+| Sharpe | `sharpe_ratio` | Retorno ajustado por riesgo (retornos por trade) |
+| Sortino | `sortino_ratio` | Sharpe penalizando solo la volatilidad negativa |
+| Calmar | `calmar_ratio` | Retorno anualizado / Max Drawdown |
+| Ulcer Index | `ulcer_index` | Raíz de la media de drawdowns al cuadrado |
+| Max Drawdown | `max_drawdown_pct` | Peor caída pico-a-valle (%) |
+| Drawdown medio | `average_drawdown_pct` | Drawdown medio de la curva |
+| Expectancy | `expectancy` | Valor esperado por operación ($) |
+| Expectancy R | `expectancy_r` | Valor esperado en múltiplos de riesgo |
+| Payoff Ratio | `payoff_ratio` | Ganancia media / pérdida media |
+| Volatilidad | `annualized_volatility` | Volatilidad anualizada de la curva |
+
+### Métricas de Clasificación
+
+Para evaluar señales y modelos ML (WIN vs LOSS):
+
+```python
+from app.backtesting.metrics import MetricsCalculator
+
+cm = MetricsCalculator.classification_metrics(
+    y_true=[1, 0, 1, 1, 0],   # resultados reales
+    y_pred=[1, 1, 0, 1, 0],   # predicciones
+    y_proba=[0.9, 0.6, 0.3, 0.8, 0.4],
+)
+
+cm.precision            # precision
+cm.recall               # recall
+cm.f1_score             # F1
+cm.roc_auc              # AUC-ROC
+cm.pr_auc               # AUC-PR
+cm.confusion_matrix     # [[TN, FP], [FN, TP]]
+```
+
+---
+
 ## Mejores Prácticas
 
 1. **Datos suficientes**: Usar mínimo 1 año de datos

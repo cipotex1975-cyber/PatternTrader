@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
 from typing import Optional
+
+from fastapi import APIRouter, HTTPException
 
 from app.signals.models import Signal, SignalPriority, SignalStatus
 

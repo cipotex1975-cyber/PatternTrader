@@ -74,6 +74,7 @@ app/core/
 app/market/         # Estructura del mercado
 app/patterns/       # Detección de patrones
 app/lifecycle/      # Ciclo de vida
+app/health/         # Health score dinámico
 app/scoring/        # Puntuación
 app/confirmation/   # Confirmación
 app/risk/           # Gestión de riesgo
@@ -141,6 +142,10 @@ app/api/            # Endpoints REST
 │  │ Confirmation│  │    Risk     │  │      Signal         │    │
 │  │   Engine    │  │   Engine    │  │       Engine        │    │
 │  └─────────────┘  └─────────────┘  └─────────────────────┘    │
+│  ┌─────────────┐                                              │
+│  │   Health    │                                              │
+│  │   Engine    │                                              │
+│  └─────────────┘                                              │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────────┐
@@ -300,6 +305,11 @@ await engine.transition(
        │
        ▼
 ┌──────────────┐
+│   Health     │ ──→ Recalcula salud (0-100) cada vela
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
 │   Scoring    │ ──→ Evalúa calidad del patrón
 └──────┬───────┘
        │
@@ -315,9 +325,13 @@ await engine.transition(
        │
        ▼
 ┌──────────────┐
-│   Telegram   │ ──→ Notifica al usuario
+│   Telegram   │ ──→ Notifica al usuario (score ≥ 95)
 └──────────────┘
 ```
+
+Todo este flujo lo orquesta el **`PatternPipeline`**
+(`app/patterns/pipeline.py`), ejecutado periódicamente por `PatternService`
+(`app/patterns/service.py`) vía `Scheduler` al iniciar la API.
 
 ### Flujo de Eventos
 

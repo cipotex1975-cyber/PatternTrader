@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 from pydantic import BaseModel, Field
-from uuid import UUID, uuid4
 
 
 class MLPrediction(BaseModel):

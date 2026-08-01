@@ -103,8 +103,11 @@ patterns:
     min_score_to_alert: 85
     min_score_to_send: 95
   lifecycle:
+    enabled: true
     check_interval_seconds: 5
     max_patterns_per_symbol: 50
+    timeframes: ["15m", "1h", "4h"]
+    candle_limit: 500
   health:
     recalculate_interval_seconds: 10
 

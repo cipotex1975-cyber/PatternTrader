@@ -194,10 +194,13 @@ patterns:
     min_score_to_alert: 85        # Score mínimo para alertar
     min_score_to_send: 95         # Score mínimo para enviar señal
   
-  # Configuración de lifecycle
+  # Configuración de lifecycle / pipeline
   lifecycle:
+    enabled: true                 # Ejecuta el pipeline al iniciar la API
     check_interval_seconds: 5     # Intervalo de verificación
     max_patterns_per_symbol: 50   # Máximo de patrones por símbolo
+    timeframes: ["15m", "1h", "4h"]  # Timeframes del pipeline
+    candle_limit: 500             # Velas por símbolo en cada ciclo
   
   # Configuración de health
   health:

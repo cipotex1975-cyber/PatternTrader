@@ -1,5 +1,4 @@
-import pytest
-from app.core.config.settings import Settings, get_settings
+from app.core.config.settings import get_settings
 
 
 def test_settings_loads():
@@ -25,16 +24,18 @@ def test_scoring_weights():
     weights = settings.scoring.weights
     assert weights.pattern_structure == 0.35
     assert weights.volume == 0.20
-    total = sum([
-        weights.pattern_structure,
-        weights.volume,
-        weights.momentum,
-        weights.atr,
-        weights.rsi,
-        weights.macd,
-        weights.ema,
-        weights.ml_history,
-    ])
+    total = sum(
+        [
+            weights.pattern_structure,
+            weights.volume,
+            weights.momentum,
+            weights.atr,
+            weights.rsi,
+            weights.macd,
+            weights.ema,
+            weights.ml_history,
+        ]
+    )
     assert abs(total - 1.0) < 0.01
 
 

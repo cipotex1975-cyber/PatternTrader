@@ -7,7 +7,12 @@ from scipy.signal import find_peaks as _scipy_find_peaks
 
 from app.core.logger import get_logger
 from app.market.candles.models import Candle
-from app.patterns.base_pattern import BasePattern, PatternResult, PatternType, PatternStatus, TradeDirection
+from app.patterns.base_pattern import (
+    BasePattern,
+    PatternResult,
+    PatternType,
+    TradeDirection,
+)
 from app.patterns.registry import register_pattern
 
 logger = get_logger("DoubleBottomPattern")
@@ -38,7 +43,6 @@ class DoubleBottomPattern(BasePattern):
 
         highs = np.array([c.data.high for c in candles])
         lows = np.array([c.data.low for c in candles])
-        closes = np.array([c.data.close for c in candles])
 
         troughs = self._find_troughs(lows, distance=3)
         if len(troughs) < 2:

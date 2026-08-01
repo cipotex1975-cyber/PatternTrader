@@ -17,7 +17,9 @@ PatternTrader es una plataforma de inteligencia para mercados financieros que de
 - **Motor de estados** que administra el ciclo de vida de cada patrón
 - **Sistema de scoring** que evalúa la calidad de cada detección
 - **Machine Learning** para predicción de probabilidad de éxito
-- **Backtesting avanzado** con métricas profesionales
+- **Aprendizaje continuo**: base de conocimiento alimentada por cada operación (offline y online)
+- **Backtesting avanzado** con motor independiente: simple, múltiple, walk-forward, Monte Carlo, out-of-sample, rolling window, validación cruzada, grid/random/búsqueda bayesiana
+- **Métricas profesionales**: Win Rate, Profit Factor, Sharpe, Sortino, Calmar, Ulcer Index, Drawdown, Expectancy, Precision, Recall, F1 y Matriz de Confusión
 - **Gestión de riesgo** automática
 - **Notificaciones por Telegram** en tiempo real
 - **API REST** completa con FastAPI
@@ -103,7 +105,32 @@ python -m app.main
 
 ## Ejemplos de Uso
 
-### 1. Detectar Patrones en un Activo
+### 1. Ejecutar el Pipeline Completo
+
+```python
+import asyncio
+from app.patterns.pipeline import PatternPipeline
+
+async def run_pipeline():
+    # Usa el provider configurado (binance por defecto)
+    pipeline = PatternPipeline()
+
+    # Procesa el flujo completo para un símbolo/timeframe:
+    # detección → lifecycle → health → confirmación → scoring → señal → telegram
+    stats = await pipeline.process_symbol("BTCUSDT", "1h")
+    print(stats)  # tracked / active / expired / confirmed / signals_sent
+
+asyncio.run(run_pipeline())
+```
+
+El pipeline también acepta un `data_source` inyectable (útil en tests):
+
+```python
+pipeline = PatternPipeline(data_source=lambda symbol, timeframe: my_candles)
+await pipeline.process_symbol("BTCUSDT", "1h")
+```
+
+### 2. Detectar Patrones en un Activo
 
 ```python
 import asyncio
@@ -156,7 +183,7 @@ async def detect_patterns():
 asyncio.run(detect_patterns())
 ```
 
-### 2. Calcular Score de un Patrón
+### 3. Calcular Score de un Patrón
 
 ```python
 from app.scoring.engine import ScoringEngine
@@ -195,7 +222,7 @@ for component in score.components:
     print(f"  - {component.name}: {component.score:.0f}/100 (peso: {component.weight})")
 ```
 
-### 3. Ejecutar Backtesting
+### 4. Ejecutar Backtesting
 
 ```python
 import asyncio
@@ -267,7 +294,7 @@ async def run_backtest():
 asyncio.run(run_backtest())
 ```
 
-### 4. Evaluar Riesgo
+### 5. Evaluar Riesgo
 
 ```python
 from app.risk.engine import RiskEngine
@@ -309,7 +336,7 @@ if assessment.recommendations:
         print(f"  💡 {rec}")
 ```
 
-### 5. Usar la API REST
+### 6. Usar la API REST
 
 ```bash
 # Verificar salud del sistema
@@ -394,6 +421,7 @@ Ver [CONFIGURATION.md](docs/CONFIGURATION.md) para más detalles.
 | [PATTERNS.md](docs/PATTERNS.md) | Guía de detección de patrones |
 | [MACHINE_LEARNING.md](docs/MACHINE_LEARNING.md) | Guía de modelos ML |
 | [BACKTESTING.md](docs/BACKTESTING.md) | Guía de backtesting |
+| [LEARNING.md](docs/LEARNING.md) | Aprendizaje continuo (offline y online) |
 | [CONFIGURATION.md](docs/CONFIGURATION.md) | Referencia de configuración |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Guía de despliegue |
 
@@ -424,10 +452,14 @@ pytest tests/integration/
 black app/ tests/
 isort app/ tests/
 
+# Verificar formato (sin modificar archivos)
+black --check app/ tests/
+isort --check-only app/ tests/
+
 # Verificar tipos
 mypy app/
 
-# Linting
+# Linting (usa .flake8: max-line-length=100)
 flake8 app/ tests/
 ```
 

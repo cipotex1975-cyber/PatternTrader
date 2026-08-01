@@ -4,9 +4,9 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
-from uuid import UUID, uuid4
 
 from app.market.candles.models import Candle
 
@@ -65,11 +65,12 @@ class PatternResult(BaseModel):
 
     @property
     def is_active(self) -> bool:
-        return self.status in {
-            PatternStatus.DETECTED,
-            PatternStatus.FORMING,
-            PatternStatus.WAITING_BREAKOUT,
-            PatternStatus.CONFIRMED,
+        return self.status not in {
+            PatternStatus.CLOSED,
+            PatternStatus.INVALIDATED,
+            PatternStatus.EXPIRED,
+            PatternStatus.CANCELLED,
+            PatternStatus.REJECTED,
         }
 
     @property
@@ -149,3 +150,29 @@ class BasePattern(ABC):
             "type": self.pattern_type.value,
             "max_confirmation_candles": self.max_confirmation_candles,
         }
+
+    def plot(
+        self,
+        candles: list[Candle],
+        pattern: PatternResult | None = None,
+        title: str | None = None,
+    ) -> Any:
+        """Generate a plotly figure showing the pattern over the candles.
+
+        Returns a ``plotly.graph_objects.Figure``. Patterns can override this
+        method to draw pattern-specific shapes or save the figure.
+        """
+        from app.visualization.charts import ChartGenerator
+
+        if title is None:
+            if pattern is not None:
+                title = f"{self.name} ({pattern.symbol}:{pattern.timeframe})"
+            else:
+                title = self.name
+
+        patterns = [pattern] if pattern is not None else None
+        return ChartGenerator().create_candlestick_chart(
+            candles,
+            title=title,
+            patterns=patterns,
+        )

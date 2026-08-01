@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Optional
 
 from app.core.logger import get_logger
-from app.data.providers.base import IDataProvider, OHLCV
+from app.data.providers.base import OHLCV, IDataProvider
 
 logger = get_logger("HistoricalDownloader")
 

@@ -3,10 +3,10 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
-from pydantic import Field, field_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -141,8 +141,11 @@ class PatternScoringSettings(BaseSettings):
 
 
 class PatternLifecycleSettings(BaseSettings):
+    enabled: bool = True
     check_interval_seconds: int = 5
     max_patterns_per_symbol: int = 50
+    timeframes: list[str] = ["15m", "1h", "4h"]
+    candle_limit: int = 500
 
 
 class PatternHealthSettings(BaseSettings):

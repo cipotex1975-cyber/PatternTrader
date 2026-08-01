@@ -1,17 +1,18 @@
 from app.database.base import Base, get_async_session
 from app.database.models import (
     Asset,
+    Backtest,
     Candle,
     Indicator,
-    Pattern,
+    KnowledgeEntry,
     Lifecycle,
+    Log,
+    Metric,
+    MLModel,
+    Pattern,
+    Prediction,
     Signal,
     Trade,
-    Backtest,
-    Prediction,
-    MLModel,
-    Metric,
-    Log,
 )
 
 __all__ = [
@@ -29,4 +30,5 @@ __all__ = [
     "MLModel",
     "Metric",
     "Log",
+    "KnowledgeEntry",
 ]

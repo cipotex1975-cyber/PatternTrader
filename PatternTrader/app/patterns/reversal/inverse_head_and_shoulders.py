@@ -7,7 +7,12 @@ from scipy.signal import find_peaks as _scipy_find_peaks
 
 from app.core.logger import get_logger
 from app.market.candles.models import Candle
-from app.patterns.base_pattern import BasePattern, PatternResult, PatternType, PatternStatus, TradeDirection
+from app.patterns.base_pattern import (
+    BasePattern,
+    PatternResult,
+    PatternType,
+    TradeDirection,
+)
 from app.patterns.registry import register_pattern
 
 logger = get_logger("InverseHeadAndShouldersPattern")
@@ -75,7 +80,9 @@ class InverseHeadAndShouldersPattern(BasePattern):
                 symbol=symbol,
                 timeframe=timeframe,
                 direction=TradeDirection.LONG,
-                confidence=self._calculate_confidence(left_price, head_price, right_price, neckline),
+                confidence=self._calculate_confidence(
+                    left_price, head_price, right_price, neckline
+                ),
                 key_levels={
                     "left_shoulder": left_price,
                     "head": head_price,

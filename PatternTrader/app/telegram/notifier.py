@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional
-
 from app.core.config.settings import get_settings
-from app.core.events.bus import EventBus, get_event_bus
+from app.core.events.bus import get_event_bus
 from app.core.events.models import Event, EventType
 from app.core.logger import get_logger
 from app.signals.models import Signal, SignalPriority

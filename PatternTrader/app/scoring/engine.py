@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -296,19 +295,10 @@ class ScoringEngine:
             return None
 
         try:
-            import pandas as pd
-
             closes = np.array([c.data.close for c in candles])
             highs = np.array([c.data.high for c in candles])
             lows = np.array([c.data.low for c in candles])
             volumes = np.array([c.data.volume for c in candles])
-
-            df = pd.DataFrame({
-                "close": closes,
-                "high": highs,
-                "low": lows,
-                "tickvol": volumes,
-            })
 
             def ema(series: np.ndarray, period: int) -> float:
                 alpha = 2 / (period + 1)
@@ -336,10 +326,12 @@ class ScoringEngine:
                 histogram = macd_line - signal_line
                 return macd_line, signal_line, histogram
 
-            def atr_calc(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> float:
+            def atr_calc(
+                highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14
+            ) -> float:
                 tr1 = highs[-period:] - lows[-period:]
-                tr2 = np.abs(highs[-period:] - closes[-period-1:-1])
-                tr3 = np.abs(lows[-period:] - closes[-period-1:-1])
+                tr2 = np.abs(highs[-period:] - closes[-period - 1 : -1])
+                tr3 = np.abs(lows[-period:] - closes[-period - 1 : -1])
                 tr = np.maximum(np.maximum(tr1, tr2), tr3)
                 return np.mean(tr)
 
@@ -354,23 +346,29 @@ class ScoringEngine:
 
             price_change = (closes[-1] - closes[-2]) / closes[-2] if closes[-2] != 0 else 0
             high_low_range = (highs[-1] - lows[-1]) / closes[-1] if closes[-1] != 0 else 0
-            close_position = (closes[-1] - lows[-1]) / (highs[-1] - lows[-1]) if (highs[-1] - lows[-1]) != 0 else 0.5
+            close_position = (
+                (closes[-1] - lows[-1]) / (highs[-1] - lows[-1])
+                if (highs[-1] - lows[-1]) != 0
+                else 0.5
+            )
             trend_strength = (ema_21 - ema_50) / ema_50 if ema_50 != 0 else 0
 
-            features = np.array([
-                rsi_val,
-                macd_line,
-                signal_line,
-                histogram,
-                ema_21,
-                ema_50,
-                atr_val,
-                volume_ratio,
-                price_change,
-                high_low_range,
-                close_position,
-                trend_strength,
-            ])
+            features = np.array(
+                [
+                    rsi_val,
+                    macd_line,
+                    signal_line,
+                    histogram,
+                    ema_21,
+                    ema_50,
+                    atr_val,
+                    volume_ratio,
+                    price_change,
+                    high_low_range,
+                    close_position,
+                    trend_strength,
+                ]
+            )
 
             return features
 

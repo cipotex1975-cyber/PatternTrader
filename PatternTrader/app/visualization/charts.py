@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -67,9 +65,7 @@ class ChartGenerator:
 
         return fig
 
-    def _add_pattern_annotations(
-        self, fig: go.Figure, patterns: list[PatternResult]
-    ) -> None:
+    def _add_pattern_annotations(self, fig: go.Figure, patterns: list[PatternResult]) -> None:
         for pattern in patterns:
             if pattern.key_levels:
                 for level_name, level_price in pattern.key_levels.items():

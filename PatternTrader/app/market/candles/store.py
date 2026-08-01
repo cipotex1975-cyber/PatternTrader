@@ -20,7 +20,7 @@ class CandleStore:
         bucket.append(candle)
 
         if len(bucket) > self._max_candles:
-            bucket[:] = bucket[-self._max_candles :]  # noqa: E203
+            bucket[:] = bucket[-self._max_candles :]
 
     def get(
         self,

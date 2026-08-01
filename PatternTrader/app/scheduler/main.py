@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Callable, Coroutine, Any
+from typing import Any, Callable, Coroutine
 
 from app.core.logger import get_logger
 
@@ -53,7 +53,6 @@ class Scheduler:
         async def _run_daily() -> None:
             while self._running:
                 try:
-                    now = asyncio.get_event_loop().time()
                     await asyncio.sleep(1)
                 except Exception as e:
                     logger.error(f"Error in task {name}: {e}")

@@ -1,19 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import (
+    JSON,
+    Boolean,
     Column,
     DateTime,
     Float,
+    ForeignKey,
     Integer,
     String,
     Text,
-    Boolean,
-    ForeignKey,
-    JSON,
-    Enum,
 )
 from sqlalchemy.orm import relationship
 
@@ -52,9 +50,7 @@ class Candle(Base):
 
     asset = relationship("Asset", back_populates="candles")
 
-    __table_args__ = (
-        {"extend_existing": True},
-    )
+    __table_args__ = ({"extend_existing": True},)
 
 
 class Indicator(Base):
@@ -89,7 +85,7 @@ class Pattern(Base):
     detected_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     expires_at = Column(DateTime)
-    metadata = Column(JSON)
+    metadata_json = Column(JSON)
 
     asset = relationship("Asset", back_populates="patterns")
     lifecycle = relationship("Lifecycle", back_populates="pattern", uselist=False)
@@ -131,7 +127,7 @@ class Signal(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     sent_at = Column(DateTime)
     expires_at = Column(DateTime)
-    metadata = Column(JSON)
+    metadata_json = Column(JSON)
 
 
 class Trade(Base):
@@ -154,7 +150,7 @@ class Trade(Base):
     status = Column(String(20), default="OPEN")
     pattern_name = Column(String(50))
     score = Column(Float)
-    metadata = Column(JSON)
+    metadata_json = Column(JSON)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -176,7 +172,7 @@ class Backtest(Base):
     initial_capital = Column(Float)
     final_capital = Column(Float)
     created_at = Column(DateTime, default=datetime.utcnow)
-    metadata = Column(JSON)
+    metadata_json = Column(JSON)
 
 
 class Prediction(Base):
@@ -192,7 +188,7 @@ class Prediction(Base):
     features_used = Column(JSON)
     actual_outcome = Column(Boolean)
     created_at = Column(DateTime, default=datetime.utcnow)
-    metadata = Column(JSON)
+    metadata_json = Column(JSON)
 
 
 class MLModel(Base):
@@ -207,7 +203,7 @@ class MLModel(Base):
     is_active = Column(Boolean, default=False)
     trained_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
-    metadata = Column(JSON)
+    metadata_json = Column(JSON)
 
 
 class Metric(Base):
@@ -228,4 +224,31 @@ class Log(Base):
     message = Column(Text)
     source = Column(String(100))
     timestamp = Column(DateTime, default=datetime.utcnow)
-    metadata = Column(JSON)
+    metadata_json = Column(JSON)
+
+
+class KnowledgeEntry(Base):
+    __tablename__ = "knowledge_entries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    entry_uuid = Column(String(36), unique=True, nullable=False, index=True)
+    instrument = Column(String(20), nullable=False, index=True)
+    timeframe = Column(String(10), nullable=False, index=True)
+    pattern = Column(String(50), nullable=False, index=True)
+    direction = Column(String(10), default="LONG")
+    variables = Column(JSON, default=dict)
+    indicators = Column(JSON, default=dict)
+    outcome = Column(String(20), nullable=False)
+    pnl = Column(Float, default=0.0)
+    pnl_pct = Column(Float, default=0.0)
+    drawdown = Column(Float, default=0.0)
+    take_profit = Column(Float)
+    stop_loss = Column(Float)
+    risk_reward = Column(Float, default=0.0)
+    duration_seconds = Column(Float, default=0.0)
+    score = Column(Float, default=0.0)
+    entry_time = Column(DateTime)
+    exit_time = Column(DateTime)
+    image_path = Column(String(255), default="")
+    ml_features = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow)

@@ -4,12 +4,12 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from app.core.config.settings import get_settings
-from app.core.events.bus import EventBus, get_event_bus
+from app.core.events.bus import get_event_bus
 from app.core.events.models import Event, EventType
 from app.core.logger import get_logger
-from app.patterns.base_pattern import PatternResult, PatternStatus
+from app.patterns.base_pattern import PatternResult
 from app.scoring.models import ScoreResult
-from app.signals.models import Signal, SignalPriority, SignalStatus
+from app.signals.models import Signal, SignalPriority
 
 logger = get_logger("SignalEngine")
 
@@ -49,7 +49,11 @@ class SignalEngine:
             logger.warning(f"Invalid price levels for signal: {pattern.pattern_name}")
             return None
 
-        rr_ratio = abs(take_profit - entry_price) / abs(entry_price - stop_loss) if abs(entry_price - stop_loss) > 0 else 0
+        rr_ratio = (
+            abs(take_profit - entry_price) / abs(entry_price - stop_loss)
+            if abs(entry_price - stop_loss) > 0
+            else 0
+        )
 
         reasons = self._generate_reasons(pattern, score, ml_probability)
 

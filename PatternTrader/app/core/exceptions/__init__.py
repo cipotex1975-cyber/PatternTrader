@@ -1,15 +1,15 @@
 from app.core.exceptions.base import (
-    PatternTraderError,
-    ConfigurationError,
-    DataProviderError,
-    PatternError,
-    MarketDataError,
     BacktestingError,
+    ConfigurationError,
+    DatabaseError,
+    DataProviderError,
+    MarketDataError,
     MLModelError,
+    PatternError,
+    PatternTraderError,
     RiskError,
     SignalError,
     TelegramError,
-    DatabaseError,
 )
 
 __all__ = [

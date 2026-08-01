@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import asyncio
-import sys
-from pathlib import Path
-
 import uvicorn
 
 from app.api.main import create_app
 from app.core.config.settings import get_settings
-from app.core.logger import setup_logger, get_logger
+from app.core.logger import get_logger, setup_logger
 
 
 def main() -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from app.core.events.bus import EventBus, get_event_bus
+from app.core.events.bus import get_event_bus
 from app.core.events.models import Event, EventType
 from app.core.logger import get_logger
 from app.lifecycle.models import LifecycleEvent, LifecycleState, LifecycleTransition
@@ -43,7 +43,8 @@ class LifecycleEngine:
         )
 
         logger.info(
-            f"Registered lifecycle for {pattern.pattern_name} on {pattern.symbol}:{pattern.timeframe}"
+            f"Registered lifecycle for {pattern.pattern_name} on "
+            f"{pattern.symbol}:{pattern.timeframe}"
         )
         return lifecycle
 
@@ -63,6 +64,10 @@ class LifecycleEngine:
             logger.warning(f"Lifecycle {lifecycle_id} is not active")
             return None
 
+        if lifecycle.current_state == to_state:
+            logger.debug(f"Lifecycle {lifecycle_id} already in state {to_state.value}; skipping")
+            return None
+
         transition = lifecycle.add_transition(to_state, reason, metadata)
 
         await self._event_bus.publish(
@@ -79,9 +84,7 @@ class LifecycleEngine:
             )
         )
 
-        logger.info(
-            f"Lifecycle {lifecycle_id}: {transition.from_state.value} -> {to_state.value}"
-        )
+        logger.info(f"Lifecycle {lifecycle_id}: {transition.from_state.value} -> {to_state.value}")
         return transition
 
     async def update_pattern_status(

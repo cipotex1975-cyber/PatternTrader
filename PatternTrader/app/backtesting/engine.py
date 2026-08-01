@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
 
-import numpy as np
-
+from app.backtesting.metrics import MetricsCalculator
 from app.backtesting.models import (
     BacktestConfig,
     BacktestMetrics,
@@ -70,19 +68,21 @@ class BacktestEngine:
                 if trade.direction == TradeDirection.LONG and candle.data.low <= trade.stop_loss:
                     self._close_trade(trade, trade.stop_loss, candle.data.timestamp, "SL_HIT")
                     continue
-                elif trade.direction == TradeDirection.SHORT and candle.data.high >= trade.stop_loss:
+                elif (
+                    trade.direction == TradeDirection.SHORT and candle.data.high >= trade.stop_loss
+                ):
                     self._close_trade(trade, trade.stop_loss, candle.data.timestamp, "SL_HIT")
                     continue
 
             if trade.take_profit:
                 if trade.direction == TradeDirection.LONG and candle.data.high >= trade.take_profit:
                     self._close_trade(trade, trade.take_profit, candle.data.timestamp, "TP_HIT")
-                elif trade.direction == TradeDirection.SHORT and candle.data.low <= trade.take_profit:
+                elif (
+                    trade.direction == TradeDirection.SHORT and candle.data.low <= trade.take_profit
+                ):
                     self._close_trade(trade, trade.take_profit, candle.data.timestamp, "TP_HIT")
 
-    def _check_new_entries(
-        self, candle: Candle, pattern_map: dict, index: int
-    ) -> None:
+    def _check_new_entries(self, candle: Candle, pattern_map: dict, index: int) -> None:
         open_count = sum(1 for t in self._trades if t.status == TradeStatus.OPEN)
         if open_count >= self._config.max_positions:
             return
@@ -94,9 +94,7 @@ class BacktestEngine:
             if pattern.detected_at and candle.data.timestamp < pattern.detected_at:
                 continue
 
-            existing = any(
-                t.metadata.get("pattern_id") == str(pattern_id) for t in self._trades
-            )
+            existing = any(t.metadata.get("pattern_id") == str(pattern_id) for t in self._trades)
             if existing:
                 continue
 
@@ -180,60 +178,27 @@ class BacktestEngine:
                 else:
                     open_pnl += (trade.entry_price - candle.data.close) * trade.size
 
-        self._equity_curve.append({
-            "timestamp": candle.data.timestamp.isoformat(),
-            "equity": self._capital + open_pnl,
-            "capital": self._capital,
-            "open_pnl": open_pnl,
-        })
+        self._equity_curve.append(
+            {
+                "timestamp": candle.data.timestamp.isoformat(),
+                "equity": self._capital + open_pnl,
+                "capital": self._capital,
+                "open_pnl": open_pnl,
+            }
+        )
 
     def _calculate_metrics(self) -> BacktestMetrics:
         closed_trades = [t for t in self._trades if t.status == TradeStatus.CLOSED]
         if not closed_trades:
             return BacktestMetrics()
 
-        wins = [t for t in closed_trades if t.pnl > 0]
-        losses = [t for t in closed_trades if t.pnl <= 0]
+        start = datetime.fromisoformat(self._equity_curve[0]["timestamp"])
+        end = datetime.fromisoformat(self._equity_curve[-1]["timestamp"])
 
-        total_pnl = sum(t.pnl for t in closed_trades)
-        win_rate = len(wins) / len(closed_trades) if closed_trades else 0
-
-        avg_win = sum(t.pnl for t in wins) / len(wins) if wins else 0
-        avg_loss = sum(t.pnl for t in losses) / len(losses) if losses else 0
-
-        gross_profit = sum(t.pnl for t in wins)
-        gross_loss = abs(sum(t.pnl for t in losses))
-        profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf")
-
-        pnls = [t.pnl for t in closed_trades]
-        avg_pnl = np.mean(pnls) if pnls else 0
-        std_pnl = np.std(pnls) if pnls else 1
-        sharpe = (avg_pnl / std_pnl) * np.sqrt(252) if std_pnl > 0 else 0
-
-        equity_values = [e["equity"] for e in self._equity_curve]
-        if equity_values:
-            peak = equity_values[0]
-            max_dd = 0
-            for eq in equity_values:
-                if eq > peak:
-                    peak = eq
-                dd = (peak - eq) / peak if peak > 0 else 0
-                max_dd = max(max_dd, dd)
-        else:
-            max_dd = 0
-
-        return BacktestMetrics(
-            total_trades=len(closed_trades),
-            winning_trades=len(wins),
-            losing_trades=len(losses),
-            win_rate=win_rate,
-            profit_factor=profit_factor,
-            sharpe_ratio=sharpe,
-            max_drawdown=max_dd * self._config.initial_capital,
-            max_drawdown_pct=max_dd * 100,
-            average_win=avg_win,
-            average_loss=avg_loss,
-            expectancy=avg_pnl,
-            total_pnl=total_pnl,
-            total_pnl_pct=(total_pnl / self._config.initial_capital) * 100,
+        return MetricsCalculator.calculate(
+            trades=closed_trades,
+            equity_curve=self._equity_curve,
+            initial_capital=self._config.initial_capital,
+            start_date=start,
+            end_date=end,
         )

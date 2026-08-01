@@ -1,8 +1,6 @@
 from fastapi import APIRouter, HTTPException
-from typing import Optional
 
 from app.patterns.registry import PatternRegistry
-from app.patterns.base_pattern import PatternResult
 
 router = APIRouter()
 

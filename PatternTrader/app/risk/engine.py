@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 from app.core.config.settings import get_settings
 from app.core.logger import get_logger
 from app.patterns.base_pattern import PatternResult
@@ -118,9 +116,7 @@ class RiskEngine:
 
         return warnings
 
-    def _generate_recommendations(
-        self, position: PositionSize, warnings: list[str]
-    ) -> list[str]:
+    def _generate_recommendations(self, position: PositionSize, warnings: list[str]) -> list[str]:
         recommendations = []
 
         if position.risk_reward_ratio < 2.0:

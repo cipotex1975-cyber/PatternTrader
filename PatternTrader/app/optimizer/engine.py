@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from app.core.logger import get_logger
 
@@ -17,7 +17,9 @@ class OptimizerEngine:
         evaluate_fn: Callable[..., float],
         **kwargs: Any,
     ) -> dict[str, Any]:
-        logger.info(f"Starting grid search with {self._count_combinations(param_grid)} combinations")
+        logger.info(
+            f"Starting grid search with {self._count_combinations(param_grid)} combinations"
+        )
 
         best_score = float("-inf")
         best_params = {}
@@ -56,10 +58,7 @@ class OptimizerEngine:
         best_params = {}
 
         for _ in range(n_iter):
-            params = {
-                key: random.choice(values)
-                for key, values in param_distributions.items()
-            }
+            params = {key: random.choice(values) for key, values in param_distributions.items()}
 
             try:
                 score = evaluate_fn(**params, **kwargs)

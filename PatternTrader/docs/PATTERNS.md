@@ -312,6 +312,22 @@ class BasePattern(ABC):
     def score(self, pattern, indicators) -> float:
         """Calcular score del patrón."""
         ...
+    
+    def update(self, pattern, candles) -> PatternResult:
+        """Actualizar estado del patrón con nuevas velas."""
+        ...
+    
+    def invalidate(self, pattern, reason="") -> PatternResult:
+        """Invalidar el patrón."""
+        ...
+    
+    def statistics(self) -> dict:
+        """Obtener estadísticas del patrón."""
+        ...
+    
+    def plot(self, candles, pattern=None, title=None):
+        """Generar figura plotly con el patrón sobre las velas."""
+        ...
 ```
 
 ### Campo `direction` (TradeDirection)
@@ -505,8 +521,8 @@ result = detector.detect(candles, "BTCUSDT", "1h")
 
 ```
 DETECTED → FORMING → WAITING_BREAKOUT → CONFIRMED → SIGNAL_SENT → OPEN → CLOSED
-                                                    ↓
-                                              INVALIDATED / EXPIRED
+                                                     ↓
+                                               INVALIDATED / EXPIRED / REJECTED
 ```
 
 ### Estados Explicados
@@ -522,26 +538,85 @@ DETECTED → FORMING → WAITING_BREAKOUT → CONFIRMED → SIGNAL_SENT → OPEN
 | `TP_HIT` | Take Profit alcanzado |
 | `SL_HIT` | Stop Loss alcanzado |
 | `CLOSED` | Operación cerrada |
-| `INVALIDATED` | Patrón invalidado |
+| `INVALIDATED` | Patrón invalidado (deformación) |
 | `EXPIRED` | Tiempo máximo de confirmación |
 | `CANCELLED` | Cancelado por el usuario |
 | `REJECTED` | Rechazado por baja calidad |
+
+Cada transición queda registrada con `from_state`, `to_state`, `timestamp` y
+`reason` (`LifecycleTransition` en `app/lifecycle/models.py`).
+
+### Motor de Ciclo de Vida
+
+El `LifecycleEngine` (`app/lifecycle/engine.py`) es un motor **independiente** de
+los detectores. Los detectores **solo detectan estructura** (`BasePattern.detect`),
+el motor administra los estados:
+
+```python
+from app.lifecycle.engine import LifecycleEngine
+from app.lifecycle.models import LifecycleState
+
+engine = LifecycleEngine()
+
+# Registrar un patrón detectado (estado inicial: DETECTED)
+lifecycle = await engine.register(pattern)
+
+# Transicionar estado
+await engine.transition(
+    lifecycle.id,
+    LifecycleState.WAITING_BREAKOUT,
+    reason="Niveles clave definidos",
+)
+
+# Sincronizar desde el estado del patrón
+await engine.update_pattern_status(pattern, PatternStatus.CONFIRMED)
+```
+
+### Vida Útil / EXPIRED
+
+Cada patrón define su `max_confirmation_candles`. Si el precio no rompe en ese
+tiempo, el patrón pasa a `EXPIRED`:
+
+```python
+class DoubleBottomPattern(BasePattern):
+    def max_confirmation_candles(self) -> int:
+        return 20  # Se agota en 20 velas
+
+class BullFlagPattern(BasePattern):
+    def max_confirmation_candles(self) -> int:
+        return 12
+```
+
+`BasePattern.update()` incrementa el contador de velas y transiciona a `EXPIRED`
+cuando se alcanza el máximo.
 
 ---
 
 ## Health Score
 
-Cada patrón tiene un **Health Score** (0-100) que se recalcula con cada vela:
+Cada patrón tiene una **salud dinámica (0-100)** recalculada con **cada vela** por
+el `HealthEngine` (`app/health/engine.py`):
+
+| Factor | Peso | Qué evalúa |
+|--------|------|------------|
+| `time_decay` | 20% | Velas restantes antes de expirar |
+| `deformation` | 20% | Integridad estructural (`validate()`) |
+| `volume` | 15% | El volumen confirma el movimiento |
+| `trend` | 10% | Alineación con la tendencia principal |
+| `atr` | 10% | Volatilidad ATR suficiente |
+| `slope` | 10% | Pendiente reciente del precio |
+| `false_breakouts` | 10% | Rupturas falsas del nivel clave |
+| `volatility` | 5% | Consistencia de la volatilidad |
 
 ```python
-# Factores que afectan el Health Score
-health_factors = {
-    "tiempo_transcurrido": -0.5,  # Por cada vela
-    "volatilidad": +0.3,          # Si ATR es favorable
-    "volumen": +0.2,              # Si volumen confirma
-    "deformacion": -0.4,          # Si el patrón se deforma
-    "rupturas_falsas": -0.5,     # Por cada ruptura falsa
-}
+from app.health.engine import HealthEngine
+
+engine = HealthEngine()
+report = await engine.calculate(pattern, detector, candles, indicators)
+
+print(report.health)          # 0-100
+print(report.weakest_factor)  # Factor que más daña la salud
+pattern.update_health(report.health)
 ```
 
 **Ejemplo de evolución**:
@@ -554,6 +629,52 @@ Vela 15: Health ████       43
 Vela 20: Health ██         21
 Vela 21: Estado → EXPIRED
 ```
+
+---
+
+## Sistema de Confirmación
+
+Detectar un patrón **NO implica enviar una señal**. Antes debe pasar por el
+`ConfirmationEngine` (`app/confirmation/engine.py`):
+
+| Regla | Requerida | Qué valida |
+|-------|-----------|------------|
+| `breakout` | ✅ | Ruptura del nivel clave (`neckline`) |
+| `volume_confirmation` | ✅ | Volumen confirma la ruptura |
+| `risk_reward` | ✅ | R/R ≥ 2.0 (riesgo mínimo) |
+| `atr_sufficient` | | ATR suficiente para el movimiento |
+| `trend_alignment` | | Alineación con la tendencia |
+| `liquidity` | | Liquidez sostenida (CV de volumen) |
+| `spread_acceptable` | | Spread aceptable |
+| `distance_to_support` | | Distancia al soporte/resistencia razonable |
+
+Una señal solo se genera si todas las reglas **requeridas** pasan y el score de
+confirmación ≥ 60.
+
+---
+
+## Pipeline de Patrones
+
+El `PatternPipeline` (`app/patterns/pipeline.py`) **orquesta el flujo completo**
+por cada símbolo/timeframe:
+
+```
+Datos → Indicadores → Detección → Lifecycle → Health → Confirmación → Scoring → Señal → Telegram
+```
+
+```python
+from app.patterns.pipeline import PatternPipeline
+
+pipeline = PatternPipeline()  # usa el provider configurado
+
+# Procesar un símbolo (obtiene velas y corre todo el flujo)
+stats = await pipeline.process_symbol("BTCUSDT", "1h")
+print(stats)  # tracked / active / expired / confirmed / signals_sent
+```
+
+`PatternService` (`app/patterns/service.py`) ejecuta el pipeline de forma
+periódica (vía `Scheduler`) y se arranca automáticamente con la API en el
+lifespan de FastAPI.
 
 ---
 
@@ -580,7 +701,7 @@ El score combina múltiples factores:
 | 60-75 | Observar |
 | 75-85 | Preparar |
 | 85-95 | Alta prioridad |
-| 95+ | Enviar señal |
+| 95+ | Enviar Telegram |
 
 ---
 

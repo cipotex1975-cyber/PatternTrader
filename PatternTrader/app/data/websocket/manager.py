@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import asyncio
-from typing import Any, Callable, Coroutine, Optional
+from typing import Any, Callable, Coroutine
 
 from app.core.logger import get_logger
 
