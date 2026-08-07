@@ -95,6 +95,7 @@ class Lifecycle(Base):
     __tablename__ = "lifecycles"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    lifecycle_uuid = Column(String(36), unique=True, nullable=False, index=True)
     pattern_id = Column(Integer, ForeignKey("patterns.id"), nullable=False)
     current_state = Column(String(20), nullable=False)
     transitions = Column(JSON, default=list)
@@ -161,6 +162,8 @@ class Backtest(Base):
     name = Column(String(100))
     config = Column(JSON)
     metrics = Column(JSON)
+    trades = Column(JSON, default=list)
+    equity_curve = Column(JSON, default=list)
     trades_count = Column(Integer)
     win_rate = Column(Float)
     profit_factor = Column(Float)

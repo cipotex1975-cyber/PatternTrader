@@ -62,6 +62,30 @@ database:
   echo: false                     # Log de queries SQL
 ```
 
+### Migraciones (Alembic)
+
+El esquema se gestiona con **Alembic** (`alembic.ini` + `migrations/`). El
+`env.py` inyecta la URL desde `get_settings()` (respetando el override de
+`DATABASE_URL`), así que las migraciones siempre apuntan a la base configurada.
+
+```bash
+# Aplicar todas las migraciones
+alembic upgrade head
+
+# Ver el estado / historial
+alembic current
+alembic history
+
+# Generar una nueva migración tras cambiar app/database/models.py
+alembic revision --autogenerate -m "descripcion del cambio"
+
+# Revertir la última
+alembic downgrade -1
+```
+
+La API ejecuta `init_db()` (crea el esquema si no existe) al arrancar; en
+producción se recomienda correr `alembic upgrade head` explícitamente.
+
 ### Logging
 
 ```yaml
@@ -354,6 +378,8 @@ DB_PORT=5432
 DB_NAME=pattern_trader
 DB_USER=postgres
 DB_PASSWORD=mi_password_segura
+# Opcional: URL completa de conexión; tiene prioridad sobre los campos discretos
+# DATABASE_URL=postgresql+asyncpg://postgres:mi_password_segura@localhost:5432/pattern_trader
 
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
 TELEGRAM_CHAT_ID=-1001234567890

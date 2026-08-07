@@ -131,6 +131,8 @@ Crear archivo `.env`:
 ```env
 # Base de datos
 DB_PASSWORD=tu_password_seguro
+# Opcional: URL completa (prioridad sobre campos discretos)
+# DATABASE_URL=postgresql+asyncpg://pattern_user:tu_password_seguro@db:5432/pattern_trader
 
 # Telegram
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF
@@ -147,12 +149,19 @@ BINANCE_API_SECRET=tu_api_secret
 # Construir y ejecutar
 docker-compose up -d
 
+# Aplicar migraciones Alembic (una vez la BD esté healthy)
+docker-compose exec app alembic upgrade head
+
 # Ver logs
 docker-compose logs -f app
 
 # Detener
 docker-compose down
 ```
+
+> La API ejecuta `init_db()` (crea el esquema si no existe) al arrancar, pero
+> en producción se recomienda correr `alembic upgrade head` explícitamente
+> para llevar la BD al esquema esperado.
 
 ---
 
@@ -240,6 +249,10 @@ aws rds create-db-instance \
 # 2. Crear base de datos
 psql -h tu-rds-endpoint -U pattern_user -d postgres
 CREATE DATABASE pattern_trader;
+
+# 2b. Aplicar migraciones Alembic (configurar DATABASE_URL en el entorno)
+# DATABASE_URL=postgresql+asyncpg://pattern_user:tu_password@tu-rds-endpoint:5432/pattern_trader
+alembic upgrade head
 
 # 3. Desplegar ECS
 aws ecs create-service \
@@ -525,8 +538,8 @@ services:
 
 ## Checklist de Despliegue
 
-- [ ] Variables de entorno configuradas
-- [ ] Base de datos creada y migrada
+- [ ] Variables de entorno configuradas (incluye `DATABASE_URL` opcional)
+- [ ] Base de datos creada y migrada (`alembic upgrade head`)
 - [ ] Modelos ML entrenados
 - [ ] Telegram configurado (opcional)
 - [ ] SSL habilitado

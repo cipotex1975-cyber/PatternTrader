@@ -123,3 +123,22 @@ async def test_lifecycle_cancelled_and_rejected_not_active():
     assert engine.get_active() == []
     for status in (LifecycleState.CANCELLED, LifecycleState.REJECTED, LifecycleState.EXPIRED):
         assert len(engine.get_by_state(status)) == 1
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_rehydrate_from_db(sync_db):
+    from app.database.repositories import LifecycleRepository
+
+    repo = LifecycleRepository()
+    pattern = create_test_pattern()
+    lifecycle = await LifecycleEngine(repository=repo).register(pattern)
+
+    engine = LifecycleEngine(repository=repo)
+    loaded = await engine.rehydrate_from_db()
+    assert loaded == 1
+
+    restored = engine.get_by_pattern(pattern.id)
+    assert restored is not None
+    assert restored.id == lifecycle.id
+    assert restored.symbol == "BTCUSDT"
+    assert restored.current_state == LifecycleState.DETECTED

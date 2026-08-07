@@ -151,6 +151,34 @@ class LifecycleEngine:
             return None
         return await self.transition(lifecycle_id, to_state, reason, metadata)
 
+    async def rehydrate(
+        self,
+        entries: list[tuple[PatternResult, LifecycleEvent]],
+    ) -> int:
+        """Carga en memoria el estado persistido (es idempotente: solo inserta
+        lifecycles no presentes). Devuelve el número de entradas cargadas."""
+        loaded = 0
+        for pattern, lifecycle in entries:
+            if lifecycle.id in self._lifecycles:
+                continue
+            self._lifecycles[lifecycle.id] = lifecycle
+            self._pattern_lifecycle_map[lifecycle.pattern_id] = lifecycle.id
+            loaded += 1
+        if loaded:
+            logger.info(f"Rehydrated {loaded} lifecycles from database")
+        return loaded
+
+    async def rehydrate_from_db(self) -> int:
+        """Rehidrata el estado desde el repositorio persistente (si existe)."""
+        if self._repository is None:
+            return 0
+        try:
+            entries = await self._repository.list()
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to read lifecycles from database: {e}")
+            return 0
+        return await self.rehydrate(entries)
+
     def get_active(self) -> list[LifecycleEvent]:
         return [lc for lc in self._lifecycles.values() if lc.is_active]
 

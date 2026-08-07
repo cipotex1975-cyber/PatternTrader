@@ -96,8 +96,11 @@ sudo -u postgres psql -c "CREATE USER pattern_user WITH PASSWORD 'tu_password';"
 # Dar permisos
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE pattern_trader TO pattern_user;"
 
-# Configurar tablas
-python -c "from app.database.base import Base, get_engine; import asyncio; asyncio.run(Base.metadata.create_all(get_engine()))"
+# Configurar tablas (migraciones Alembic)
+alembic upgrade head
+
+# Alternativa (solo desarrollo, sin historial de migraciones):
+# python -c "from app.database.base import init_db; import asyncio; asyncio.run(init_db())"
 ```
 
 ### 6. Configurar Variables de Entorno
@@ -110,6 +113,8 @@ DB_PORT=5432
 DB_NAME=pattern_trader
 DB_USER=pattern_user
 DB_PASSWORD=tu_password
+# Opcional: URL completa de conexión (tiene prioridad sobre los campos discretos)
+# DATABASE_URL=postgresql+asyncpg://pattern_user:tu_password@localhost:5432/pattern_trader
 TELEGRAM_BOT_TOKEN=tu_token
 TELEGRAM_CHAT_ID=tu_chat_id
 EOF

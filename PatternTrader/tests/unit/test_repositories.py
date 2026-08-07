@@ -202,6 +202,33 @@ async def test_lifecycle_register_and_update_transition(sync_db):
 
 
 @pytest.mark.asyncio
+async def test_lifecycle_list_rehydrates_pattern_and_lifecycle(sync_db):
+    repo = LifecycleRepository()
+    pattern = make_pattern()
+    lifecycle = make_lifecycle(pattern)
+    await repo.register_pattern(pattern, lifecycle)
+
+    lifecycle.add_transition(LifecycleState.FORMING, reason="structure ok")
+    lifecycle.add_transition(LifecycleState.CONFIRMED, reason="breakout")
+    await repo.update_transition(lifecycle)
+
+    entries = await repo.list()
+    assert len(entries) == 1
+    restored_pattern, restored_lifecycle = entries[0]
+
+    assert restored_pattern.id == pattern.id
+    assert restored_pattern.symbol == "ETHUSDT"
+    assert restored_pattern.pattern_name == "double_top"
+    assert restored_pattern.score == 70.0
+
+    assert restored_lifecycle.id == lifecycle.id
+    assert restored_lifecycle.pattern_id == pattern.id
+    assert restored_lifecycle.symbol == "ETHUSDT"
+    assert restored_lifecycle.current_state == LifecycleState.CONFIRMED
+    assert len(restored_lifecycle.transitions) == 3
+
+
+@pytest.mark.asyncio
 async def test_backtest_roundtrip(sync_db):
     repo = BacktestRepository()
     result = BacktestResult(
@@ -223,6 +250,10 @@ async def test_backtest_roundtrip(sync_db):
     assert loaded["name"] == "test-run"
     assert loaded["result"].metrics.win_rate == 0.6
     assert loaded["result"].total_return == pytest.approx(0.025)
+    assert len(loaded["result"].trades) == 1
+    assert loaded["result"].trades[0].symbol == "BTCUSDT"
+    assert loaded["result"].trades[0].metadata["strategy"] == "trend_follow"
+    assert loaded["result"].equity_curve == [{"x": 0, "y": 100000.0}]
 
     listed = await repo.list()
     assert len(listed) == 1

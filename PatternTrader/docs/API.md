@@ -24,6 +24,18 @@ Actualmente la API no requiere autenticación. En producción, se recomienda imp
 
 ## Endpoints
 
+| Grupo | Prefijo | Descripción |
+|-------|---------|-------------|
+| Health | `/api/v1/health`, `/api/v1/info` | Estado del sistema |
+| Patterns | `/api/v1/patterns` | Patrones disponibles, estadísticas |
+| Signals | `/api/v1/signals` | Señales persistidas en DB |
+| Trades | `/api/v1/trades` | Trades persistidos en DB |
+| Backtests | `/api/v1/backtests` | Resultados de backtests persistidos (incluye `equity_curve` y `trades` reales) |
+| Learning | `/api/v1/learning` | Aprendizaje continuo (entries, stats, train, predict, mode) |
+| Dashboard | `/api/v1/dashboard` | Resumen en tiempo real (estado compartido del pipeline) |
+| Lifecycle | `/api/v1/lifecycle` | Ciclo de vida de patrones (rehidratado desde DB al arrancar) |
+| Models | `/api/v1/models` | Modelos ML registrados y predicciones persistidas |
+
 ### Health Check
 
 #### `GET /api/v1/health`
@@ -332,6 +344,226 @@ curl http://localhost:8000/api/v1/backtests/0/trades
   ]
 }
 ```
+
+---
+
+### Trades
+
+Trades persistidas en la tabla `trades` (motor de ejecución). Requieren una
+base de datos configurada.
+
+#### `GET /api/v1/trades/`
+
+Lista trades con filtros opcionales.
+
+```bash
+curl "http://localhost:8000/api/v1/trades/?status=OPEN&symbol=BTCUSDT"
+```
+
+| Parámetro | Tipo | Descripción |
+|-----------|------|-------------|
+| `status` | `OPEN`/`CLOSED`/`CANCELLED` | Filtrar por estado |
+| `symbol` | string | Filtrar por símbolo |
+
+**Respuesta**:
+
+```json
+{
+  "trades": [
+    {
+      "id": "a1b2c3d4-...",
+      "symbol": "BTCUSDT",
+      "timeframe": "1h",
+      "direction": "LONG",
+      "entry_price": 50000.0,
+      "entry_time": "2026-08-07T10:00:00Z",
+      "exit_price": null,
+      "exit_time": null,
+      "stop_loss": 49500.0,
+      "take_profit": 51000.0,
+      "size": 1.0,
+      "pnl": 0.0,
+      "pnl_pct": 0.0,
+      "status": "OPEN",
+      "pattern_name": "double_bottom"
+    }
+  ]
+}
+```
+
+#### `GET /api/v1/trades/{trade_id}`
+
+Detalle de un trade (UUID persistido).
+
+```bash
+curl http://localhost:8000/api/v1/trades/a1b2c3d4-...
+```
+
+**Respuesta**: igual que el listado pero con `score`, `duration_seconds` y
+`metadata`.
+
+---
+
+### Lifecycle
+
+Ciclo de vida de los patrones. Al reiniciar la API, el estado se rehidrata
+desde la base de datos.
+
+#### `GET /api/v1/lifecycle/statistics`
+
+```bash
+curl http://localhost:8000/api/v1/lifecycle/statistics
+```
+
+**Respuesta**:
+
+```json
+{
+  "statistics": {
+    "DETECTED": 5,
+    "FORMING": 3,
+    "WAITING_BREAKOUT": 2,
+    "CONFIRMED": 1,
+    "SIGNAL_SENT": 0,
+    "OPEN": 0,
+    "TP_HIT": 12,
+    "SL_HIT": 8,
+    "CLOSED": 45,
+    "INVALIDATED": 15,
+    "EXPIRED": 10,
+    "CANCELLED": 2,
+    "REJECTED": 3
+  },
+  "active": 11,
+  "total": 106
+}
+```
+
+#### `GET /api/v1/lifecycle/`
+
+Lista de lifecycles con filtros opcionales.
+
+```bash
+curl "http://localhost:8000/api/v1/lifecycle/?state=OPEN&symbol=BTCUSDT&active=true"
+```
+
+| Parámetro | Tipo | Descripción |
+|-----------|------|-------------|
+| `state` | string | Filtrar por estado (DETECTED, FORMING, …) |
+| `symbol` | string | Filtrar por símbolo |
+| `active` | bool | Solo lifecycles activos |
+
+#### `GET /api/v1/lifecycle/pattern/{pattern_id}`
+
+Lifecycle de un patrón concreto (incluye transiciones).
+
+#### `GET /api/v1/lifecycle/{lifecycle_id}`
+
+Detalle de un lifecycle (incluye historial de transiciones).
+
+---
+
+### Learning
+
+Aprendizaje continuo (offline/online).
+
+#### `GET /api/v1/learning/entries`
+
+Lista de entradas del conocimiento con filtros.
+
+```bash
+curl "http://localhost:8000/api/v1/learning/entries?pattern=double_top&limit=50"
+```
+
+| Parámetro | Tipo | Descripción |
+|-----------|------|-------------|
+| `instrument` | string | Filtrar por símbolo |
+| `timeframe` | string | Filtrar por timeframe |
+| `pattern` | string | Filtrar por patrón |
+| `outcome` | string | Filtrar por resultado (WON/LOST/… ) |
+| `limit` | int | Límite (default 100) |
+
+#### `GET /api/v1/learning/stats`
+
+Estadísticas del conocimiento (win rate por patrón/símbolo/timeframe).
+
+#### `POST /api/v1/learning/record`
+
+Registra una operación manual en la base de conocimiento.
+
+```bash
+curl -X POST http://localhost:8000/api/v1/learning/record \
+  -H "Content-Type: application/json" \
+  -d '{"trade": {"pattern": "double_top", "instrument": "BTCUSDT", "timeframe": "1h", "outcome": "WON"}, "indicators": {"rsi": 72, "atr": 250}}'
+```
+
+#### `POST /api/v1/learning/train`
+
+Entrena el modelo offline sobre las entradas de conocimiento.
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/learning/train?n_splits=5"
+```
+
+#### `POST /api/v1/learning/predict`
+
+Predice la probabilidad de éxito con los indicadores dados (persiste la
+predicción en `predictions`).
+
+#### `GET/POST /api/v1/learning/mode`
+
+Consulta o cambia el modo de aprendizaje (`OFFLINE`/`ONLINE`).
+
+---
+
+### AI Models
+
+Modelos de Machine Learning registrados en `MLModelFactory` y persistidos en
+la tabla `ml_models`.
+
+#### `GET /api/v1/models/`
+
+Lista modelos registrados y persistidos.
+
+```bash
+curl http://localhost:8000/api/v1/models
+```
+
+```json
+{
+  "registered": [
+    {"name": "random_forest", "type": "classification", "loaded": true}
+  ],
+  "models": [
+    {"name": "random_forest", "version": "1.0", "is_active": true, "metrics": {...}}
+  ]
+}
+```
+
+#### `GET /api/v1/models/{name}`
+
+Detalle del modelo (trained, feature importance, registro en DB).
+
+#### `POST /api/v1/models/{name}/predict`
+
+Predice con el modelo entrenado y persiste el resultado en `predictions`.
+
+```bash
+curl -X POST http://localhost:8000/api/v1/models/random_forest/predict \
+  -H "Content-Type: application/json" \
+  -d '{"features": [72, 250, 51000, 50500], "symbol": "BTCUSDT", "timeframe": "1h"}'
+```
+
+```json
+{
+  "model_name": "random_forest",
+  "probability": 0.82,
+  "confidence": 0.7,
+  "features_used": ["rsi", "atr", "ema_21", "ema_50"]
+}
+```
+
+> Devuelve `404` si el modelo no existe y `400` si no está entrenado.
 
 ---
 

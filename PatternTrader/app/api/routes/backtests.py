@@ -138,7 +138,7 @@ async def get_backtest(
         "config": bt.config.model_dump(),
         "metrics": bt.metrics.model_dump(),
         "trades_count": bt.metrics.total_trades,
-        "equity_curve": [],
+        "equity_curve": bt.equity_curve,
         "start_date": bt.start_date.isoformat(),
         "end_date": bt.end_date.isoformat(),
         "initial_capital": bt.initial_capital,
@@ -159,7 +159,7 @@ async def get_backtest_trades(
     return {
         "id": backtest_id,
         "trades_count": item["result"].metrics.total_trades,
-        "trades": [],
+        "trades": [t.model_dump(mode="json") for t in item["result"].trades],
     }
 
 

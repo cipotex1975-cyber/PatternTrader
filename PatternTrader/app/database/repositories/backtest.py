@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from sqlalchemy import select
 
-from app.backtesting.models import BacktestConfig, BacktestMetrics, BacktestResult
+from app.backtesting.models import BacktestConfig, BacktestMetrics, BacktestResult, Trade
 from app.database.base import get_async_session
 from app.database.models import Backtest as BacktestORM
 
@@ -53,6 +53,8 @@ class BacktestRepository:
             name=name,
             config=result.config.model_dump(mode="json"),
             metrics=m.model_dump(mode="json"),
+            trades=[t.model_dump(mode="json") for t in result.trades],
+            equity_curve=result.equity_curve,
             trades_count=len(result.trades),
             win_rate=m.win_rate,
             profit_factor=m.profit_factor,
@@ -73,11 +75,15 @@ class BacktestRepository:
         return BacktestResult(
             config=config,
             metrics=metrics,
-            trades=[],
-            equity_curve=[],
+            trades=BacktestRepository._load_trades(orm.trades or []),
+            equity_curve=orm.equity_curve or [],
             start_date=orm.start_date,
             end_date=orm.end_date,
             initial_capital=orm.initial_capital,
             final_capital=orm.final_capital,
             metadata=orm.metadata_json or {},
         )
+
+    @staticmethod
+    def _load_trades(raw: list[dict]) -> list[Trade]:
+        return [Trade(**t) for t in raw]
