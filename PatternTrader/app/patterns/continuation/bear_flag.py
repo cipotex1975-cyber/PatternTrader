@@ -95,24 +95,6 @@ class BearFlagPattern(BasePattern):
         latest_close = candles[-1].data.close
         return latest_close < flag_high * 1.02
 
-    def score(self, pattern: PatternResult, indicators: dict[str, float]) -> float:
-        score = 55.0
-
-        ema_21 = indicators.get("ema_21", 0)
-        ema_50 = indicators.get("ema_50", 0)
-        if ema_21 < ema_50:
-            score += 15
-
-        rsi = indicators.get("rsi", 50)
-        if 30 < rsi < 60:
-            score += 10
-
-        volume = indicators.get("volume", 0)
-        if volume > 0:
-            score += 5
-
-        return min(100.0, score)
-
     def _find_pole_end(self, highs: np.ndarray, lows: np.ndarray) -> Optional[int]:
         search_end = max(len(lows) // 3, 10)
         min_idx = np.argmin(lows[:search_end])

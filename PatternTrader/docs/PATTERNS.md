@@ -272,6 +272,30 @@ if result:
 
 ---
 
+### Patrones adicionales (Fase 5) — carpeta `app/patterns/neutral/`
+
+Los 13 patrones nuevos se implementan en `app/patterns/neutral/` con geometría compartida en `neutral/geometry.py` (`fit_line`, `line_at`, `find_peaks`, `find_troughs`). Usan regresión lineal sobre highs/lows para identificar estructura:
+
+| Patrón | Tipo | Confirmación | Detección clave |
+|--------|------|--------------|-----------------|
+| `ascending_triangle` | Neutral | 15 velas | Resistencia plana + soporte ascendente convergente |
+| `descending_triangle` | Neutral | 15 velas | Soporte plano + resistencia descendente convergente |
+| `symmetric_triangle` | Neutral | 15 velas | Resistencia descendente + soporte ascendente |
+| `rising_wedge` | Neutral | 15 velas | Ambas líneas suben, soporte más inclinado (converge) |
+| `falling_wedge` | Neutral | 15 velas | Ambas líneas bajan, resistencia más inclinada (converge) |
+| `rectangle` | Neutral | 15 velas | Resistencia y soporte horizontales y paralelos |
+| `channel` | Neutral | 15 velas | Líneas paralelas con pendiente (no planas) |
+| `cup_and_handle` | Continuación | 20 velas | Copa en U (bordes a la misma altura) + asa tras el borde |
+| `rounded_bottom` | Reversión | 25 velas | Parábola convexa (coef. cuadrático > 0) en los lows |
+| `diamond` | Neutral | 15 velas | Rango se contrae y luego se expande |
+| `broadening` | Neutral | 15 velas | Resistencia sube y soporte baja (rango creciente) |
+| `triple_top` | Reversión | 25 velas | 3 picos a nivel similar con neckline en los valles |
+| `triple_bottom` | Reversión | 25 velas | 3 valles a nivel similar con neckline en los picos |
+
+Los `key_levels` de los patrones nuevos son compatibles con `_prepare_price_levels` del pipeline (`neckline`, `support`, `valley`, `target`, `peak1..3`, `trough1..3`, etc.), por lo que generan entry/stop/take-profit automáticamente.
+
+---
+
 ## Interfaz de Patrones
 
 Todos los patrones heredan de `BasePattern`:
@@ -352,6 +376,19 @@ class TradeDirection(str, Enum):
 | `bear_flag` | SHORT | Continuación bajista |
 | `bull_pennant` | LONG | Continuación alcista |
 | `bear_pennant` | SHORT | Continuación bajista |
+| `ascending_triangle` | LONG | Triángulo ascendente (ruptura alcista) |
+| `descending_triangle` | SHORT | Triángulo descendente (ruptura bajista) |
+| `symmetric_triangle` | LONG | Triángulo simétrico |
+| `rising_wedge` | SHORT | Cuña ascendente (ruptura bajista) |
+| `falling_wedge` | LONG | Cuña descendente (ruptura alcista) |
+| `rectangle` | LONG | Rectángulo (continuación) |
+| `channel` | LONG | Canal paralelo |
+| `cup_and_handle` | LONG | Copa con asa (continuación alcista) |
+| `rounded_bottom` | LONG | Suelo redondeado (reversión alcista) |
+| `diamond` | LONG | Diamante |
+| `broadening` | LONG | Megáfono / broadening |
+| `triple_top` | SHORT | Triple techo (reversión bajista) |
+| `triple_bottom` | LONG | Triple suelo (reversión alcista) |
 
 **Ejemplo de uso:**
 
@@ -473,29 +510,14 @@ class MiPatron(BasePattern):
         latest_close = candles[-1].data.close
         return latest_close > neckline * 0.98
     
-    def score(self, pattern: PatternResult, indicators: dict[str, float]) -> float:
-        """Calcular score basado en indicadores."""
-        score = 50.0
-        
-        rsi = indicators.get("rsi", 50)
-        if rsi < 30:  # Sobreventa
-            score += 15
-        elif rsi < 40:
-            score += 10
-        
-        macd = indicators.get("macd", 0)
-        macd_signal = indicators.get("macd_signal", 0)
-        if macd > macd_signal:  # Cruce alcista
-            score += 10
-        
-        return min(100.0, score)
-    
     def _find_troughs(self, data: np.ndarray, distance: int = 3) -> list[int]:
         """Encontrar mínimos locales usando scipy (C-level)."""
         from scipy.signal import find_peaks
         idx, _ = find_peaks(-data, distance=distance)
         return idx.tolist()
 ```
+
+> **Nota**: `BasePattern` ya no define `score()`. La puntuación la calcula el `ScoringEngine` (pesos en YAML + componente ML de conocimiento), no cada patrón.
 
 ### Paso 3: Registrar
 

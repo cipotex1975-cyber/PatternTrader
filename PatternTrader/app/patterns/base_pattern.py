@@ -122,11 +122,6 @@ class BasePattern(ABC):
         """Validate if the pattern is still valid."""
         ...
 
-    @abstractmethod
-    def score(self, pattern: PatternResult, indicators: dict[str, float]) -> float:
-        """Calculate the pattern score."""
-        ...
-
     def update(self, pattern: PatternResult, candles: list[Candle]) -> PatternResult:
         """Update pattern state with new candles."""
         pattern.current_candle_count += 1

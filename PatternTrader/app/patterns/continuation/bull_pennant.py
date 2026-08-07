@@ -102,24 +102,6 @@ class BullPennantPattern(BasePattern):
         latest_close = candles[-1].data.close
         return latest_close > pennant_low * 0.98
 
-    def score(self, pattern: PatternResult, indicators: dict[str, float]) -> float:
-        score = 55.0
-
-        ema_21 = indicators.get("ema_21", 0)
-        ema_50 = indicators.get("ema_50", 0)
-        if ema_21 > ema_50:
-            score += 15
-
-        rsi = indicators.get("rsi", 50)
-        if 40 < rsi < 70:
-            score += 10
-
-        volume = indicators.get("volume", 0)
-        if volume > 0:
-            score += 5
-
-        return min(100.0, score)
-
     def _find_pole_end(self, highs: np.ndarray, lows: np.ndarray) -> Optional[int]:
         max_idx = np.argmax(highs[: len(highs) // 2])
         return max_idx if max_idx > 0 else None

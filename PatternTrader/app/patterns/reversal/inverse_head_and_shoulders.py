@@ -106,26 +106,6 @@ class InverseHeadAndShouldersPattern(BasePattern):
         latest_close = candles[-1].data.close
         return latest_close < neckline * 1.02
 
-    def score(self, pattern: PatternResult, indicators: dict[str, float]) -> float:
-        score = 55.0
-
-        rsi = indicators.get("rsi", 50)
-        if rsi < 30:
-            score += 15
-        elif rsi < 40:
-            score += 10
-
-        macd = indicators.get("macd", 0)
-        macd_signal = indicators.get("macd_signal", 0)
-        if macd > macd_signal:
-            score += 10
-
-        volume = indicators.get("volume", 0)
-        if volume > 0:
-            score += 5
-
-        return min(100.0, score)
-
     def _find_troughs(self, data: np.ndarray, distance: int = 3) -> list[int]:
         idx, _ = _scipy_find_peaks(-data, distance=distance)
         return idx.tolist()

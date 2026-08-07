@@ -18,6 +18,7 @@ PatternTrader es una plataforma de inteligencia para mercados financieros que de
 - **Sistema de scoring** que evalúa la calidad de cada detección
 - **Machine Learning** para predicción de probabilidad de éxito
 - **Aprendizaje continuo**: base de conocimiento alimentada por cada operación (offline y online)
+- **Persistencia real**: PostgreSQL con migraciones Alembic, repositorios write-through (patrones, lifecycle, señales, trades, backtests, predicciones, modelos) y rehidratación del estado al arrancar
 - **Backtesting avanzado** con motor independiente: simple, múltiple, walk-forward, Monte Carlo, out-of-sample, rolling window, validación cruzada, grid/random/búsqueda bayesiana
 - **Métricas profesionales**: Win Rate, Profit Factor, Sharpe, Sortino, Calmar, Ulcer Index, Drawdown, Expectancy, Precision, Recall, F1 y Matriz de Confusión
 - **Gestión de riesgo** automática
@@ -426,6 +427,7 @@ Ver [CONFIGURATION.md](docs/CONFIGURATION.md) para más detalles.
 | [CONFIGURATION.md](docs/CONFIGURATION.md) | Referencia de configuración |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Guía de despliegue |
 | [GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md) | Auditoría de estado, gaps y roadmap de continuación |
+| [plan_fase_4.md](docs/plan_fase_4.md) | Plan y ejecución de la Fase 4 (persistencia y API real) |
 
 ---
 
@@ -497,10 +499,6 @@ class MyNewPattern(BasePattern):
     def validate(self, pattern, candles):
         # Tu lógica de validación aquí
         pass
-    
-    def score(self, pattern, indicators):
-        # Tu lógica de puntuación aquí
-        pass
 ```
 
 ---
@@ -511,23 +509,19 @@ class MyNewPattern(BasePattern):
 - [x] Core modules (Config, Logger, Events)
 - [x] Data Providers (Binance, Bybit, Yahoo, Polygon, AlphaVantage, MetaTrader, IB)
 - [x] Market Engine (Candles, Indicators, Pivots, ZigZag, Fractals, Trendlines)
-- [x] Pattern Detection (8 patrones)
+- [x] Pattern Detection (21 patrones)
 - [x] Lifecycle Engine
 - [x] Scoring System
 - [x] Confirmation Engine
-- [x] ML Framework
-- [x] Backtesting Engine
+- [x] ML Framework (9 modelos: Random Forest, XGBoost, LightGBM, CatBoost, LSTM, Transformer, CNN, Isolation Forest, AutoEncoder)
+- [x] Backtesting Engine (incluye Walk Forward, Monte Carlo, out-of-sample, rolling, CV, grid/random/bayesiana)
 - [x] Risk Management
 - [x] Signal Generation
 - [x] Strategy Layer (hipótesis → estrategias → señal)
 - [x] Telegram Integration
-- [x] Database Models
+- [x] Database Models + persistencia (Alembic, repos write-through, rehidratación al arrancar)
 - [x] REST API
 - [ ] Dashboard UI completo
-- [ ] Más patrones (20+)
-- [ ] LSTM/Transformer models
-- [ ] Walk Forward Optimization
-- [ ] Monte Carlo Simulation
 
 ---
 

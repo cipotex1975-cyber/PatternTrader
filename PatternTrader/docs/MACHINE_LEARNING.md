@@ -18,8 +18,9 @@ PatternTrader integra modelos de Machine Learning para predecir la probabilidad 
 │  └─────────────┘  └─────────────┘  └─────────────────────┘ │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
-│  │   Random    │  │  XGBoost    │  │       LSTM          │ │
-│  │   Forest    │  │             │  │                     │ │
+│  │  Tabulares  │  │  Series     │  │      Anomalías      │ │
+│  │  RF/XGB/LGB │  │ LSTM/Trans/ │  │  IsoForest/AutoEnc  │ │
+│  │  CatBoost   │  │    CNN      │  │                     │ │
 │  └─────────────┘  └─────────────┘  └─────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -87,12 +88,14 @@ model.load("models/random_forest_v1.pkl")
 
 ---
 
-### 2. XGBoost (Próximamente)
+### 2. XGBoost
+
+**Archivo**: `app/ml/models/xgboost_model.py`
 
 **Uso**:
 
 ```python
-from app.ml.models.xgboost import XGBoostModel
+from app.ml.models.xgboost_model import XGBoostModel
 
 model = XGBoostModel(
     n_estimators=100,
@@ -102,16 +105,21 @@ model = XGBoostModel(
 
 model.train(X_train, y_train)
 prediction = model.predict_proba(X_test)
+importance = model.get_feature_importance()  # dict nombre -> importancia
 ```
+
+**Guardado**: `model.save("models/xgboost.ubj")` / `model.load(...)` (formato nativo UBJSON/JSON de XGBoost).
 
 ---
 
-### 3. LightGBM (Próximamente)
+### 3. LightGBM
+
+**Archivo**: `app/ml/models/lightgbm_model.py`
 
 **Uso**:
 
 ```python
-from app.ml.models.lightgbm import LightGBMModel
+from app.ml.models.lightgbm_model import LightGBMModel
 
 model = LightGBMModel(
     n_estimators=100,
@@ -120,27 +128,132 @@ model = LightGBMModel(
 )
 
 model.train(X_train, y_train)
+importance = model.get_feature_importance()
 ```
 
 ---
 
-### 4. LSTM (Próximamente)
+### 4. CatBoost
+
+**Archivo**: `app/ml/models/catboost_model.py`
 
 **Uso**:
 
 ```python
-from app.ml.models.lstm import LSTMModel
+from app.ml.models.catboost_model import CatBoostModel
+
+model = CatBoostModel(
+    iterations=100,
+    depth=6,
+    learning_rate=0.1
+)
+
+model.train(X_train, y_train)
+importance = model.get_feature_importance()
+```
+
+---
+
+### 5. LSTM
+
+**Archivo**: `app/ml/models/lstm_model.py`
+
+**Uso**:
+
+```python
+from app.ml.models.lstm_model import LSTMModel
 
 model = LSTMModel(
     sequence_length=60,
-    hidden_size=128,
+    feature_dim=n_features,
+    hidden_dim=128,
     num_layers=2,
-    dropout=0.2
+    epochs=20
 )
 
-# Para LSTM, los datos deben ser secuencias
+# Para LSTM, los datos deben ser secuencias (samples, timesteps, features)
 X_train_seq = X_train.reshape(-1, 60, n_features)
 model.train(X_train_seq, y_train)
+prediction = model.get_prediction(X_train_seq[0], "BTCUSDT", "1h", "double_top")
+```
+
+---
+
+### 6. Transformer
+
+**Archivo**: `app/ml/models/transformer_model.py`
+
+```python
+from app.ml.models.transformer_model import TransformerModel
+
+model = TransformerModel(
+    sequence_length=60,
+    feature_dim=n_features,
+    hidden_dim=64,
+    nhead=4,
+    num_layers=2,
+    epochs=20
+)
+
+model.train(X_train_seq, y_train)
+```
+
+---
+
+### 7. CNN (1D)
+
+**Archivo**: `app/ml/models/cnn_model.py`
+
+```python
+from app.ml.models.cnn_model import CNNModel
+
+model = CNNModel(
+    sequence_length=60,
+    feature_dim=n_features,
+    hidden_dim=32,
+    kernel_size=3,
+    epochs=20
+)
+
+model.train(X_train_seq, y_train)
+```
+
+---
+
+### 8. Isolation Forest
+
+**Archivo**: `app/ml/models/isolation_forest.py`
+
+Detector de anomalías sin supervisión. `predict_proba` devuelve la probabilidad de que la muestra sea una anomalía.
+
+```python
+from app.ml.models.isolation_forest import IsolationForestModel
+
+model = IsolationForestModel(n_estimators=200, contamination=0.05)
+model.train(X_train, y_train)  # y se ignora durante el entrenamiento
+proba = model.predict_proba(X_test)[:, 1]  # probabilidad de anomalía
+```
+
+---
+
+### 9. AutoEncoder
+
+**Archivo**: `app/ml/models/autoencoder.py`
+
+Autoencoder de anomalías (torch): una muestra es anómala si su error de reconstrucción supera el umbral (percentil 95 del entrenamiento).
+
+```python
+from app.ml.models.autoencoder import AutoEncoderModel
+
+model = AutoEncoderModel(
+    input_dim=n_features * 30,
+    hidden_dim=32,
+    latent_dim=8,
+    epochs=20
+)
+
+model.train(X_train_flat, y_train)  # X_train_flat: (samples, n_features * 30)
+proba = model.predict_proba(X_test_flat)[:, 1]
 ```
 
 ---
@@ -539,11 +652,20 @@ Importancia de features:
 
 ### Estructura de Archivos
 
+Cada familia de modelos usa su formato nativo:
+
+| Familia | Formato | Ejemplo |
+|---------|---------|---------|
+| Random Forest / LightGBM / Isolation Forest | pickle | `random_forest_v1.pkl` |
+| XGBoost | UBJSON/JSON (formato nativo) | `xgboost_v1.ubj` |
+| CatBoost | formato `.cbm` | `catboost_v1.cbm` |
+| LSTM / Transformer / CNN / AutoEncoder | `torch.save` (state_dict + config) | `lstm_v1.pt` |
+
 ```
 models/
 ├── random_forest_v1.pkl
-├── random_forest_v2.pkl
-├── xgboost_v1.pkl
+├── xgboost_v1.ubj
+├── catboost_v1.cbm
 ├── lstm_v1.pt
 └── metadata/
     ├── rf_v1_metrics.json

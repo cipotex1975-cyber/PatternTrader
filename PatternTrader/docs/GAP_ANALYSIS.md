@@ -1,6 +1,6 @@
 # Análisis de Gaps y Estado del Proyecto
 
-> **Fecha de la auditoría**: 2026-08-07 (revisada)
+> **Fecha de la auditoría**: 2026-08-07 (revisada; Fase 5 completada)
 > **Alcance**: Revisión del código en `app/`, `tests/`, `config/` y scripts raíz contra los requisitos originales del proyecto (prompt de arquitectura) y la documentación en `docs/`.
 > **Objetivo**: Documentar el estado actual, los gaps y las recomendaciones para poder retomar el desarrollo desde este punto de forma ordenada.
 
@@ -8,7 +8,7 @@
 
 ## Resumen Ejecutivo
 
-PatternTrader tiene una **base sólida**: la arquitectura Clean/DDD está bien implementada, el backtesting es el módulo más maduro y completo, y hay **177 tests unitarios** que se recolectan sin errores. Desde la auditoría inicial se cerraron las fases 1-3 (bugs de runtime, arquitectura de estrategias, ciclo de vida completo) y la **fase 4 está muy avanzada**: los repositorios DB están implementados y cableados como *write-through* a los motores, y la API expone routers reales de trades, lifecycle, señales y modelos ML con persistencia. Los gaps principales restantes: **faltan 13 de 21 patrones** y **8 de 9 modelos ML**, no hay migraciones Alembic, y el cooldown/telegram siguen sin configuración completa.
+PatternTrader tiene una **base sólida**: la arquitectura Clean/DDD está bien implementada, el backtesting es el módulo más maduro y completo, y hay **211 tests unitarios** que se recolectan sin errores. Desde la auditoría inicial se cerraron las fases 1-4 (bugs de runtime, arquitectura de estrategias, ciclo de vida completo, persistencia/API real) y la **fase 5 está completa**: el catálogo de patrones pasó de 8 a **21** (13 nuevos en `neutral/`), el catálogo de modelos ML de 1 a **9** (XGBoost, LightGBM, CatBoost, LSTM, Transformer, CNN, Isolation Forest, AutoEncoder) y se eliminó el `score()` muerto de los patrones. Los gaps principales restantes: **riesgo/telegram incompletos** (Fase 6) y **configuración/calidad** (Fase 7).
 
 Estado por módulo:
 
@@ -17,22 +17,22 @@ Estado por módulo:
 | Arquitectura | ✅ Completa | Clean/DDD/Hexagonal, Factory/Registry/Observer |
 | Data Providers | ✅ Completo | 7 providers funcionales y testeados |
 | Market Engine | ✅ Completo | Pivots, zigzag, fractales, trendlines, canales, indicadores |
-| Patrones | ⚠️ 8/21 | Faltan 13; carpeta `neutral/` vacía |
+| Patrones | ✅ 21/21 | Catálogo completo; 13 nuevos en `neutral/` (Fase 5) |
 | Lifecycle | ✅ Fase 3+4 | Ciclo completo realimentado por trades; persistencia write-through (`lifecycles`+`patterns`) |
 | Health | ✅ Completo | 8 factores, pesos en YAML |
 | Scoring | ✅ Completo | Pesos en YAML; usa modelo de conocimiento cuando está entrenado |
 | Confirmación | ✅ Corregida | Ruptura direccional resuelta (§1.1); spread sigue placeholder |
 | Señales | ✅ Fase 4 | Persistencia DB (`signals`); dedup/cooldown ok; cooldown hardcodeado |
-| ML | ⚠️ 1/9 | Solo Random Forest; API de modelos + persistencia de predicciones |
+| ML | ✅ 9/9 | Random Forest + XGBoost/LightGBM/CatBoost + LSTM/Transformer/CNN + Isolation Forest/AutoEncoder |
 | Aprendizaje continuo | ✅ Conectado | Recibe `TRADE_CLOSED`/`TRADE_OPENED`; registra el modelo entrenado en `ml_models` |
 | Backtesting | ✅ Completo | Motor + validaciones + optimización + métricas; resultados persistidos en DB |
 | Riesgo | ⚠️ Parcial | Cableado al pipeline (REJECTED); faltan sector/correlación/trailing |
 | Estrategia | ✅ Fase 2 completa | Registry/Factory + 3 estrategias cableadas al pipeline |
 | Telegram | ⚠️ Parcial | Sin imagen, retries, confirmación, timeframe |
-| DB | ✅ Completa | 12 tablas + `knowledge_entries`; repos write-through funcionales; sin Alembic |
+| DB | ✅ Fase 4 completa | 13 tablas + `knowledge_entries`; repos write-through + Alembic (3 migraciones) + rehidratación al arrancar |
 | API | ✅ Fase 4 | Routers de models/trades/lifecycle/signals reales y con persistencia |
 | Config | ⚠️ Parcial | Varios valores hardcodeados pese a existir en YAML |
-| Tests | ✅ 177 unitarios | Engines, DB, API, backtesting, learning, estrategias cubiertos |
+| Tests | ✅ 211 unitarios | Engines, DB, API, backtesting, learning, estrategias, patrones y modelos ML cubiertos |
 
 ---
 
@@ -100,11 +100,9 @@ Construía `BacktestConfig(initial_capital=100000, commission=0.001, slippage=0.
 
 - Los 13 estados están definidos en `LifecycleState` (`lifecycle/models.py:11-24`) y las transiciones se registran de forma auditable (`LifecycleEvent.transitions`).
 - **Estado Fase 3+4**: el ciclo de trades realimenta el lifecycle vía `transition_by_pattern` (OPEN → TP_HIT/SL_HIT → CLOSED); `CANCELLED` (deformación tras señal) y `REJECTED` (riesgo) se producen desde el pipeline.
-- **Persistencia**: `LifecycleRepository` (write-through) persiste `patterns` + `lifecycles` en la misma sesión; está cableado al `PatternPipeline` vía `PatternService` (`patterns/service.py:39`) y a la ruta DB `asset` por símbolo.
+- **Persistencia**: `LifecycleRepository` (write-through) persiste `patterns` + `lifecycles` en la misma sesión; está cableado al `PatternPipeline` vía `PatternService` (`patterns/service.py:39`) y a la ruta DB `asset` por símbolo. La tabla `lifecycles` persiste el UUID (`lifecycle_uuid`) para poder rehidratar.
+- **Rehidratación**: `LifecycleRepository.list()` reconstruye `PatternResult`+`LifecycleEvent` (join `patterns`+`lifecycles`+`assets`) y `LifecycleEngine.rehydrate_from_db()` los carga en memoria en `PatternService.start()`. Al reiniciar la API el historial DB se recarga. ✅
 - **Dashboard/lifecycle API**: `api/routes/lifecycle.py` y `dashboard.py` usan la **instancia compartida** `service.pipeline.lifecycle` (gap de instancias separadas resuelto).
-- **Gaps restantes**:
-  - Las transiciones leídas desde DB no se rehidratan en memoria (los repos son write-only para runtime; la API lee del dict en memoria, no de la DB).
-  - `dashboard`/`lifecycle` muestran el estado del proceso actual; si la API se reinicia, el historial DB no se recarga.
 
 ### 2.3 Confirmación (`app/confirmation/`)
 
@@ -205,25 +203,26 @@ Reglas implementadas: breakout, volume, ATR, trend, R/R, liquidity, distance-to-
   - `MetricsCalculator._estimate_fees()` hardcodea 0.001 (`metrics.py:176`) divergiendo del commission configurado.
   - `app/optimizer/engine.py` (`OptimizerEngine`) es **código muerto**: solo grid/random, sin bayesiana, nadie lo importa.
   - `settings.backtesting.walk_forward_splits`/`monte_carlo_simulations` nunca se leen.
+  - ✅ **Resuelto**: `trades` y `equity_curve` se persisten en las columnas JSON de `backtests` y se sirven en `GET /backtests/{id}` y `GET /backtests/{id}/trades`.
 
 ### 2.11 Base de Datos (`app/database/`)
 
 - Las **12 tablas requeridas existen** (+1 extra `knowledge_entries`): `assets`, `candles`, `indicators`, `patterns`, `lifecycles`, `signals`, `trades`, `backtests`, `predictions`, `ml_models`, `metrics`, `logs`. ✅
 - PostgreSQL configurable vía campos discretos → `postgresql+asyncpg://` (`settings.py:13-27`, `settings.yaml:13-21`).
+- **Alembic** (Fase 4): `alembic.ini` + `migrations/env.py` async (lee URL desde `get_settings()` con override de `DATABASE_URL`). 3 revisiones: `initial_schema` (292ed36c3e49), `backtest_trades_equity` (9f4d7c2a1b5e: columnas JSON `trades`/`equity_curve` en `backtests`) y `lifecycle_uuid` (7c2a9b3d4e51: UUID de lifecycle persistido). Verificado con `alembic upgrade head` contra SQLite. ✅
 - **Fase 4 — repositorios write-through implementados y cableados** (`app/database/repositories/`):
-  - `LifecycleRepository` → `LifecycleEngine` (registra `patterns`+`lifecycles` y actualiza transiciones).
+  - `LifecycleRepository` → `LifecycleEngine` (registra `patterns`+`lifecycles`, actualiza transiciones y **lista/rehidrata** desde DB).
   - `SignalRepository` → `SignalEngine` (`add`, `update_status`).
   - `TradeRepository` → `ExecutionEngine` (`add`, `update_closed`).
   - `MLModelRepository` → `LearningService.train_offline` (upsert).
   - `PredictionRepository` → `POST /api/v1/models/{name}/predict`.
-  - `BacktestRepository` → rutas de backtests (add/get/list).
+  - `BacktestRepository` → rutas de backtests (add/get/list, con `trades`+`equity_curve`).
   - `AssetRepository` → resuelve la FK `assets.id` requerida por `patterns`.
   - `MetricRepository`/`LogRepository` → escritura de métricas/logs.
 - **Bug corregido**: `get_async_session()` era un async generator usado con `async with` → TypeError en runtime (ningún repo llegaba a ejecutarse). Se envolvió con `@asynccontextmanager` (`database/base.py:69`); todos los repos funcionan y están testeados contra SQLite en memoria.
+- **Rehidratación** (Fase 4): `PatternService.start()` llama a `LifecycleEngine.rehydrate_from_db()` → `LifecycleRepository.list()` para cargar el estado persistido en memoria al arrancar.
 - **Gaps**:
-  - No hay override de `DATABASE_URL` por variable de entorno.
-  - No hay **Alembic/migraciones** pese a que `alembic` es dependencia declarada (carpeta `migrations/` existe pero no está conectada a un flujo de revisiones).
-  - Los repos son de write-through: la API lee del estado en memoria de los motores, no rehidrata desde DB al arrancar.
+  - Los repos de trades/señales/backtests siguen siendo de lectura desde DB en la API; el `ExecutionEngine` en memoria no rehidrata trades abiertos al reiniciar.
 
 ### 2.12 API REST (`app/api/`)
 
@@ -242,7 +241,7 @@ Reglas implementadas: breakout, volume, ATR, trend, R/R, liquidity, distance-to-
 | Health | ✅ |
 | Lifecycle | ✅ `GET /lifecycle` (listado, estadísticas, por patrón, por id) sobre la instancia del pipeline |
 
-**Rutas stub restantes**: en backtests, `equity_curve` y la lista de `trades` se devuelven **vacías** (`backtests.py:141, 162`) aunque `BacktestResult` las guarda; el payload vacío genera candles/patrones sintéticos (`_generate_candles`/`_generate_patterns`). No hay endpoints de escritura para señales/trades/lifecycle (solo lectura).
+**Notas**: los stubs de `equity_curve`/`trades` en backtests están cerrados (se sirven desde las columnas JSON). El payload vacío de backtest sigue generando candles/patrones sintéticos como input por diseño. No hay endpoints de escritura para señales/trades/lifecycle (solo lectura).
 
 ### 2.13 Configuración
 
@@ -270,9 +269,10 @@ Reglas implementadas: breakout, volume, ATR, trend, R/R, liquidity, distance-to-
 
 ### 2.15 Calidad y Tests
 
-- **177 tests** en `tests/unit/` (recolectan y pasan); `tests/integration/` y `tests/e2e/` solo con `__init__.py` (**cero tests**).
+ - **211 tests** en `tests/unit/` (recolectan y pasan); `tests/integration/` y `tests/e2e/` solo con `__init__.py` (**cero tests**).
 - **Fase 4 — cobertura nueva** (`conftest.py` con fixture `sync_db`, SQLite en memoria con `StaticPool`):
-  - `tests/unit/test_repositories.py` (11): round-trip de los 9 repos (`asset`, `trade`, `signal`, `lifecycle`, `backtest`, `mlmodel`, `prediction`, `log`, `metric`) contra la DB.
+  - `tests/unit/test_repositories.py` (13): round-trip de los 9 repos (`asset`, `trade`, `signal`, `lifecycle`, `backtest`, `mlmodel`, `prediction`, `log`, `metric`) contra la DB, incluyendo `trades`+`equity_curve` del backtest y rehidratación de lifecycle (`list()`).
+  - `tests/unit/test_lifecycle.py` (+1): rehidratación end-to-end del `LifecycleEngine` desde el repositorio.
   - `tests/unit/test_signals.py` (11): `SignalEngine` (prioridades, cooldown, persistencia, mark_sent/delivered/failed) y el modelo `Signal`.
   - `tests/unit/test_models_api.py` (8): rutas `GET/POST /models` con `TestClient` (404/400, entrenado vs no, persistencia de predicciones).
   - Dependencia dev `aiosqlite` añadida para los tests de DB (no hay Postgres en el entorno de CI/dev).
@@ -323,21 +323,26 @@ Reglas implementadas: breakout, volume, ATR, trend, R/R, liquidity, distance-to-
 
 **Verificación**: 147 tests pasan (16 nuevos en `tests/unit/test_execution.py`, `test_pipeline.py`, `test_lifecycle.py`, `test_scoring.py`), flake8 limpio en los archivos modificados, mypy limpio en los módulos nuevos, imports y compilación OK.
 
-### Fase 4 — Persistencia y API real (EN CURSO, 2026-08-07)
+### Fase 4 — Persistencia y API real (COMPLETADA, 2026-08-07)
 1. Alembic + migraciones; escribir lifecycle, señales, backtests, predictions a la DB.
-   - ⚠️ **Parcial**: los repos write-through ya persisten lifecycle, señales, trades, backtests, modelos y predicciones. Falta **Alembic** y rehidratar el estado desde DB al arrancar.
+   - ✅ **Completado**: los repos write-through persisten lifecycle, señales, trades, backtests, modelos y predicciones. Alembic configurado (`alembic.ini` + `migrations/` async) con 3 revisiones: `initial_schema`, `backtest_trades_equity` (columnas JSON `trades`/`equity_curve` en `backtests`) y `lifecycle_uuid` (UUID persistido en `lifecycles`). Verificado `alembic upgrade head` contra SQLite y Postgres (via `DATABASE_URL`). Rehidratación del estado al arrancar: `LifecycleRepository.list()` reconstruye `PatternResult`+`LifecycleEvent` desde DB y `LifecycleEngine.rehydrate_from_db()` los carga en memoria en `PatternService.start()`.
 2. Añadir routers: `/api/v1/models` (AI Models), `/api/v1/trades`, `/api/v1/lifecycle`. ✅
    - `models.py` (GET listado/detalle + POST predict), `trades.py` (GET listado/detalle), `lifecycle.py` (GET estadísticas/listado/por patrón/por id). Registrados en `api/main.py:100-106`.
 3. Reemplazar datos sintéticos por flujo real (dashboard con instancia compartida del pipeline). ✅
-   - Dashboard y lifecycle usan `service.pipeline.lifecycle`; señales/trades/backtests leen de la DB. Quedan stubs: `equity_curve` y `trades` vacíos en backtests; payload vacío de backtest sigue generando datos sintéticos.
-4. Override `DATABASE_URL` por env var. ❌ Pendiente.
+   - Dashboard y lifecycle usan `service.pipeline.lifecycle`; señales/trades/backtests leen de la DB. ✅ **Stubs cerrados**: `GET /backtests/{id}` y `GET /backtests/{id}/trades` ahora devuelven `equity_curve` y `trades` reales persistidos en las columnas JSON. El payload vacío de backtest sigue generando datos sintéticos como input por diseño.
+4. Override `DATABASE_URL` por env var. ✅ Implementado en `settings.py:23-30` (prioridad sobre campos discretos) con test en `tests/unit/test_config.py`.
 
-**Verificación**: 177 tests pasan (30 nuevos: repos, SignalEngine, API de models; + `conftest.py` con `sync_db`), flake8 limpio en los archivos modificados, mypy limpio en motores/repos/rutas nuevos, imports y compilación OK.
+**Verificación**: 179 tests pasan (2 nuevos: round-trip de trades/equity_curve en backtests, rehidratación de lifecycle repo/engine), flake8 limpio en los archivos modificados, imports y compilación OK.
 
-### Fase 5 — Ampliar catálogo
-1. Patrones (13): triángulos, wedges, rectángulo, canal, cup & handle, rounded bottom, diamond, broadening, triple top/bottom. Poblarla carpeta `neutral/`.
-2. Modelos ML (8): LightGBM/XGBoost/CatBoost (tabulares), luego LSTM/Transformer/CNN (series), luego Isolation Forest/AutoEncoder (anomalías).
-3. Aplicar el sistema de scoring a cada patrón nuevo y eliminar el `score()` muerto de cada patrón (o integrarlo).
+### Fase 5 — Ampliar catálogo (COMPLETADA, 2026-08-07)
+1. Patrones (13): triángulos, wedges, rectángulo, canal, cup & handle, rounded bottom, diamond, broadening, triple top/bottom. Poblarla carpeta `neutral/`. ✅
+   - **Completado**: `app/patterns/neutral/` con `ascending_triangle`, `descending_triangle`, `symmetric_triangle`, `rising_wedge`, `falling_wedge`, `rectangle`, `channel`, `cup_and_handle`, `rounded_bottom`, `diamond`, `broadening`, `triple_top`, `triple_bottom` (21 patrones en total). Geometría compartida en `neutral/geometry.py` (fit_line/line_at/find_peaks/find_troughs). `key_levels` compatibles con `_prepare_price_levels` del pipeline. Registrados vía `@register_pattern` y testeados con datos sintéticos (13 tests de detección).
+2. Modelos ML (8): LightGBM/XGBoost/CatBoost (tabulares), luego LSTM/Transformer/CNN (series), luego Isolation Forest/AutoEncoder (anomalías). ✅
+   - **Completado** (9 modelos en total): `xgboost_model.py`, `lightgbm_model.py`, `catboost_model.py` (tabulares, con feature importance); `sequence_base.py` + `lstm_model.py`, `transformer_model.py`, `cnn_model.py` (series, torch, con save/load por state_dict + config); `isolation_forest.py`, `autoencoder.py` (anomalías, probabilidad de anomalía en `predict_proba`). Todos registrados en `MLModelFactory` (visible en `GET /api/v1/models`) y con tests de train/predict/evaluate/save-load roundtrip.
+3. Aplicar el sistema de scoring a cada patrón nuevo y eliminar el `score()` muerto de cada patrón (o integrarlo). ✅
+   - **Completado**: se eliminó `score()` del ABC `BasePattern` y de los 8 patrones existentes (era código muerto: el pipeline usa `ScoringEngine`). Los 13 patrones nuevos no implementan `score()`. Se actualizó `PATTERN_INTERFACE_METHODS` en `tests/unit/test_patterns.py`.
+
+**Verificación**: 211 tests pasan (32 nuevos: 14 en patrones nuevos, 18 en modelos ML), flake8 limpio en archivos modificados, mypy sin errores nuevos (solo `import-untyped` preexistentes de librerías sin stubs).
 
 ### Fase 6 — Riesgo y Telegram completos
 1. `RiskEngine` cableado al pipeline y reutilizado por el backtest (quitar duplicación).
@@ -347,7 +352,7 @@ Reglas implementadas: breakout, volume, ATR, trend, R/R, liquidity, distance-to-
 ### Fase 7 — Configuración y calidad
 1. Mover hardcodeos a YAML (cooldown, fees, capital inicial, tolerancias, `max_patterns_per_symbol`, `recalculate_interval_seconds`).
 2. Consumir `backtesting.walk_forward_splits`/`monte_carlo_simulations` desde la API.
-3. Eliminar/limpiar código muerto (`optimizer/engine.py`, imports sin uso, `score()` de patrones, `Signal.is_expired` sin aplicar).
+3. Eliminar/limpiar código muerto (`optimizer/engine.py`, imports sin uso, `Signal.is_expired` sin aplicar). (*`score()` de patrones ya eliminado en Fase 5*).
 4. Tests de integración y e2e; tests de `BacktestRunner`, resto de rutas API y `run_backtest.py`. (Los repos DB, el `SignalEngine` y la ruta de models ya están cubiertos.)
 
 ---

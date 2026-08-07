@@ -49,6 +49,9 @@ data/
 logs/
 *.log
 
+# CatBoost artifacts
+catboost_info/
+
 # Testing
 .coverage
 htmlcov/

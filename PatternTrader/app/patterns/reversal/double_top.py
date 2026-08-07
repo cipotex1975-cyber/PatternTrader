@@ -101,30 +101,6 @@ class DoubleTopPattern(BasePattern):
         latest_close = candles[-1].data.close
         return latest_close > neckline * 0.98
 
-    def score(self, pattern: PatternResult, indicators: dict[str, float]) -> float:
-        score = 50.0
-
-        rsi = indicators.get("rsi", 50)
-        if rsi > 70:
-            score += 15
-        elif rsi > 60:
-            score += 10
-
-        volume = indicators.get("volume", 0)
-        if volume > 0:
-            score += 5
-
-        macd = indicators.get("macd", 0)
-        macd_signal = indicators.get("macd_signal", 0)
-        if macd < macd_signal:
-            score += 10
-
-        bb_upper = indicators.get("bb_upper", 0)
-        if bb_upper and pattern.key_levels.get("peak1", 0) >= bb_upper:
-            score += 10
-
-        return min(100.0, score)
-
     def _find_peaks(self, data: np.ndarray, distance: int = 3) -> list[int]:
         idx, _ = _scipy_find_peaks(data, distance=distance)
         return idx.tolist()

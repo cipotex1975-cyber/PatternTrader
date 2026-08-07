@@ -68,6 +68,7 @@ class PatternService:
             logger.error(f"Failed to connect data provider: {e}")
             self._provider = None
 
+        await self._rehydrate_lifecycle()
         await self._scheduler.start()
 
         for symbol in self._symbols:
@@ -97,3 +98,6 @@ class PatternService:
 
     def get_scheduler_tasks(self) -> list[str]:
         return self._scheduler.get_tasks()
+
+    async def _rehydrate_lifecycle(self) -> None:
+        await self._pipeline.lifecycle.rehydrate_from_db()
