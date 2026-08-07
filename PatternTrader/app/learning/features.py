@@ -6,22 +6,13 @@ import numpy as np
 
 from app.core.logger import get_logger
 from app.learning.models import KnowledgeEntry
+from app.ml.features import TECHNICAL_FEATURE_NAMES
 
 logger = get_logger("FeatureBuilder")
 
-DEFAULT_FEATURES = [
-    "rsi",
-    "atr",
-    "macd",
-    "macd_histogram",
-    "momentum",
-    "bb_upper",
-    "bb_lower",
-    "volume",
-    "risk_reward",
-    "score",
-    "drawdown",
-]
+# El modelo de conocimiento usa el mismo vector que el ScoringEngine para que
+# ambos modelos sean intercambiables (unificación de features).
+DEFAULT_FEATURES = list(TECHNICAL_FEATURE_NAMES)
 
 
 class FeatureBuilder:

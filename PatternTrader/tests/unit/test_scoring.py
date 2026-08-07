@@ -1,3 +1,4 @@
+import pytest
 from datetime import datetime, timezone
 
 from app.market.candles.models import Candle, CandleData
@@ -70,3 +71,39 @@ def test_scoring_components():
     result = engine.calculate_score(pattern, indicators)
     assert len(result.components) > 0
     assert all(c.weight > 0 for c in result.components)
+
+
+@pytest.mark.asyncio
+async def test_scoring_uses_knowledge_model_when_attached():
+    from app.learning.models import LearningMode
+    from app.learning.repository import MemoryKnowledgeRepository
+    from app.learning.service import LearningService
+
+    svc = LearningService(repository=MemoryKnowledgeRepository(), mode=LearningMode.ONLINE)
+    for i in range(12):
+        win = i % 2 == 0
+        ind = {"rsi": 80.0 if win else 20.0, "atr": 100.0}
+        await svc.record_trade(
+            {
+                "symbol": "BTCUSDT",
+                "timeframe": "1h",
+                "pattern_name": "double_top",
+                "direction": "SHORT",
+                "entry_price": 50000,
+                "exit_price": 49500 if win else 50500,
+                "pnl": 500 if win else -500,
+            },
+            indicators=ind,
+        )
+    assert svc.is_trained
+
+    engine = ScoringEngine()
+    engine.attach_knowledge(svc)
+
+    pattern = create_test_pattern()
+    candles = create_test_candles()
+    result = engine.calculate_score(pattern, {"rsi": 50}, candles)
+
+    ml = next(c for c in result.components if c.name == "ml_history")
+    assert 0 <= ml.score <= 100
+    assert 0 <= result.confidence <= 1

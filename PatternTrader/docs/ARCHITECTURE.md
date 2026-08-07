@@ -127,9 +127,13 @@ app/api/            # Endpoints REST
 ┌──────────────────────────▼──────────────────────────────────────┐
 │                      Application Layer                          │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐    │
-│  │ Backtesting │  │     ML      │  │     Optimizer       │    │
+│  │ Backtesting │  │     ML      │  │     Strategy        │    │
 │  │   Engine    │  │   Engine    │  │       Engine        │    │
 │  └─────────────┘  └─────────────┘  └─────────────────────┘    │
+│  ┌─────────────┐                                               │
+│  │  Optimizer  │                                               │
+│  │   Engine    │                                               │
+│  └─────────────┘                                               │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────────┐
@@ -224,7 +228,9 @@ await event_bus.publish(Event(
 
 ### 4. Strategy Pattern
 
-**Uso**: Intercambiar algoritmos de detección y evaluación
+**Uso**: Intercambiar algoritmos de detección y de decisión de trading
+
+La capa de detección usa el patrón para intercambiar detectores:
 
 ```python
 from app.patterns.base_pattern import BasePattern
@@ -240,7 +246,31 @@ class HeadAndShouldersPattern(BasePattern):
         pass
 ```
 
-**Ventaja**: Cada patrón encapsula su propia lógica de detección.
+Desde la **Fase 2**, las estrategias de trading son también clases
+intercambiables que consumen **hipótesis** (`PatternHypothesis`) y deciden
+entrar o no. Se auto-registran como los patrones:
+
+```python
+from app.strategy.base import BaseStrategy
+from app.strategy.registry import register_strategy
+
+@register_strategy
+class TrendFollowStrategy(BaseStrategy):
+    @property
+    def name(self) -> str:
+        return "trend_follow"
+
+    def evaluate(self, hypothesis) -> StrategyDecision:
+        # Decide ENTER (con StrategySignal) o NO_TRADE
+        ...
+```
+
+El `StrategyEngine` (`app/strategy/engine.py`) ejecuta todas las estrategias
+habilitadas sobre una hipótesis y elige la de mayor confianza. Así el pipeline
+queda: patrón → **hipótesis** → **estrategia** → señal.
+
+**Ventaja**: Cada patrón y cada estrategia encapsula su propia lógica, y añadir
+una nueva no modifica el pipeline.
 
 ### 5. State Pattern (Lifecycle Engine)
 
@@ -315,7 +345,20 @@ await engine.transition(
        │
        ▼
 ┌──────────────┐
-│ Confirmation │ ──→ Valida antes de generar señal
+│ Confirmation │ ──→ Valida antes de generar hipótesis
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ Hipótesis    │ ──→ El pipeline emite PatternHypothesis
+│ (pattern +   │     (pattern + indicadores + score + health
+│  indicators) │      + confirmación), no señales directas
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│  Strategy    │ ──→ Las estrategias deciden ENTER/NO_TRADE
+│  Engine      │     (TrendFollow, Breakout, Contrarian)
 └──────┬───────┘
        │
        ▼
@@ -331,7 +374,10 @@ await engine.transition(
 
 Todo este flujo lo orquesta el **`PatternPipeline`**
 (`app/patterns/pipeline.py`), ejecutado periódicamente por `PatternService`
-(`app/patterns/service.py`) vía `Scheduler` al iniciar la API.
+(`app/patterns/service.py`) vía `Scheduler` al iniciar la API. El pipeline
+**ya no genera señales directamente desde el patrón**: emite una hipótesis y
+solo se crea la señal si alguna estrategia decide entrar. Las decisiones de
+cada estrategia quedan en `result.metadata["strategy_decisions"]`.
 
 ### Flujo de Eventos
 
@@ -377,8 +423,13 @@ class ScoringEngine:
         pass
 
 class SignalEngine:
-    def create_signal(self, pattern, score):
-        # Solo genera la señal
+    def create_signal(self, pattern, score, strategy_signal=None):
+        # Solo genera la señal (con la decisión de la estrategia)
+        pass
+
+class TrendFollowStrategy(BaseStrategy):
+    def evaluate(self, hypothesis):
+        # Solo decide si entra o no con la hipótesis
         pass
 ```
 
@@ -465,6 +516,38 @@ class ExtendedIndicatorCalculator(IndicatorCalculator):
         # Nuevo indicador
         pass
 ```
+
+### Agregar una Nueva Estrategia
+
+1. Crear una subclase de `BaseStrategy` en `app/strategy/strategies/`
+2. Decorarla con `@register_strategy`
+3. Opcional: añadir sus parámetros por defecto y la sección `strategies.params` en `config/settings.yaml`
+
+```python
+from app.strategy.base import BaseStrategy, StrategyDecision
+from app.strategy.registry import register_strategy
+
+@register_strategy
+class MeanReversionStrategy(BaseStrategy):
+    @property
+    def name(self) -> str:
+        return "mean_reversion"
+
+    def evaluate(self, hypothesis) -> StrategyDecision:
+        # Lógica de decisión sobre la hipótesis
+        return self._no_trade("sin señal por ahora")
+
+    def get_parameters(self) -> dict:
+        return {}
+
+    def set_parameters(self, parameters: dict) -> None:
+        pass
+```
+
+> **Importante**: Al importar `app.strategy`, las estrategias se auto-registran.
+> Para activarla en runtime, añadir su nombre a `strategies.enabled` en `config/settings.yaml`.
+> Las estrategias se pueden comparar sobre las mismas detecciones con
+> `compare_strategies`/`run_strategy_backtest` de `app/strategy/evaluator.py`.
 
 ### Motor de Mercado (Market Engine)
 

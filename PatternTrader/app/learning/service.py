@@ -35,6 +35,7 @@ class LearningService:
         models_dir: str = "models",
         min_samples: int = 10,
         retrain_every: int = 10,
+        ml_model_repository: Optional[Any] = None,
     ) -> None:
         self._repo = repository or KnowledgeRepository()
         self._mode = mode
@@ -44,6 +45,7 @@ class LearningService:
             feature_builder=self._feature_builder, model_path=model_path
         )
         self._online = online_learner or OnlineLearner(feature_builder=self._feature_builder)
+        self._ml_model_repo = ml_model_repository
         self._bus = get_event_bus()
         self._min_samples = min_samples
         self._retrain_every = retrain_every
@@ -52,6 +54,10 @@ class LearningService:
     @property
     def mode(self) -> LearningMode:
         return self._mode
+
+    @property
+    def is_trained(self) -> bool:
+        return self._offline.is_trained or self._online.is_trained
 
     def set_mode(self, mode: LearningMode) -> None:
         self._mode = mode
@@ -81,7 +87,8 @@ class LearningService:
         trade = self._trade_from_event(event)
         if trade is None:
             return
-        await self.record_trade(trade)
+        indicators = (trade.metadata or {}).get("features")
+        await self.record_trade(trade, indicators=indicators)
 
     async def _on_trade_opened(self, event: Event) -> None:
         trade = self._trade_from_event(event)
@@ -133,6 +140,15 @@ class LearningService:
     async def train_offline(self, n_splits: int = 5) -> dict[str, Any]:
         entries = await self._repo.get_all()
         report = self._offline.train(entries, n_splits=n_splits)
+        if self._ml_model_repo is not None:
+            await self._ml_model_repo.upsert(
+                name="knowledge_model",
+                model_type="classification",
+                version=str(report.get("best_params", {}).get("__version__", "0.1.0")),
+                path=str(report.get("model_path") or ""),
+                metrics={k: v for k, v in report.items() if not isinstance(v, (list, dict))},
+                trained_at=datetime.utcnow(),
+            )
         await self._bus.publish(
             Event(
                 type=EventType.ML_TRAINED,
@@ -261,7 +277,9 @@ class LearningService:
         else:
             outcome = TradeOutcome.BREAKEVEN
 
-        pnl_pct = pnl / float(trade.get("entry_price", 0.0)) if isinstance(trade, dict) and trade.get("entry_price") else 0.0
+        pnl_pct = 0.0
+        if isinstance(trade, dict) and trade.get("entry_price"):
+            pnl_pct = pnl / float(trade.get("entry_price"))
 
         return KnowledgeEntry(
             instrument=instrument,

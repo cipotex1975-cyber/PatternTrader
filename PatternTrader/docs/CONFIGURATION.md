@@ -17,6 +17,7 @@ telegram:         # Notificaciones Telegram
 data_providers:   # Proveedores de datos
 market:           # Configuración del mercado
 patterns:         # Configuración de patrones
+strategies:       # Estrategias de trading
 scoring:          # Sistema de puntuación
 risk:             # Gestión de riesgo
 backtesting:      # Motor de backtesting
@@ -206,6 +207,51 @@ patterns:
   health:
     recalculate_interval_seconds: 10  # Intervalo de recálculo
 ```
+
+### Strategies
+
+Las estrategias consumen las **hipótesis** del pipeline (patrón + indicadores +
+score + health + confirmación) y deciden si entrar. Solo se genera una señal si
+alguna estrategia decide `ENTER`.
+
+```yaml
+strategies:
+  enabled:                    # Estrategias activas (en orden de evaluación)
+    - "trend_follow"
+    - "breakout"
+    - "contrarian"
+  params:                     # Parámetros por estrategia (opcional)
+    trend_follow:
+      min_score: 70.0         # Score mínimo del patrón para entrar
+      min_health: 55.0        # Health mínimo
+      default_size: 1.0       # Tamaño de posición por defecto
+      momentum_threshold: 0.0 # Momentum mínimo (LONG) / máximo (SHORT)
+    breakout:
+      min_score: 70.0
+      min_health: 50.0
+      default_size: 1.0
+      min_momentum: 0.0       # Momentum mínimo direccional
+      rsi_min: 40.0           # Rango RSI para ruptura (LONG)
+      rsi_max: 70.0
+    contrarian:
+      min_score: 60.0
+      min_health: 50.0
+      default_size: 0.5       # Tamaño reducido (riesgo mayor)
+      oversold_rsi: 30.0      # RSI para considerar sobreventa (LONG)
+      overbought_rsi: 70.0    # RSI para considerar sobrecompra (SHORT)
+      max_reversal_momentum: 2.0  # Momentum máximo que "frena"
+```
+
+Estrategias disponibles (se auto-registran al importar `app.strategy`):
+
+| Nombre | Clase | Lógica |
+|--------|-------|--------|
+| `trend_follow` | `TrendFollowStrategy` | Entra a favor de la tendencia (EMA9 vs EMA21 + momentum) |
+| `breakout` | `BreakoutStrategy` | Entra en rupturas (momentum direccional + RSI en rango medio) |
+| `contrarian` | `ContrarianStrategy` | Entra en reversales (RSI extremo + momentum perdiendo fuerza), solo `REVERSAL` |
+
+Para añadir una estrategia, crear una subclase de `BaseStrategy` decorada con
+`@register_strategy` y añadir su nombre a `enabled`.
 
 ### Scoring
 

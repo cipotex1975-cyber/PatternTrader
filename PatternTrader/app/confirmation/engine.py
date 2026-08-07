@@ -8,7 +8,7 @@ from app.confirmation.models import (
 )
 from app.core.logger import get_logger
 from app.market.candles.models import Candle
-from app.patterns.base_pattern import PatternResult
+from app.patterns.base_pattern import PatternResult, TradeDirection
 
 logger = get_logger("ConfirmationEngine")
 
@@ -136,29 +136,36 @@ class ConfirmationEngine:
             )
 
         latest_close = candles[-1].data.close
-        neckline = pattern.key_levels.get("neckline", 0)
-
-        if neckline == 0:
+        levels = pattern.key_levels
+        if not levels:
             return ConfirmationCheck(
                 rule=rule,
                 status=ConfirmationStatus.FAILED,
-                message="No neckline defined",
+                message="No key levels defined",
             )
 
-        if pattern.pattern_type.value == "reversal":
-            if "double_top" in pattern.pattern_name or "head_and_shoulders" in pattern.pattern_name:
-                passed = latest_close < neckline
-            else:
-                passed = latest_close > neckline
+        if pattern.direction == TradeDirection.LONG:
+            breakout_level = levels.get("neckline") or levels.get("pole_high") or 0
+            passed = breakout_level > 0 and latest_close > breakout_level
+            level_label = "Neckline" if levels.get("neckline") else "Pole high"
         else:
-            passed = True
+            breakout_level = levels.get("neckline") or levels.get("pole_low") or 0
+            passed = breakout_level > 0 and latest_close < breakout_level
+            level_label = "Neckline" if levels.get("neckline") else "Pole low"
+
+        if breakout_level == 0:
+            return ConfirmationCheck(
+                rule=rule,
+                status=ConfirmationStatus.FAILED,
+                message="No breakout level defined",
+            )
 
         return ConfirmationCheck(
             rule=rule,
             status=ConfirmationStatus.PASSED if passed else ConfirmationStatus.FAILED,
             value=latest_close,
-            threshold=neckline,
-            message=f"Close {latest_close} vs Neckline {neckline}",
+            threshold=breakout_level,
+            message=f"Close {latest_close} vs {level_label} {breakout_level}",
         )
 
     def _check_volume(
@@ -237,12 +244,12 @@ class ConfirmationEngine:
                 message="EMA data not available",
             )
 
-        if pattern.pattern_type.value == "continuation":
+        if pattern.pattern_type.value == "reversal":
+            passed = True
+        elif pattern.direction == TradeDirection.LONG:
             passed = ema_21 > ema_50
-        elif pattern.pattern_type.value == "reversal":
-            passed = True
         else:
-            passed = True
+            passed = ema_21 < ema_50
 
         return ConfirmationCheck(
             rule=rule,

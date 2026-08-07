@@ -22,6 +22,9 @@ class DatabaseSettings(BaseSettings):
 
     @property
     def url(self) -> str:
+        override = os.environ.get("DATABASE_URL")
+        if override:
+            return override
         return (
             f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
         )
@@ -158,6 +161,11 @@ class PatternSettings(BaseSettings):
     health: PatternHealthSettings = Field(default_factory=PatternHealthSettings)
 
 
+class StrategySettings(BaseSettings):
+    enabled: list[str] = ["trend_follow", "breakout", "contrarian"]
+    params: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
 class RiskSettings(BaseSettings):
     max_risk_per_trade: float = 0.02
     max_daily_risk: float = 0.06
@@ -245,6 +253,7 @@ class Settings(BaseSettings):
     data_providers: DataProviderSettings = Field(default_factory=DataProviderSettings)
     market: MarketSettings = Field(default_factory=MarketSettings)
     patterns: PatternSettings = Field(default_factory=PatternSettings)
+    strategies: StrategySettings = Field(default_factory=StrategySettings)
     scoring: ScoringSettings = Field(default_factory=ScoringSettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
     backtesting: BacktestingSettings = Field(default_factory=BacktestingSettings)

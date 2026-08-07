@@ -33,5 +33,9 @@ class MLModelFactory:
         return cls._models.copy()
 
     @classmethod
+    def get_loaded(cls) -> dict[str, BaseMLModel]:
+        return cls._instances.copy()
+
+    @classmethod
     def clear(cls) -> None:
         cls._instances.clear()

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
+from uuid import UUID
 
 from app.core.config.settings import get_settings
 from app.core.events.bus import get_event_bus
@@ -10,15 +11,18 @@ from app.core.logger import get_logger
 from app.patterns.base_pattern import PatternResult
 from app.scoring.models import ScoreResult
 from app.signals.models import Signal, SignalPriority
+from app.strategy.base import StrategySignal as StrategySignalModel
 
 logger = get_logger("SignalEngine")
 
 
 class SignalEngine:
-    def __init__(self) -> None:
+    def __init__(self, repository: Optional[Any] = None) -> None:
         settings = get_settings()
         self._scoring_config = settings.patterns.scoring
         self._sent_signals: dict[str, datetime] = {}
+        self._signals: dict[UUID, Signal] = {}
+        self._repository = repository
         self._cooldown_minutes = 5
         self._event_bus = get_event_bus()
 
@@ -27,6 +31,7 @@ class SignalEngine:
         pattern: PatternResult,
         score: ScoreResult,
         ml_probability: float = 0.0,
+        strategy_signal: Optional[StrategySignalModel] = None,
     ) -> Optional[Signal]:
         signal_key = f"{pattern.symbol}:{pattern.pattern_name}:{pattern.timeframe}"
 
@@ -41,9 +46,9 @@ class SignalEngine:
             logger.debug(f"Score {score.total_score} too low for signal")
             return None
 
-        entry_price = pattern.entry_price or 0
-        stop_loss = pattern.stop_loss or 0
-        take_profit = pattern.take_profit or 0
+        entry_price = (strategy_signal.entry_price if strategy_signal else pattern.entry_price) or 0
+        stop_loss = (strategy_signal.stop_loss if strategy_signal else pattern.stop_loss) or 0
+        take_profit = (strategy_signal.take_profit if strategy_signal else pattern.take_profit) or 0
 
         if entry_price == 0 or stop_loss == 0 or take_profit == 0:
             logger.warning(f"Invalid price levels for signal: {pattern.pattern_name}")
@@ -56,12 +61,27 @@ class SignalEngine:
         )
 
         reasons = self._generate_reasons(pattern, score, ml_probability)
+        if strategy_signal is not None:
+            reasons.append(f"Strategy: {strategy_signal.strategy_name}")
+            reasons.extend(strategy_signal.reasons)
+
+        direction = (
+            strategy_signal.direction
+            if strategy_signal is not None
+            else ("LONG" if take_profit > entry_price else "SHORT")
+        )
+
+        metadata: dict = {}
+        if strategy_signal is not None:
+            metadata["strategy"] = strategy_signal.strategy_name
+            metadata["strategy_confidence"] = strategy_signal.confidence
+            metadata["strategy_size"] = strategy_signal.size
 
         signal = Signal(
             symbol=pattern.symbol,
             timeframe=pattern.timeframe,
             pattern_name=pattern.pattern_name,
-            direction="LONG" if take_profit > entry_price else "SHORT",
+            direction=direction,
             priority=priority,
             entry_price=entry_price,
             stop_loss=stop_loss,
@@ -72,9 +92,14 @@ class SignalEngine:
             ml_probability=ml_probability,
             reasons=reasons,
             expires_at=datetime.utcnow() + timedelta(hours=24),
+            metadata=metadata,
         )
 
         self._sent_signals[signal_key] = datetime.utcnow()
+        self._signals[signal.id] = signal
+
+        if self._repository is not None:
+            await self._repository.add(signal)
 
         await self._event_bus.publish(
             Event(
@@ -133,6 +158,41 @@ class SignalEngine:
 
     def get_sent_signals(self) -> dict[str, datetime]:
         return self._sent_signals.copy()
+
+    def get_signals(self) -> list[Signal]:
+        return list(self._signals.values())
+
+    def get_signal(self, signal_id: UUID) -> Optional[Signal]:
+        return self._signals.get(signal_id)
+
+    async def mark_sent(self, signal_id: UUID) -> Optional[Signal]:
+        signal = self._signals.get(signal_id)
+        if signal is None:
+            return None
+        signal.mark_sent()
+        if self._repository is not None:
+            await self._repository.update_status(
+                signal.id, signal.status, sent_at=signal.sent_at
+            )
+        return signal
+
+    async def mark_delivered(self, signal_id: UUID) -> Optional[Signal]:
+        signal = self._signals.get(signal_id)
+        if signal is None:
+            return None
+        signal.mark_delivered()
+        if self._repository is not None:
+            await self._repository.update_status(signal.id, signal.status)
+        return signal
+
+    async def mark_failed(self, signal_id: UUID, reason: str = "") -> Optional[Signal]:
+        signal = self._signals.get(signal_id)
+        if signal is None:
+            return None
+        signal.mark_failed(reason)
+        if self._repository is not None:
+            await self._repository.update_status(signal.id, signal.status)
+        return signal
 
     def clear_cooldown(self) -> None:
         self._sent_signals.clear()

@@ -116,7 +116,8 @@ async def run_pipeline():
     pipeline = PatternPipeline()
 
     # Procesa el flujo completo para un símbolo/timeframe:
-    # detección → lifecycle → health → confirmación → scoring → señal → telegram
+    # detección → lifecycle → health → confirmación → scoring
+    #   → hipótesis → estrategia → señal → telegram
     stats = await pipeline.process_symbol("BTCUSDT", "1h")
     print(stats)  # tracked / active / expired / confirmed / signals_sent
 
@@ -424,6 +425,7 @@ Ver [CONFIGURATION.md](docs/CONFIGURATION.md) para más detalles.
 | [LEARNING.md](docs/LEARNING.md) | Aprendizaje continuo (offline y online) |
 | [CONFIGURATION.md](docs/CONFIGURATION.md) | Referencia de configuración |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Guía de despliegue |
+| [GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md) | Auditoría de estado, gaps y roadmap de continuación |
 
 ---
 
@@ -517,6 +519,7 @@ class MyNewPattern(BasePattern):
 - [x] Backtesting Engine
 - [x] Risk Management
 - [x] Signal Generation
+- [x] Strategy Layer (hipótesis → estrategias → señal)
 - [x] Telegram Integration
 - [x] Database Models
 - [x] REST API

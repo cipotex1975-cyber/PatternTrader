@@ -39,7 +39,7 @@ class RiskEngine:
         is_acceptable = (
             risk_score < 70
             and len(warnings) == 0
-            and position_size.risk_pct <= self._limits.max_risk_per_trade
+            and position_size.risk_pct <= self._limits.max_risk_per_trade * 100
         )
 
         return RiskAssessment(
@@ -70,6 +70,13 @@ class RiskEngine:
             size = 0.0
         else:
             size = risk_amount / risk_per_unit
+
+        # Cap de exposición nocional por activo: evita que una sola posición
+        # concentre más de max_exposure_per_asset * capital (con sizing por
+        # riesgo, el nocional es intrínsecamente grande).
+        max_notional = self._capital * self._limits.max_exposure_per_asset
+        if entry_price > 0 and size * entry_price > max_notional:
+            size = max_notional / entry_price
 
         risk_pct = (risk_amount / self._capital) * 100 if self._capital > 0 else 0
         potential_reward = abs(take_profit - entry_price) * size

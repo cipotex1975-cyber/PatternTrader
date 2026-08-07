@@ -134,6 +134,8 @@ class BasePattern(ABC):
 
         if pattern.current_candle_count >= pattern.max_confirmation_candles:
             pattern.transition(PatternStatus.EXPIRED)
+            if pattern.expires_at is None:
+                pattern.expires_at = datetime.utcnow()
 
         return pattern
 

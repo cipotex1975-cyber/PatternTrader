@@ -61,3 +61,65 @@ async def test_lifecycle_statistics():
     await engine.register(pattern)
     stats = engine.get_statistics()
     assert stats["DETECTED"] == 1
+
+
+@pytest.mark.asyncio
+async def test_transition_by_pattern_id():
+    engine = LifecycleEngine()
+    pattern = create_test_pattern()
+    lifecycle = await engine.register(pattern)
+
+    result = await engine.transition_by_pattern(
+        pattern.id, LifecycleState.FORMING, "structure detected"
+    )
+
+    assert result is not None
+    assert result.to_state == LifecycleState.FORMING
+    assert lifecycle.current_state == LifecycleState.FORMING
+
+
+@pytest.mark.asyncio
+async def test_transition_by_pattern_id_unknown_returns_none():
+    engine = LifecycleEngine()
+    await engine.register(create_test_pattern())
+
+    result = await engine.transition_by_pattern(
+        "00000000-0000-0000-0000-000000000000",
+        LifecycleState.FORMING,
+        "should not exist",
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_reaches_closed_via_open_and_tp():
+    engine = LifecycleEngine()
+    pattern = create_test_pattern()
+    lifecycle = await engine.register(pattern)
+
+    await engine.transition_by_pattern(pattern.id, LifecycleState.FORMING, "forming")
+    await engine.transition_by_pattern(pattern.id, LifecycleState.WAITING_BREAKOUT, "waiting")
+    await engine.transition_by_pattern(pattern.id, LifecycleState.CONFIRMED, "confirmed")
+    await engine.transition_by_pattern(pattern.id, LifecycleState.SIGNAL_SENT, "signal")
+    await engine.transition_by_pattern(pattern.id, LifecycleState.OPEN, "trade opened")
+    await engine.transition_by_pattern(pattern.id, LifecycleState.TP_HIT, "tp hit")
+    await engine.transition_by_pattern(pattern.id, LifecycleState.CLOSED, "closed")
+
+    assert lifecycle.current_state == LifecycleState.CLOSED
+    states = [t.to_state for t in lifecycle.transitions]
+    assert LifecycleState.OPEN in states
+    assert LifecycleState.TP_HIT in states
+    assert LifecycleState.CLOSED in states
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_cancelled_and_rejected_not_active():
+    engine = LifecycleEngine()
+    for status in (LifecycleState.CANCELLED, LifecycleState.REJECTED, LifecycleState.EXPIRED):
+        pattern = create_test_pattern()
+        await engine.register(pattern)
+        await engine.transition_by_pattern(pattern.id, status, f"to {status.value}")
+
+    assert engine.get_active() == []
+    for status in (LifecycleState.CANCELLED, LifecycleState.REJECTED, LifecycleState.EXPIRED):
+        assert len(engine.get_by_state(status)) == 1

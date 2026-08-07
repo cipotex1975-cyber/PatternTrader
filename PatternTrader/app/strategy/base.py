@@ -6,23 +6,59 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from app.patterns.hypothesis import PatternHypothesis
+
 
 class StrategySignal(BaseModel):
+    """Señal de trading producida por una estrategia a partir de una hipótesis."""
+
+    strategy_name: str
     symbol: str
     timeframe: str
     direction: str
     entry_price: float
     stop_loss: float
     take_profit: float
-    size: float
+    size: float = Field(ge=0.0)
     confidence: float = Field(ge=0.0, le=1.0)
     reasons: list[str] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump()
+
+
+class StrategyDecision(BaseModel):
+    """Decisión de una estrategia sobre una hipótesis.
+
+    `action` puede ser "ENTER" o "NO_TRADE". Es la salida del paso 2 del
+    pipeline: la estrategia decide si la hipótesis merece una entrada.
+    """
+
+    strategy_name: str
+    action: str = Field(pattern="^(ENTER|NO_TRADE)$")
+    signal: Optional[StrategySignal] = None
+    reasons: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def is_entry(self) -> bool:
+        return self.action == "ENTER"
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.model_dump(mode="json")
+
 
 class BaseStrategy(ABC):
-    """Base class for all trading strategies."""
+    """Base class for all trading strategies.
+
+    Las estrategias son consumidoras de hipótesis: reciben un
+    `PatternHypothesis` y devuelven una `StrategyDecision`. Son el paso 2 del
+    pipeline (qué hacer con el patrón), independientes del patrón en sí.
+    """
 
     @property
     @abstractmethod
@@ -36,14 +72,13 @@ class BaseStrategy(ABC):
         """Strategy description."""
         ...
 
+    @property
+    def version(self) -> str:
+        return "1.0"
+
     @abstractmethod
-    async def evaluate(
-        self,
-        symbol: str,
-        timeframe: str,
-        data: dict[str, Any],
-    ) -> Optional[StrategySignal]:
-        """Evaluate market conditions and generate a signal."""
+    def evaluate(self, hypothesis: PatternHypothesis) -> StrategyDecision:
+        """Evaluate a pattern hypothesis and decide whether to enter."""
         ...
 
     @abstractmethod
@@ -70,3 +105,10 @@ class BaseStrategy(ABC):
         if current_price >= take_profit:
             return True, "TAKE_PROFIT"
         return False, ""
+
+    def _no_trade(self, *reasons: str) -> StrategyDecision:
+        return StrategyDecision(
+            strategy_name=self.name,
+            action="NO_TRADE",
+            reasons=list(reasons),
+        )

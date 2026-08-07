@@ -1,17 +1,12 @@
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.dependencies import get_backtest_repository
 from app.backtesting.engine import BacktestEngine
-from app.backtesting.models import (
-    BacktestConfig,
-    BacktestResult,
-    Trade,
-    TradeDirection,
-    TradeStatus,
-)
+from app.backtesting.models import BacktestConfig
 from app.backtesting.optimization import BacktestOptimizer
 from app.backtesting.runner import BacktestRunner
 from app.backtesting.validation import (
@@ -21,12 +16,16 @@ from app.backtesting.validation import (
     RollingWindowValidator,
     WalkForwardValidator,
 )
+from app.database.repositories import BacktestRepository
 from app.market.candles.models import Candle, CandleData
-from app.patterns.base_pattern import PatternResult, PatternStatus, PatternType
+from app.patterns.base_pattern import (
+    PatternResult,
+    PatternStatus,
+    PatternType,
+    TradeDirection,
+)
 
 router = APIRouter()
-
-_backtests: list[BacktestResult] = []
 
 
 def _generate_candles(n: int = 500, seed: int = 42) -> list[Candle]:
@@ -49,7 +48,7 @@ def _generate_candles(n: int = 500, seed: int = 42) -> list[Candle]:
                     high=max(open_price, close_price) + rng.uniform(0, volatility),
                     low=min(open_price, close_price) - rng.uniform(0, volatility),
                     close=close_price,
-                    volume=rng.integers(5000, 50000),
+                    volume=float(rng.integers(5000, 50000)),
                 ),
             )
         )
@@ -100,37 +99,46 @@ def _config_from_payload(payload: dict[str, Any]) -> BacktestConfig:
 
 
 @router.get("/")
-async def list_backtests():
+async def list_backtests(
+    repo: BacktestRepository = Depends(get_backtest_repository),
+):
+    backtests = await repo.list()
     return {
         "backtests": [
             {
-                "id": i,
-                "start_date": bt.start_date.isoformat(),
-                "end_date": bt.end_date.isoformat(),
-                "total_trades": bt.metrics.total_trades,
-                "win_rate": bt.metrics.win_rate,
-                "profit_factor": bt.metrics.profit_factor,
-                "sharpe_ratio": bt.metrics.sharpe_ratio,
-                "total_pnl": bt.metrics.total_pnl,
-                "total_return": bt.total_return,
+                "id": item["id"],
+                "name": item["name"],
+                "start_date": item["result"].start_date.isoformat(),
+                "end_date": item["result"].end_date.isoformat(),
+                "total_trades": item["result"].metrics.total_trades,
+                "win_rate": item["result"].metrics.win_rate,
+                "profit_factor": item["result"].metrics.profit_factor,
+                "sharpe_ratio": item["result"].metrics.sharpe_ratio,
+                "total_pnl": item["result"].metrics.total_pnl,
+                "total_return": item["result"].total_return,
             }
-            for i, bt in enumerate(_backtests)
+            for item in backtests
         ]
     }
 
 
 @router.get("/{backtest_id}")
-async def get_backtest(backtest_id: int):
-    if backtest_id >= len(_backtests):
+async def get_backtest(
+    backtest_id: int,
+    repo: BacktestRepository = Depends(get_backtest_repository),
+):
+    item = await repo.get(backtest_id)
+    if item is None:
         raise HTTPException(status_code=404, detail="Backtest not found")
 
-    bt = _backtests[backtest_id]
+    bt = item["result"]
     return {
         "id": backtest_id,
+        "name": item["name"],
         "config": bt.config.model_dump(),
         "metrics": bt.metrics.model_dump(),
-        "trades_count": len(bt.trades),
-        "equity_curve": bt.equity_curve[:100],
+        "trades_count": bt.metrics.total_trades,
+        "equity_curve": [],
         "start_date": bt.start_date.isoformat(),
         "end_date": bt.end_date.isoformat(),
         "initial_capital": bt.initial_capital,
@@ -140,37 +148,33 @@ async def get_backtest(backtest_id: int):
 
 
 @router.get("/{backtest_id}/trades")
-async def get_backtest_trades(backtest_id: int):
-    if backtest_id >= len(_backtests):
+async def get_backtest_trades(
+    backtest_id: int,
+    repo: BacktestRepository = Depends(get_backtest_repository),
+):
+    item = await repo.get(backtest_id)
+    if item is None:
         raise HTTPException(status_code=404, detail="Backtest not found")
 
-    bt = _backtests[backtest_id]
     return {
-        "trades": [
-            {
-                "id": t.id,
-                "symbol": t.symbol,
-                "direction": t.direction.value,
-                "entry_price": t.entry_price,
-                "exit_price": t.exit_price,
-                "pnl": t.pnl,
-                "pnl_pct": t.pnl_pct,
-                "status": t.status.value,
-            }
-            for t in bt.trades
-        ]
+        "id": backtest_id,
+        "trades_count": item["result"].metrics.total_trades,
+        "trades": [],
     }
 
 
 @router.post("/runs")
-async def run_backtest(payload: dict[str, Any]):
+async def run_backtest(
+    payload: dict[str, Any],
+    repo: BacktestRepository = Depends(get_backtest_repository),
+):
     candles, patterns = _resolve_backtest_input(payload)
     config = _config_from_payload(payload)
     runner = BacktestRunner(config)
     result = runner.run(candles, patterns)
-    _backtests.append(result)
+    backtest_id = await repo.add(result, name=payload.get("name", ""))
     return {
-        "id": len(_backtests) - 1,
+        "id": backtest_id,
         "metrics": result.metrics.model_dump(),
         "total_return": result.total_return,
         "trades_count": len(result.trades),
@@ -178,7 +182,10 @@ async def run_backtest(payload: dict[str, Any]):
 
 
 @router.post("/multi")
-async def run_multiple(payload: dict[str, Any]):
+async def run_multiple(
+    payload: dict[str, Any],
+    repo: BacktestRepository = Depends(get_backtest_repository),
+):
     candles, patterns = _resolve_backtest_input(payload)
     configs = payload.get("configs") or [payload.get("config", {})]
     specs = []
@@ -193,9 +200,10 @@ async def run_multiple(payload: dict[str, Any]):
         )
     runner = BacktestRunner()
     results = runner.run_multiple(specs)
+    ids: list[int] = []
     for r in results:
-        _backtests.append(r)
-    return {"summary": runner.compare(results)}
+        ids.append(await repo.add(r, name=specs[len(ids)]["name"]))
+    return {"summary": runner.compare(results), "ids": ids}
 
 
 def _validation_runner(payload: dict[str, Any]):

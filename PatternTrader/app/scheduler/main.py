@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta
 from typing import Any, Callable, Coroutine
 
 from app.core.logger import get_logger
@@ -52,11 +53,15 @@ class Scheduler:
 
         async def _run_daily() -> None:
             while self._running:
+                now = datetime.utcnow()
+                target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if target <= now:
+                    target += timedelta(days=1)
+                await asyncio.sleep((target - now).total_seconds())
                 try:
-                    await asyncio.sleep(1)
+                    await func(*args, **kwargs)
                 except Exception as e:
                     logger.error(f"Error in task {name}: {e}")
-                await asyncio.sleep(60)
 
         task = asyncio.create_task(_run_daily())
         self._tasks[name] = task

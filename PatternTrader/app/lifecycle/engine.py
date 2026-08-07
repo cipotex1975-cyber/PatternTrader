@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from app.core.events.bus import get_event_bus
@@ -13,9 +13,10 @@ logger = get_logger("LifecycleEngine")
 
 
 class LifecycleEngine:
-    def __init__(self) -> None:
+    def __init__(self, repository: Optional[Any] = None) -> None:
         self._lifecycles: dict[UUID, LifecycleEvent] = {}
         self._pattern_lifecycle_map: dict[UUID, UUID] = {}
+        self._repository = repository
         self._event_bus = get_event_bus()
 
     async def register(self, pattern: PatternResult) -> LifecycleEvent:
@@ -29,6 +30,9 @@ class LifecycleEngine:
 
         self._lifecycles[lifecycle.id] = lifecycle
         self._pattern_lifecycle_map[pattern.id] = lifecycle.id
+
+        if self._repository is not None:
+            await self._repository.register_pattern(pattern, lifecycle)
 
         await self._event_bus.publish(
             Event(
@@ -69,6 +73,9 @@ class LifecycleEngine:
             return None
 
         transition = lifecycle.add_transition(to_state, reason, metadata)
+
+        if self._repository is not None:
+            await self._repository.update_transition(lifecycle)
 
         await self._event_bus.publish(
             Event(
@@ -120,11 +127,29 @@ class LifecycleEngine:
     def get(self, lifecycle_id: UUID) -> Optional[LifecycleEvent]:
         return self._lifecycles.get(lifecycle_id)
 
+    def get_all(self) -> list[LifecycleEvent]:
+        return list(self._lifecycles.values())
+
     def get_by_pattern(self, pattern_id: UUID) -> Optional[LifecycleEvent]:
         lifecycle_id = self._pattern_lifecycle_map.get(pattern_id)
         if lifecycle_id:
             return self._lifecycles.get(lifecycle_id)
         return None
+
+    async def transition_by_pattern(
+        self,
+        pattern_id: UUID,
+        to_state: LifecycleState,
+        reason: str = "",
+        metadata: dict | None = None,
+    ) -> Optional[LifecycleTransition]:
+        """Transiciona el lifecycle asociado a un patrón (usado por el motor de
+        trades para realimentar OPEN/TP_HIT/SL_HIT/CLOSED)."""
+        lifecycle_id = self._pattern_lifecycle_map.get(pattern_id)
+        if lifecycle_id is None:
+            logger.warning(f"No lifecycle registered for pattern {pattern_id}")
+            return None
+        return await self.transition(lifecycle_id, to_state, reason, metadata)
 
     def get_active(self) -> list[LifecycleEvent]:
         return [lc for lc in self._lifecycles.values() if lc.is_active]

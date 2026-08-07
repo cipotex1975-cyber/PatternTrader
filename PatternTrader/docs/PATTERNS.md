@@ -659,8 +659,17 @@ El `PatternPipeline` (`app/patterns/pipeline.py`) **orquesta el flujo completo**
 por cada símbolo/timeframe:
 
 ```
-Datos → Indicadores → Detección → Lifecycle → Health → Confirmación → Scoring → Señal → Telegram
+Datos → Indicadores → Detección → Lifecycle → Health → Confirmación → Scoring
+     → Hipótesis → Estrategia → Señal → Telegram
 ```
+
+El pipeline **no genera señales directamente desde el patrón**: tras el scoring
+emite una **hipótesis** (`PatternHypothesis`: `PatternResult` + indicadores +
+score + health + confirmación) y el `StrategyEngine` la evalúa con las
+estrategias habilitadas. Solo si alguna estrategia decide **ENTER** se llama a
+`SignalEngine.create_signal(..., strategy_signal=...)` y se envía por Telegram
+si el score ≥ 95. Las decisiones de cada estrategia quedan en
+`result.metadata["strategy_decisions"]`.
 
 ```python
 from app.patterns.pipeline import PatternPipeline
@@ -675,6 +684,22 @@ print(stats)  # tracked / active / expired / confirmed / signals_sent
 `PatternService` (`app/patterns/service.py`) ejecuta el pipeline de forma
 periódica (vía `Scheduler`) y se arranca automáticamente con la API en el
 lifespan de FastAPI.
+
+### Estrategias
+
+Las estrategias viven en `app/strategy/` y se registran con `@register_strategy`.
+Estrategias incluidas:
+
+| Estrategia | Tipo | Lógica |
+|------------|------|--------|
+| `trend_follow` | Continuación | Entra a favor de la tendencia (EMA9 > EMA21 en LONG, momentum positivo) |
+| `breakout` | Ruptura | Entra con momentum direccional y RSI en rango medio |
+| `contrarian` | Reversa | Entra en reversales (RSI extremo + momentum perdiendo fuerza), solo patrones `REVERSAL` |
+
+Se habilitan y parametrizan en `config/settings.yaml` (sección `strategies:`),
+ver `docs/CONFIGURATION.md`. Las estrategias pueden compararse sobre las mismas
+detecciones con `compare_strategies`/`run_strategy_backtest`
+(`app/strategy/evaluator.py`).
 
 ---
 

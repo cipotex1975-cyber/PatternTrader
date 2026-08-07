@@ -1,4 +1,11 @@
-from app.database.base import Base, get_async_session
+from app.database.base import (
+    Base,
+    get_async_session,
+    get_engine,
+    get_session_factory,
+    init_db,
+    reset_engine,
+)
 from app.database.models import (
     Asset,
     Backtest,
@@ -17,7 +24,11 @@ from app.database.models import (
 
 __all__ = [
     "Base",
+    "get_engine",
+    "get_session_factory",
     "get_async_session",
+    "init_db",
+    "reset_engine",
     "Asset",
     "Candle",
     "Indicator",

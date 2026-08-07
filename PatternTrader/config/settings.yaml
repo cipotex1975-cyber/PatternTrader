@@ -111,6 +111,13 @@ patterns:
   health:
     recalculate_interval_seconds: 10
 
+strategies:
+  enabled:
+    - "trend_follow"
+    - "breakout"
+    - "contrarian"
+  params: {}
+
 scoring:
   weights:
     pattern_structure: 0.35

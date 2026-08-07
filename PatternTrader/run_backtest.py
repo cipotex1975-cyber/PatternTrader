@@ -10,8 +10,9 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from app.backtesting.engine import BacktestEngine
 from app.backtesting.models import BacktestConfig
+from app.backtesting.runner import BacktestRunner
+from app.core.config.settings import get_settings
 from app.market.candles.models import Candle, CandleData
 from app.patterns.base_pattern import PatternResult, PatternStatus
 from app.patterns.registry import PatternRegistry
@@ -413,17 +414,18 @@ def main() -> None:
                 print(f"  {p.pattern_name}: key_levels={p.key_levels}, confidence={p.confidence:.2f}")
         return
 
+    settings = get_settings()
     config = BacktestConfig(
-        initial_capital=100000,
-        commission=0.001,
-        slippage=0.0005,
+        initial_capital=settings.backtesting.default_initial_capital,
+        commission=settings.backtesting.default_commission,
+        slippage=settings.backtesting.default_slippage,
         max_positions=10,
-        risk_per_trade=0.02,
+        risk_per_trade=settings.risk.max_risk_per_trade,
     )
 
     print("\nEjecutando backtest...")
-    engine = BacktestEngine(config)
-    result = engine.run(candles, patterns)
+    runner = BacktestRunner(config)
+    result = runner.run(candles, patterns)
 
     print()
     print_results(result, symbol, timeframe)

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 from app.core.config.settings import get_settings
 from app.core.logger import get_logger
 from app.market.candles.models import Candle
+from app.ml.features import extract_technical_features, features_to_dict
 from app.ml.models.random_forest import RandomForestModel
 from app.patterns.base_pattern import PatternResult
 from app.scoring.models import ScoreComponent, ScoreResult
@@ -19,7 +21,16 @@ class ScoringEngine:
         settings = get_settings()
         self._weights = settings.scoring.weights
         self._ml_model: RandomForestModel | None = None
+        self._knowledge: Any = None
         self._load_ml_model(settings.ml.model_path)
+
+    def attach_knowledge(self, learning_service: Any) -> None:
+        """Conecta el modelo de aprendizaje continuo al scoring.
+
+        Cuando el modelo de conocimiento está entrenado, el componente
+        ``ml_history`` usa su predicción en lugar del RandomForest estático.
+        """
+        self._knowledge = learning_service
 
     def _load_ml_model(self, model_path: str) -> None:
         """Load trained ML model if available."""
@@ -122,8 +133,8 @@ class ScoringEngine:
             )
         )
 
-        ml_features = self._extract_ml_features(indicators, candles)
-        ml_score = self._get_ml_score(ml_features)
+        ml_features = self._extract_ml_features(candles)
+        ml_score = self._get_ml_score(ml_features, pattern)
         components.append(
             ScoreComponent(
                 name="ml_history",
@@ -287,97 +298,39 @@ class ScoringEngine:
 
     def _extract_ml_features(
         self,
-        indicators: dict[str, float],
         candles: list[Candle] | None,
     ) -> np.ndarray | None:
         """Extract features for ML model prediction."""
         if not candles or len(candles) < 20:
             return None
+        return extract_technical_features(candles)
 
-        try:
-            closes = np.array([c.data.close for c in candles])
-            highs = np.array([c.data.high for c in candles])
-            lows = np.array([c.data.low for c in candles])
-            volumes = np.array([c.data.volume for c in candles])
+    def _get_ml_score(
+        self,
+        features: np.ndarray | None,
+        pattern: PatternResult | None = None,
+    ) -> float:
+        """Get ML model prediction score.
 
-            def ema(series: np.ndarray, period: int) -> float:
-                alpha = 2 / (period + 1)
-                result = series[0]
-                for val in series[1:]:
-                    result = alpha * val + (1 - alpha) * result
-                return result
-
-            def rsi(series: np.ndarray, period: int = 14) -> float:
-                deltas = np.diff(series)
-                gains = np.where(deltas > 0, deltas, 0)
-                losses = np.where(deltas < 0, -deltas, 0)
-                avg_gain = np.mean(gains[-period:])
-                avg_loss = np.mean(losses[-period:])
-                if avg_loss == 0:
-                    return 100.0
-                rs = avg_gain / avg_loss
-                return 100 - (100 / (1 + rs))
-
-            def macd_calc(series: np.ndarray) -> tuple[float, float, float]:
-                ema12 = ema(series, 12)
-                ema26 = ema(series, 26)
-                macd_line = ema12 - ema26
-                signal_line = ema(np.array([macd_line]), 9)
-                histogram = macd_line - signal_line
-                return macd_line, signal_line, histogram
-
-            def atr_calc(
-                highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14
-            ) -> float:
-                tr1 = highs[-period:] - lows[-period:]
-                tr2 = np.abs(highs[-period:] - closes[-period - 1 : -1])
-                tr3 = np.abs(lows[-period:] - closes[-period - 1 : -1])
-                tr = np.maximum(np.maximum(tr1, tr2), tr3)
-                return np.mean(tr)
-
-            ema_21 = ema(closes, 21)
-            ema_50 = ema(closes, 50)
-            rsi_val = rsi(closes)
-            macd_line, signal_line, histogram = macd_calc(closes)
-            atr_val = atr_calc(highs, lows, closes)
-
-            vol_avg = np.mean(volumes[-20:]) if len(volumes) >= 20 else np.mean(volumes)
-            volume_ratio = volumes[-1] / vol_avg if vol_avg > 0 else 1.0
-
-            price_change = (closes[-1] - closes[-2]) / closes[-2] if closes[-2] != 0 else 0
-            high_low_range = (highs[-1] - lows[-1]) / closes[-1] if closes[-1] != 0 else 0
-            close_position = (
-                (closes[-1] - lows[-1]) / (highs[-1] - lows[-1])
-                if (highs[-1] - lows[-1]) != 0
-                else 0.5
+        Prefiere el modelo de aprendizaje continuo (alimentado con operaciones
+        reales cerradas) cuando está entrenado; si no, usa el RandomForest
+        estático. Sin modelo disponible devuelve un score neutro de 50.
+        """
+        if (
+            self._knowledge is not None
+            and getattr(self._knowledge, "is_trained", False)
+            and features is not None
+        ):
+            indicators = features_to_dict(features)
+            prediction = self._knowledge.predict(
+                indicators=indicators,
+                variables={},
+                instrument=pattern.symbol if pattern else "",
+                timeframe=pattern.timeframe if pattern else "",
+                pattern=pattern.pattern_name if pattern else "",
             )
-            trend_strength = (ema_21 - ema_50) / ema_50 if ema_50 != 0 else 0
+            return max(0.0, min(100.0, prediction.probability * 100))
 
-            features = np.array(
-                [
-                    rsi_val,
-                    macd_line,
-                    signal_line,
-                    histogram,
-                    ema_21,
-                    ema_50,
-                    atr_val,
-                    volume_ratio,
-                    price_change,
-                    high_low_range,
-                    close_position,
-                    trend_strength,
-                ]
-            )
-
-            return features
-
-        except Exception as e:
-            logger.error(f"Failed to extract ML features: {e}")
-            return None
-
-    def _get_ml_score(self, features: np.ndarray | None) -> float:
-        """Get ML model prediction score."""
         if features is None or self._ml_model is None or not self._ml_model.is_trained:
             return 50.0
 

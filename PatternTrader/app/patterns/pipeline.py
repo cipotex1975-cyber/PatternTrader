@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import inspect
+import re
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Awaitable, Callable, Optional
 from uuid import UUID
 
@@ -15,21 +17,35 @@ from app.lifecycle.engine import LifecycleEngine
 from app.lifecycle.models import LifecycleState
 from app.market.candles.models import Candle, CandleData
 from app.market.indicators.calculator import IndicatorCalculator
+from app.ml.features import extract_technical_features, features_to_dict
 from app.patterns.base_pattern import (
     BasePattern,
     PatternResult,
     PatternStatus,
     TradeDirection,
 )
+from app.patterns.hypothesis import PatternHypothesis
 from app.patterns.registry import PatternRegistry
+from app.risk.engine import RiskEngine
 from app.scoring.engine import ScoringEngine
 from app.signals.engine import SignalEngine
 from app.signals.models import SignalPriority
+from app.strategy.engine import StrategyEngine
 from app.telegram.notifier import TelegramNotifier
 
 logger = get_logger("PatternPipeline")
 
 DataSource = Callable[[str, str], Awaitable[list[Candle]] | list[Candle]]
+
+_TIMEFRAME_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def timeframe_to_seconds(timeframe: str) -> int:
+    """Convierte un timeframe (``1m``, ``4h``, ``1d``…) a segundos."""
+    match = re.fullmatch(r"(\d+)\s*([smhdw])", str(timeframe).strip().lower())
+    if not match:
+        return 3600
+    return int(match.group(1)) * _TIMEFRAME_SECONDS[match.group(2)]
 
 
 def ohlcv_to_candle(ohlcv: OHLCV, symbol: str, timeframe: str) -> Candle:
@@ -57,8 +73,10 @@ class TrackedPattern:
 class PatternPipeline:
     """Orquesta el flujo completo de un patrón detectado.
 
-    Detección → Lifecycle → Health → Confirmación → Scoring → Señal → Telegram.
-    Los detectores solo detectan estructura; este motor administra los estados.
+    Detección → Lifecycle → Health → Confirmación → Scoring → Hipótesis →
+    Estrategia → Señal → Telegram.
+    Los detectores solo detectan estructura; este motor administra los estados
+    y emite hipótesis que las estrategias evalúan antes de generar señal.
     """
 
     def __init__(
@@ -66,17 +84,28 @@ class PatternPipeline:
         data_source: Optional[DataSource] = None,
         provider: IDataProvider | None = None,
         max_candles: int = 500,
+        strategies: Optional[list[str]] = None,
+        strategy_params: Optional[dict] = None,
+        learning_service: Optional[object] = None,
+        lifecycle_repository: Optional[object] = None,
+        signal_repository: Optional[object] = None,
     ) -> None:
         self._data_source = data_source
         self._provider = provider
         self._max_candles = max_candles
 
         self._indicator_calculator = IndicatorCalculator()
-        self._lifecycle = LifecycleEngine()
+        self._lifecycle = LifecycleEngine(repository=lifecycle_repository)
         self._health = HealthEngine()
         self._confirmation = ConfirmationEngine()
+        self._risk = RiskEngine()
         self._scoring = ScoringEngine()
-        self._signal_engine = SignalEngine()
+        if learning_service is not None:
+            self._scoring.attach_knowledge(learning_service)
+        self._signal_engine = SignalEngine(repository=signal_repository)
+        self._strategy_engine = StrategyEngine(
+            strategies=strategies, parameters=strategy_params
+        )
         self._telegram = TelegramNotifier()
         self._event_bus = get_event_bus()
 
@@ -112,6 +141,8 @@ class PatternPipeline:
         await self._detect_new(candles, symbol, timeframe, latest_indicators)
         await self._update_tracked(candles, latest_indicators)
 
+        await self._emit_candle_update(symbol, timeframe, candles)
+
         return self.stats()
 
     def stats(self) -> dict:
@@ -144,6 +175,29 @@ class PatternPipeline:
             logger.error(f"Failed to fetch candles for {symbol} {timeframe}: {e}")
             return []
 
+    async def _emit_candle_update(
+        self, symbol: str, timeframe: str, candles: list[Candle]
+    ) -> None:
+        if not candles:
+            return
+        latest = candles[-1].data
+        await self._event_bus.publish(
+            Event(
+                type=EventType.CANDLE_UPDATED,
+                source="PatternPipeline",
+                data={
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "timestamp": latest.timestamp.isoformat(),
+                    "open": latest.open,
+                    "high": latest.high,
+                    "low": latest.low,
+                    "close": latest.close,
+                    "volume": latest.volume,
+                },
+            )
+        )
+
     async def _detect_new(
         self,
         candles: list[Candle],
@@ -159,6 +213,11 @@ class PatternPipeline:
             key = (symbol, timeframe, result.pattern_name)
             if key in self._active_keys:
                 continue
+
+            if result.expires_at is None:
+                result.expires_at = result.detected_at + timedelta(
+                    seconds=timeframe_to_seconds(timeframe) * result.max_confirmation_candles
+                )
 
             lifecycle = await self._lifecycle.register(result)
             self._tracked[result.id] = TrackedPattern(
@@ -204,10 +263,26 @@ class PatternPipeline:
             result.metadata["health_report"] = report.model_dump()
 
             if not detector.validate(result, candles):
-                detector.invalidate(result, reason="pattern deformation")
-                await self._lifecycle.update_pattern_status(
-                    result, PatternStatus.INVALIDATED, "pattern deformation"
-                )
+                lifecycle = self._lifecycle.get_by_pattern(result.id)
+                if (
+                    result.status == PatternStatus.SIGNAL_SENT
+                    and lifecycle is not None
+                    and lifecycle.current_state == LifecycleState.SIGNAL_SENT
+                ):
+                    result.transition(PatternStatus.CANCELLED)
+                    result.metadata["cancellation_reason"] = (
+                        "pattern deformation before trade entry"
+                    )
+                    await self._lifecycle.update_pattern_status(
+                        result,
+                        PatternStatus.CANCELLED,
+                        "pattern deformation before trade entry",
+                    )
+                else:
+                    detector.invalidate(result, reason="pattern deformation")
+                    await self._lifecycle.update_pattern_status(
+                        result, PatternStatus.INVALIDATED, "pattern deformation"
+                    )
 
             if not result.is_active:
                 await self._lifecycle.update_pattern_status(result, result.status)
@@ -270,8 +345,51 @@ class PatternPipeline:
             0.0,
         )
 
-        signal = await self._signal_engine.create_signal(result, score_result, ml_probability)
+        confirmation = result.metadata.get("confirmation") or {}
+        hypothesis = PatternHypothesis(
+            pattern=result,
+            indicators=latest_indicators,
+            score=score_result,
+            ml_probability=ml_probability,
+            confirmation_score=confirmation.get("score"),
+            candles=candles[-50:],
+            market_structure=result.metadata.get("market_structure", {}) or {},
+        )
+
+        strategy_result = self._strategy_engine.evaluate(hypothesis)
+        result.metadata["strategy_decisions"] = strategy_result.to_dict()
+
+        if not strategy_result.has_entry:
+            logger.info(
+                f"No strategy entry for {result.pattern_name} "
+                f"{result.symbol}:{result.timeframe} (score {score_result.total_score:.1f})"
+            )
+            return
+
+        best = strategy_result.best
+        signal = await self._signal_engine.create_signal(
+            result,
+            score_result,
+            ml_probability,
+            strategy_signal=best.signal if best else None,
+        )
         if signal is None:
+            return
+
+        risk_assessment = self._risk.assess(
+            result, signal.entry_price, signal.stop_loss, signal.take_profit
+        )
+        result.metadata["risk_assessment"] = risk_assessment.model_dump(mode="json")
+        if not risk_assessment.is_acceptable:
+            reason = "; ".join(risk_assessment.warnings) or "risk limits exceeded"
+            result.transition(PatternStatus.REJECTED)
+            await self._lifecycle.update_pattern_status(
+                result, PatternStatus.REJECTED, reason=f"Risk rejected: {reason}"
+            )
+            logger.info(
+                f"Signal rejected by risk: {result.symbol} {result.pattern_name} "
+                f"({reason})"
+            )
             return
 
         result.transition(PatternStatus.SIGNAL_SENT)
@@ -282,16 +400,28 @@ class PatternPipeline:
         )
 
         if signal.priority == SignalPriority.CRITICAL:
+            await self._signal_engine.mark_sent(signal.id)
             await self._telegram.send_signal(signal)
+            features = extract_technical_features(candles)
             await self._event_bus.publish(
                 Event(
                     type=EventType.SIGNAL_SENT,
                     source="PatternPipeline",
                     data={
                         "signal_id": str(signal.id),
+                        "pattern_id": str(result.id),
                         "symbol": signal.symbol,
+                        "timeframe": signal.timeframe,
                         "pattern_name": signal.pattern_name,
+                        "direction": signal.direction,
                         "score": signal.score,
+                        "entry_price": signal.entry_price,
+                        "stop_loss": signal.stop_loss,
+                        "take_profit": signal.take_profit,
+                        "risk_reward_ratio": signal.risk_reward_ratio,
+                        "strategy": signal.metadata.get("strategy", ""),
+                        "size": signal.metadata.get("strategy_size"),
+                        "indicators": features_to_dict(features),
                     },
                 )
             )
@@ -332,18 +462,21 @@ class PatternPipeline:
                 levels.get("trough1")
                 or levels.get("trough2")
                 or levels.get("flag_low")
+                or levels.get("pennant_low")
                 or levels.get("valley")
                 or 0
             )
             stop = stop_candidate if stop_candidate and stop_candidate < entry else entry * 0.99
         else:
-            entry = levels.get("neckline") or 0
+            entry = levels.get("neckline") or levels.get("pole_low") or 0
             if entry == 0:
                 return
             stop_candidate = max(
                 levels.get("peak1", 0),
                 levels.get("peak2", 0),
                 levels.get("head", 0),
+                levels.get("flag_high", 0),
+                levels.get("pennant_high", 0),
             )
             stop = stop_candidate * 1.001 if stop_candidate > entry else entry * 1.01
 
