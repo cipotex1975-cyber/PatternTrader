@@ -332,11 +332,6 @@ class BasePattern(ABC):
         """Validar si el patrón sigue vigente."""
         ...
     
-    @abstractmethod
-    def score(self, pattern, indicators) -> float:
-        """Calcular score del patrón."""
-        ...
-    
     def update(self, pattern, candles) -> PatternResult:
         """Actualizar estado del patrón con nuevas velas."""
         ...

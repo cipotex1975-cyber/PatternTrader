@@ -31,6 +31,13 @@ telegram:
   bot_token: "${TELEGRAM_BOT_TOKEN}"
   chat_id: "${TELEGRAM_CHAT_ID}"
   enabled: false
+  cooldown_minutes: 5
+  max_retries: 3
+  retry_backoff_seconds: 2.0
+  timeout_seconds: 10.0
+  dedup_store_path: "./data/state/telegram_dedup.json"
+  send_image: true
+  min_priority: "CRITICAL"
 
 data_providers:
   default: "binance"
@@ -102,6 +109,8 @@ patterns:
     min_score_to_prepare: 75
     min_score_to_alert: 85
     min_score_to_send: 95
+    cooldown_minutes: 5
+    signal_ttl_hours: 24
   lifecycle:
     enabled: true
     check_interval_seconds: 5
@@ -110,6 +119,11 @@ patterns:
     candle_limit: 500
   health:
     recalculate_interval_seconds: 10
+  detection:
+    peak_tolerance: 0.02
+    flag_slope_tolerance: 0.001
+  confirmation:
+    max_spread_ratio: 0.001
 
 strategies:
   enabled:
@@ -136,6 +150,18 @@ risk:
   max_correlated_exposure: 0.15
   default_rr_ratio: 2.0
   trailing_stop_enabled: false
+  symbol_sectors:
+    BTCUSDT: "crypto"
+    ETHUSDT: "crypto"
+    BNBUSDT: "crypto"
+  correlations:
+    BTCUSDT:
+      ETHUSDT: 0.85
+      BNBUSDT: 0.75
+    ETHUSDT:
+      BTCUSDT: 0.85
+    BNBUSDT:
+      BTCUSDT: 0.75
 
 backtesting:
   default_initial_capital: 100000

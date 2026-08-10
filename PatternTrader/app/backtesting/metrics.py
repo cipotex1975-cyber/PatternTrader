@@ -173,7 +173,7 @@ class MetricsCalculator:
 
     @staticmethod
     def _estimate_fees(closed: list[Trade]) -> float:
-        return sum(abs(t.pnl) * 0.001 for t in closed)
+        return sum(getattr(t, "fees", 0.0) for t in closed)
 
     @staticmethod
     def classification_metrics(

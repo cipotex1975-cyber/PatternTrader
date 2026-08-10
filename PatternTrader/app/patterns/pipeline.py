@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import inspect
 import re
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Awaitable, Callable, Optional
 from uuid import UUID
 
 from app.confirmation.engine import ConfirmationEngine
+from app.core.config.settings import get_settings
 from app.core.events.bus import get_event_bus
 from app.core.events.models import Event, EventType
 from app.core.logger import get_logger
@@ -31,6 +33,7 @@ from app.scoring.engine import ScoringEngine
 from app.signals.engine import SignalEngine
 from app.signals.models import SignalPriority
 from app.strategy.engine import StrategyEngine
+from app.strategy.manager import StrategyManager
 from app.telegram.notifier import TelegramNotifier
 
 logger = get_logger("PatternPipeline")
@@ -38,6 +41,13 @@ logger = get_logger("PatternPipeline")
 DataSource = Callable[[str, str], Awaitable[list[Candle]] | list[Candle]]
 
 _TIMEFRAME_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+_PRIORITY_SCORES = {
+    SignalPriority.LOW: 25,
+    SignalPriority.MEDIUM: 50,
+    SignalPriority.HIGH: 75,
+    SignalPriority.CRITICAL: 100,
+}
 
 
 def timeframe_to_seconds(timeframe: str) -> int:
@@ -89,6 +99,8 @@ class PatternPipeline:
         learning_service: Optional[object] = None,
         lifecycle_repository: Optional[object] = None,
         signal_repository: Optional[object] = None,
+        risk_engine: Optional[RiskEngine] = None,
+        strategy_manager: Optional[StrategyManager] = None,
     ) -> None:
         self._data_source = data_source
         self._provider = provider
@@ -98,13 +110,16 @@ class PatternPipeline:
         self._lifecycle = LifecycleEngine(repository=lifecycle_repository)
         self._health = HealthEngine()
         self._confirmation = ConfirmationEngine()
-        self._risk = RiskEngine()
+        self._risk = risk_engine or RiskEngine()
         self._scoring = ScoringEngine()
         if learning_service is not None:
             self._scoring.attach_knowledge(learning_service)
         self._signal_engine = SignalEngine(repository=signal_repository)
-        self._strategy_engine = StrategyEngine(
-            strategies=strategies, parameters=strategy_params
+        self._strategy_manager = strategy_manager
+        self._strategy_engine = (
+            strategy_manager.engine
+            if strategy_manager is not None
+            else StrategyEngine(strategies=strategies, parameters=strategy_params)
         )
         self._telegram = TelegramNotifier()
         self._event_bus = get_event_bus()
@@ -112,6 +127,11 @@ class PatternPipeline:
         self._tracked: dict[UUID, TrackedPattern] = {}
         self._active_keys: set[tuple[str, str, str]] = set()
         self._detectors = PatternRegistry.get_all_instances()
+
+        settings = get_settings()
+        self._max_patterns_per_symbol = settings.patterns.lifecycle.max_patterns_per_symbol
+        self._health_interval_seconds = settings.patterns.health.recalculate_interval_seconds
+        self._last_health_calc: dict[UUID, float] = {}
 
     @property
     def lifecycle(self) -> LifecycleEngine:
@@ -205,6 +225,16 @@ class PatternPipeline:
         timeframe: str,
         latest_indicators: dict[str, float],
     ) -> None:
+        active_count = sum(
+            1
+            for t in self._tracked.values()
+            if t.result.symbol == symbol and t.result.is_active
+        )
+        at_pattern_cap = (
+            self._max_patterns_per_symbol > 0
+            and active_count >= self._max_patterns_per_symbol
+        )
+
         for detector in self._detectors:
             result = detector.detect(candles, symbol, timeframe)
             if result is None:
@@ -212,6 +242,13 @@ class PatternPipeline:
 
             key = (symbol, timeframe, result.pattern_name)
             if key in self._active_keys:
+                continue
+
+            if at_pattern_cap:
+                logger.debug(
+                    f"Skip {result.pattern_name} on {symbol}:{timeframe}: "
+                    f"pattern cap {self._max_patterns_per_symbol} reached"
+                )
                 continue
 
             if result.expires_at is None:
@@ -258,9 +295,15 @@ class PatternPipeline:
 
             self._prepare_price_levels(result)
 
-            report = await self._health.calculate(result, detector, candles, latest_indicators)
-            result.update_health(report.health)
-            result.metadata["health_report"] = report.model_dump()
+            now = time.monotonic()
+            last_calc = self._last_health_calc.get(pattern_id, 0.0)
+            if self._health_interval_seconds <= 0 or now - last_calc >= self._health_interval_seconds:
+                report = await self._health.calculate(
+                    result, detector, candles, latest_indicators
+                )
+                result.update_health(report.health)
+                result.metadata["health_report"] = report.model_dump()
+                self._last_health_calc[pattern_id] = now
 
             if not detector.validate(result, candles):
                 lifecycle = self._lifecycle.get_by_pattern(result.id)
@@ -356,7 +399,10 @@ class PatternPipeline:
             market_structure=result.metadata.get("market_structure", {}) or {},
         )
 
-        strategy_result = self._strategy_engine.evaluate(hypothesis)
+        if self._strategy_manager is not None:
+            strategy_result = self._strategy_manager.evaluate(hypothesis)
+        else:
+            strategy_result = self._strategy_engine.evaluate(hypothesis)
         result.metadata["strategy_decisions"] = strategy_result.to_dict()
 
         if not strategy_result.has_entry:
@@ -399,9 +445,20 @@ class PatternPipeline:
             reason=f"Score {score_result.total_score:.1f}",
         )
 
-        if signal.priority == SignalPriority.CRITICAL:
-            await self._signal_engine.mark_sent(signal.id)
-            await self._telegram.send_signal(signal)
+        min_priority = SignalPriority(get_settings().telegram.min_priority)
+        if signal.priority_score >= _PRIORITY_SCORES[min_priority]:
+            sent = await self._signal_engine.mark_sent(signal.id)
+            if sent is None:
+                return
+            delivered = await self._telegram.send_signal(
+                signal, candles=candles, pattern=result
+            )
+            if delivered:
+                await self._signal_engine.mark_delivered(signal.id)
+            else:
+                await self._signal_engine.mark_failed(
+                    signal.id, reason="telegram send failed"
+                )
             features = extract_technical_features(candles)
             await self._event_bus.publish(
                 Event(
@@ -437,6 +494,7 @@ class PatternPipeline:
     def _forget(self, pattern_id: UUID, result: PatternResult) -> None:
         self._tracked.pop(pattern_id, None)
         self._active_keys.discard((result.symbol, result.timeframe, result.pattern_name))
+        self._last_health_calc.pop(pattern_id, None)
 
     def _prepare_price_levels(self, result: PatternResult) -> None:
         if (

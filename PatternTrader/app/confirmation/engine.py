@@ -6,6 +6,7 @@ from app.confirmation.models import (
     ConfirmationRule,
     ConfirmationStatus,
 )
+from app.core.config.settings import get_settings
 from app.core.logger import get_logger
 from app.market.candles.models import Candle
 from app.patterns.base_pattern import PatternResult, TradeDirection
@@ -245,7 +246,11 @@ class ConfirmationEngine:
             )
 
         if pattern.pattern_type.value == "reversal":
-            passed = True
+            passed = (
+                ema_21 < ema_50
+                if pattern.direction == TradeDirection.LONG
+                else ema_21 > ema_50
+            )
         elif pattern.direction == TradeDirection.LONG:
             passed = ema_21 > ema_50
         else:
@@ -282,10 +287,23 @@ class ConfirmationEngine:
 
     def _check_spread(self, indicators: dict[str, float]) -> ConfirmationCheck:
         rule = self._get_rule("spread_acceptable")
+        spread = indicators.get("spread")
+        price = indicators.get("close") or indicators.get("last_price")
+        if spread is None or spread <= 0 or not price or price <= 0:
+            return ConfirmationCheck(
+                rule=rule,
+                status=ConfirmationStatus.PENDING,
+                message="Spread data not available",
+            )
+        ratio = spread / price
+        max_ratio = get_settings().patterns.confirmation.max_spread_ratio
+        passed = ratio <= max_ratio
         return ConfirmationCheck(
             rule=rule,
-            status=ConfirmationStatus.PASSED,
-            message="Spread check passed (placeholder)",
+            status=ConfirmationStatus.PASSED if passed else ConfirmationStatus.FAILED,
+            value=ratio,
+            threshold=max_ratio,
+            message=f"Spread ratio: {ratio:.4%}",
         )
 
     def _check_liquidity(self, candles: list[Candle]) -> ConfirmationCheck:

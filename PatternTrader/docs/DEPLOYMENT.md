@@ -40,7 +40,6 @@ WORKDIR /app
 
 # Copiar archivos de dependencias
 COPY pyproject.toml .
-COPY requirements.txt .
 
 # Instalar dependencias
 RUN pip install --no-cache-dir --upgrade pip

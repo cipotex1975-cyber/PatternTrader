@@ -25,11 +25,13 @@ class ExecutionEngine:
         default_size: float = 1.0,
         max_open_positions: int = 50,
         repository: Optional[Any] = None,
+        risk_engine: Optional[Any] = None,
     ) -> None:
         self._lifecycle = lifecycle
         self._default_size = default_size
         self._max_open_positions = max_open_positions
         self._repository = repository
+        self._risk = risk_engine
         self._bus = get_event_bus()
         self._open_trades: dict[str, Trade] = {}
         self._closed_trades: dict[str, Trade] = {}
@@ -126,6 +128,9 @@ class ExecutionEngine:
 
         self._open_trades[trade.id] = trade
 
+        if self._risk is not None:
+            self._risk.register_position(trade.symbol, trade.size, trade.entry_price)
+
         if self._repository is not None:
             await self._repository.add(trade)
 
@@ -209,6 +214,11 @@ class ExecutionEngine:
 
         self._open_trades.pop(trade_id, None)
         self._closed_trades[trade_id] = trade
+
+        if self._risk is not None:
+            self._risk.close_position(
+                trade.symbol, trade.size, trade.entry_price, trade.pnl
+            )
 
         if self._repository is not None:
             await self._repository.update_closed(trade)

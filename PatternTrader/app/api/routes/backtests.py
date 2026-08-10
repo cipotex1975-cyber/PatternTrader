@@ -16,6 +16,7 @@ from app.backtesting.validation import (
     RollingWindowValidator,
     WalkForwardValidator,
 )
+from app.core.config.settings import get_settings
 from app.database.repositories import BacktestRepository
 from app.market.candles.models import Candle, CandleData
 from app.patterns.base_pattern import (
@@ -226,10 +227,17 @@ def _validation_runner(payload: dict[str, Any]):
 @router.post("/walk-forward")
 async def walk_forward(payload: dict[str, Any]):
     candles, evaluate = _validation_runner(payload)
+    backtesting_settings = get_settings().backtesting
+    train_size = payload.get("train_size", 300)
+    step = payload.get("step")
+    if step is None:
+        step = max(
+            1, (len(candles) - train_size) // max(1, backtesting_settings.walk_forward_splits)
+        )
     validator = WalkForwardValidator(
-        train_size=payload.get("train_size", 300),
+        train_size=train_size,
         test_size=payload.get("test_size", 100),
-        step=payload.get("step"),
+        step=step,
         evaluate_fn=evaluate,
     )
     return validator.run(candles).model_dump(mode="json")
@@ -272,7 +280,9 @@ async def monte_carlo(payload: dict[str, Any]):
     simulator = MonteCarloSimulator(random_state=payload.get("seed"))
     mc = simulator.simulate(
         trades=result.trades,
-        n_simulations=payload.get("simulations", 1000),
+        n_simulations=payload.get(
+            "simulations", get_settings().backtesting.monte_carlo_simulations
+        ),
         initial_capital=config.initial_capital,
     )
     return mc.model_dump(mode="json")

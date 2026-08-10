@@ -84,8 +84,8 @@ pip install -e ".[dev]"
 ### Configuración
 
 ```bash
-# Copiar configuración de ejemplo
-cp config/settings.yaml.example config/settings.yaml
+# Editar la configuración principal
+nano config/settings.yaml
 
 # Configurar variables de entorno
 export DB_PASSWORD="tu_password"
@@ -376,6 +376,23 @@ curl http://localhost:8000/api/v1/dashboard/overview
 | Bear Flag | `bear_flag` | Continuación bajista | 12 velas |
 | Bull Pennant | `bull_pennant` | Continuación alcista | 12 velas |
 | Bear Pennant | `bear_pennant` | Continuación bajista | 12 velas |
+| Cup & Handle | `cup_and_handle` | Continuación alcista | 20 velas |
+
+### Patrones Adicionales (Fase 5) — carpeta `app/patterns/neutral/`
+| Patrón | Nombre | Tipo | Confirmación |
+|--------|--------|------|--------------|
+| Ascending Triangle | `ascending_triangle` | Neutral | 15 velas |
+| Descending Triangle | `descending_triangle` | Neutral | 15 velas |
+| Symmetric Triangle | `symmetric_triangle` | Neutral | 15 velas |
+| Rising Wedge | `rising_wedge` | Neutral | 15 velas |
+| Falling Wedge | `falling_wedge` | Neutral | 15 velas |
+| Rectangle | `rectangle` | Neutral | 15 velas |
+| Channel | `channel` | Neutral | 15 velas |
+| Diamond | `diamond` | Neutral | 15 velas |
+| Broadening | `broadening` | Neutral | 15 velas |
+| Rounded Bottom | `rounded_bottom` | Reversión alcista | 25 velas |
+| Triple Top | `triple_top` | Reversión bajista | 25 velas |
+| Triple Bottom | `triple_bottom` | Reversión alcista | 25 velas |
 
 ---
 

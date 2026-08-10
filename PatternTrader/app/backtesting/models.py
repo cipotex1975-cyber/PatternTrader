@@ -32,6 +32,7 @@ class Trade(BaseModel):
     size: float = 1.0
     pnl: float = 0.0
     pnl_pct: float = 0.0
+    fees: float = 0.0
     status: TradeStatus = TradeStatus.OPEN
     pattern_name: str = ""
     score: float = 0.0
@@ -62,6 +63,10 @@ class BacktestConfig(BaseModel):
     max_daily_loss: float = 0.06
     use_trailing_stop: bool = False
     trailing_stop_pct: float = 0.02
+    use_atr_stops: bool = False
+    atr_period: int = 14
+    atr_sl_multiplier: float = 1.5
+    atr_tp_multiplier: float = 2.0
 
 
 class BacktestMetrics(BaseModel):

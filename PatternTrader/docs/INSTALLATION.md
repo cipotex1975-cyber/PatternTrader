@@ -187,7 +187,6 @@ RUN apt-get update && apt-get install -y \
 
 # Copiar archivos de dependencias
 COPY pyproject.toml .
-COPY requirements.txt .
 
 # Instalar dependencias
 RUN pip install --no-cache-dir -e ".[dev]"

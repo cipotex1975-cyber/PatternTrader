@@ -178,3 +178,51 @@ def test_trend_alignment_continuation_short_fails_in_uptrend(engine: Confirmatio
     )
     check = engine._check_trend_alignment({"ema_21": 51000, "ema_50": 50000}, pattern)
     assert check.status == ConfirmationStatus.FAILED
+
+
+def test_trend_alignment_reversal_long_requires_downtrend(engine: ConfirmationEngine) -> None:
+    pattern = build_pattern(
+        "double_bottom",
+        PatternType.REVERSAL,
+        TradeDirection.LONG,
+        {"neckline": 50000},
+    )
+    check = engine._check_trend_alignment({"ema_21": 49000, "ema_50": 50000}, pattern)
+    assert check.status == ConfirmationStatus.PASSED
+
+
+def test_trend_alignment_reversal_long_fails_in_uptrend(engine: ConfirmationEngine) -> None:
+    pattern = build_pattern(
+        "double_bottom",
+        PatternType.REVERSAL,
+        TradeDirection.LONG,
+        {"neckline": 50000},
+    )
+    check = engine._check_trend_alignment({"ema_21": 51000, "ema_50": 50000}, pattern)
+    assert check.status == ConfirmationStatus.FAILED
+
+
+def test_trend_alignment_reversal_short_requires_uptrend(engine: ConfirmationEngine) -> None:
+    pattern = build_pattern(
+        "double_top",
+        PatternType.REVERSAL,
+        TradeDirection.SHORT,
+        {"neckline": 50000},
+    )
+    check = engine._check_trend_alignment({"ema_21": 51000, "ema_50": 50000}, pattern)
+    assert check.status == ConfirmationStatus.PASSED
+
+
+def test_spread_pending_when_no_data(engine: ConfirmationEngine) -> None:
+    check = engine._check_spread({})
+    assert check.status == ConfirmationStatus.PENDING
+
+
+def test_spread_passes_within_threshold(engine: ConfirmationEngine) -> None:
+    check = engine._check_spread({"spread": 10.0, "close": 50000.0})
+    assert check.status == ConfirmationStatus.PASSED
+
+
+def test_spread_fails_above_threshold(engine: ConfirmationEngine) -> None:
+    check = engine._check_spread({"spread": 1000.0, "close": 50000.0})
+    assert check.status == ConfirmationStatus.FAILED

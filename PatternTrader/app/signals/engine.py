@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime, timedelta
 from typing import Any, Optional
 from uuid import UUID
@@ -23,8 +25,10 @@ class SignalEngine:
         self._sent_signals: dict[str, datetime] = {}
         self._signals: dict[UUID, Signal] = {}
         self._repository = repository
-        self._cooldown_minutes = 5
+        self._cooldown_minutes = self._scoring_config.cooldown_minutes
+        self._dedup_store_path = settings.telegram.dedup_store_path
         self._event_bus = get_event_bus()
+        self._load_dedup()
 
     async def create_signal(
         self,
@@ -91,12 +95,14 @@ class SignalEngine:
             health=pattern.health,
             ml_probability=ml_probability,
             reasons=reasons,
-            expires_at=datetime.utcnow() + timedelta(hours=24),
+            expires_at=datetime.utcnow()
+            + timedelta(hours=self._scoring_config.signal_ttl_hours),
             metadata=metadata,
         )
 
         self._sent_signals[signal_key] = datetime.utcnow()
         self._signals[signal.id] = signal
+        self._save_dedup()
 
         if self._repository is not None:
             await self._repository.add(signal)
@@ -169,6 +175,10 @@ class SignalEngine:
         signal = self._signals.get(signal_id)
         if signal is None:
             return None
+        if signal.is_expired:
+            logger.warning(f"Signal {signal_id} expired, not sending")
+            await self.mark_failed(signal_id, reason="signal expired")
+            return None
         signal.mark_sent()
         if self._repository is not None:
             await self._repository.update_status(
@@ -196,3 +206,32 @@ class SignalEngine:
 
     def clear_cooldown(self) -> None:
         self._sent_signals.clear()
+        self._save_dedup()
+
+    def _load_dedup(self) -> None:
+        try:
+            if not os.path.exists(self._dedup_store_path):
+                return
+            with open(self._dedup_store_path, "r") as f:
+                raw = json.load(f)
+            for key, value in raw.items():
+                try:
+                    self._sent_signals[key] = datetime.fromisoformat(str(value))
+                except (ValueError, TypeError):
+                    continue
+            logger.debug(f"Loaded {len(self._sent_signals)} dedup entries")
+        except (OSError, ValueError) as e:
+            logger.warning(f"Could not load dedup store {self._dedup_store_path}: {e}")
+
+    def _save_dedup(self) -> None:
+        try:
+            directory = os.path.dirname(self._dedup_store_path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            payload = {
+                key: value.isoformat() for key, value in self._sent_signals.items()
+            }
+            with open(self._dedup_store_path, "w") as f:
+                json.dump(payload, f, indent=2)
+        except OSError as e:
+            logger.warning(f"Could not save dedup store {self._dedup_store_path}: {e}")

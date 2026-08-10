@@ -15,6 +15,7 @@ from app.api.routes import (
     models,
     patterns,
     signals,
+    strategies,
     trades,
 )
 from app.core.config.settings import get_settings
@@ -63,6 +64,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     app.state.learning = learning
     app.state.pattern_service = service
+    app.state.strategy_manager = service.strategy_manager
     app.state.signal_repository = signal_repo
     app.state.trade_repository = trade_repo
     app.state.backtest_repository = BacktestRepository()
@@ -104,5 +106,6 @@ def create_app() -> FastAPI:
     app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
     app.include_router(lifecycle.router, prefix="/api/v1/lifecycle", tags=["Lifecycle"])
     app.include_router(models.router, prefix="/api/v1/models", tags=["Models"])
+    app.include_router(strategies.router, prefix="/api/v1/strategies", tags=["Strategies"])
 
     return app

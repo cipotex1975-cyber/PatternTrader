@@ -277,6 +277,12 @@ Estrategias disponibles (se auto-registran al importar `app.strategy`):
 Para añadir una estrategia, crear una subclase de `BaseStrategy` decorada con
 `@register_strategy` y añadir su nombre a `enabled`.
 
+**Gestión en runtime**: la configuración YAML es el valor por defecto, pero el
+`StrategyManager` permite habilitar/deshabilitar o ajustar parámetros **en
+caliente** vía `GET/PATCH /api/v1/strategies` (ver `docs/API.md`). Los cambios
+hechos por la API se reflejan inmediatamente en el siguiente ciclo del
+pipeline.
+
 ### Scoring
 
 ```yaml

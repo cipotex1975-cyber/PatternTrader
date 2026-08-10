@@ -4,6 +4,7 @@ from typing import Optional
 
 import numpy as np
 
+from app.core.config.settings import get_settings
 from app.core.logger import get_logger
 from app.market.candles.models import Candle
 from app.patterns.base_pattern import (
@@ -54,7 +55,7 @@ class BullFlagPattern(BasePattern):
             return None
 
         flag_slope = self._calculate_slope(flag_highs)
-        if flag_slope > 0.001:
+        if flag_slope > get_settings().patterns.detection.flag_slope_tolerance:
             return None
 
         pole_height = highs[pole_end] - lows[0]

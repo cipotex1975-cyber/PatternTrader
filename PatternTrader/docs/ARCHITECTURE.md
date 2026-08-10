@@ -89,10 +89,10 @@ app/signals/        # Generación de señales
 ### Capa 3: Application (Aplicación)
 
 ```
-app/backtesting/    # Motor de backtesting
+app/backtesting/    # Motor de backtesting (incluye BacktestOptimizer: grid/random/bayesiana)
 app/ml/             # Modelos de ML
 app/strategy/       # Estrategias
-app/optimizer/      # Optimización
+app/optimizer/      # Optimización (⚠️ `OptimizerEngine` es código muerto; usar `backtesting/optimization.py`)
 ```
 
 **Responsabilidades**:
@@ -269,8 +269,14 @@ El `StrategyEngine` (`app/strategy/engine.py`) ejecuta todas las estrategias
 habilitadas sobre una hipótesis y elige la de mayor confianza. Así el pipeline
 queda: patrón → **hipótesis** → **estrategia** → señal.
 
+Desde la **Fase 6**, el `StrategyManager` (`app/strategy/manager.py`) envuelve
+al `StrategyEngine` y permite activar/desactivar estrategias o ajustar sus
+parámetros **en caliente** (vía `GET/PATCH /api/v1/strategies`) sin reiniciar
+la aplicación. El `PatternPipeline` usa el manager cuando se le inyecta (el
+`PatternService` lo construye desde `settings.strategies`).
+
 **Ventaja**: Cada patrón y cada estrategia encapsula su propia lógica, y añadir
-una nueva no modifica el pipeline.
+una nueva no modifica el pipeline. El manager añade operabilidad sin código.
 
 ### 5. State Pattern (Lifecycle Engine)
 
@@ -356,20 +362,21 @@ await engine.transition(
 └──────┬───────┘
        │
        ▼
-┌──────────────┐
-│  Strategy    │ ──→ Las estrategias deciden ENTER/NO_TRADE
-│  Engine      │     (TrendFollow, Breakout, Contrarian)
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│   Signals    │ ──→ Genera señal de trading
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│   Telegram   │ ──→ Notifica al usuario (score ≥ 95)
-└──────────────┘
+ ┌──────────────┐
+ │  Strategy    │ ──→ Estrategias ENTER/NO_TRADE (TrendFollow,
+ │  Manager     │     Breakout, Contrarian) gestionadas en runtime
+ └──────┬───────┘
+        │
+        ▼
+ ┌──────────────┐
+ │   Signals    │ ──→ Genera señal de trading (cooldown + dedup persistente)
+ └──────┬───────┘
+        │
+        ▼
+ ┌──────────────┐
+ │   Telegram   │ ──→ Notifica al usuario (prioridad ≥ min_priority;
+ │              │     imagen con fallback, retries, confirmación)
+ └──────────────┘
 ```
 
 Todo este flujo lo orquesta el **`PatternPipeline`**
@@ -377,7 +384,9 @@ Todo este flujo lo orquesta el **`PatternPipeline`**
 (`app/patterns/service.py`) vía `Scheduler` al iniciar la API. El pipeline
 **ya no genera señales directamente desde el patrón**: emite una hipótesis y
 solo se crea la señal si alguna estrategia decide entrar. Las decisiones de
-cada estrategia quedan en `result.metadata["strategy_decisions"]`.
+cada estrategia quedan en `result.metadata["strategy_decisions"]`. Tras el
+envío, el pipeline confirma la entrega (`mark_delivered`) o la marca como
+fallida (`mark_failed`), cerrando así el ciclo señal → envío → confirmación.
 
 ### Flujo de Eventos
 
@@ -546,6 +555,8 @@ class MeanReversionStrategy(BaseStrategy):
 
 > **Importante**: Al importar `app.strategy`, las estrategias se auto-registran.
 > Para activarla en runtime, añadir su nombre a `strategies.enabled` en `config/settings.yaml`.
+> También se puede activar/desactivar o ajustar parámetros en caliente con
+> `GET/PATCH /api/v1/strategies` (gestión del `StrategyManager`).
 > Las estrategias se pueden comparar sobre las mismas detecciones con
 > `compare_strategies`/`run_strategy_backtest` de `app/strategy/evaluator.py`.
 
@@ -623,17 +634,9 @@ async def process_multiple_symbols(symbols):
 
 ### Caché
 
-```python
-from app.data.cache.memory import MemoryCache
-
-cache = MemoryCache(default_ttl=300)
-
-# Usar caché
-data = cache.get("BTCUSDT:1h")
-if data is None:
-    data = await fetch_data()
-    cache.set("BTCUSDT:1h", data, ttl=60)
-```
+> **Nota**: el módulo `app/data/cache/` fue eliminado en la Fase 7 (código
+> muerto: ningún componente lo usaba). Si se reintroduce caché, hacerlo sobre
+> el patrón de repositorio de `app/database/`.
 
 ---
 

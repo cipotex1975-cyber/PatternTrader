@@ -112,8 +112,10 @@ class BaseMLModel(ABC):
         )
 
     def _calculate_confidence(self, features: np.ndarray) -> float:
-        """Calculate prediction confidence (to be overridden)."""
-        return 0.7
+        """Confianza derivada de la distancia al umbral de decisión (0.5)."""
+        probs = self.predict_proba(features.reshape(1, -1))[0]
+        margin = abs(float(probs[1]) - 0.5) * 2.0
+        return float(min(1.0, max(0.0, margin)))
 
     def get_feature_importance(self) -> dict[str, float]:
         """Get feature importance (to be overridden)."""

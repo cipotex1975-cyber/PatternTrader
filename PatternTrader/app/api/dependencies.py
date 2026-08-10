@@ -11,6 +11,7 @@ from app.database.repositories import (
 )
 from app.learning.service import LearningService
 from app.patterns.service import PatternService
+from app.strategy.manager import StrategyManager
 
 
 def get_learning_service(request: Request) -> LearningService:
@@ -19,6 +20,10 @@ def get_learning_service(request: Request) -> LearningService:
 
 def get_pattern_service(request: Request) -> PatternService:
     return request.app.state.pattern_service  # type: ignore[no-any-return]
+
+
+def get_strategy_manager(request: Request) -> StrategyManager:
+    return request.app.state.strategy_manager  # type: ignore[no-any-return]
 
 
 def get_signal_repository(request: Request) -> SignalRepository:

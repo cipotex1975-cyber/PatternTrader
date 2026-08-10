@@ -34,6 +34,13 @@ class TelegramSettings(BaseSettings):
     bot_token: str = ""
     chat_id: str = ""
     enabled: bool = False
+    cooldown_minutes: int = 5
+    max_retries: int = 3
+    retry_backoff_seconds: float = 2.0
+    timeout_seconds: float = 10.0
+    dedup_store_path: str = "./data/state/telegram_dedup.json"
+    send_image: bool = True
+    min_priority: str = "CRITICAL"
 
 
 class BinanceSettings(BaseSettings):
@@ -141,6 +148,8 @@ class PatternScoringSettings(BaseSettings):
     min_score_to_prepare: float = 75
     min_score_to_alert: float = 85
     min_score_to_send: float = 95
+    cooldown_minutes: int = 5
+    signal_ttl_hours: int = 24
 
 
 class PatternLifecycleSettings(BaseSettings):
@@ -155,10 +164,21 @@ class PatternHealthSettings(BaseSettings):
     recalculate_interval_seconds: int = 10
 
 
+class PatternDetectionSettings(BaseSettings):
+    peak_tolerance: float = 0.02
+    flag_slope_tolerance: float = 0.001
+
+
+class PatternConfirmationSettings(BaseSettings):
+    max_spread_ratio: float = 0.001
+
+
 class PatternSettings(BaseSettings):
     scoring: PatternScoringSettings = Field(default_factory=PatternScoringSettings)
     lifecycle: PatternLifecycleSettings = Field(default_factory=PatternLifecycleSettings)
     health: PatternHealthSettings = Field(default_factory=PatternHealthSettings)
+    detection: PatternDetectionSettings = Field(default_factory=PatternDetectionSettings)
+    confirmation: PatternConfirmationSettings = Field(default_factory=PatternConfirmationSettings)
 
 
 class StrategySettings(BaseSettings):
@@ -173,6 +193,8 @@ class RiskSettings(BaseSettings):
     max_correlated_exposure: float = 0.15
     default_rr_ratio: float = 2.0
     trailing_stop_enabled: bool = False
+    symbol_sectors: dict[str, str] = Field(default_factory=dict)
+    correlations: dict[str, dict[str, float]] = Field(default_factory=dict)
 
 
 class BacktestingSettings(BaseSettings):

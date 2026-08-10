@@ -22,3 +22,14 @@ async def sync_db():
     yield
     await engine.dispose()
     base.reset_engine()
+
+
+@pytest.fixture(autouse=True)
+def isolate_signal_dedup(tmp_path):
+    from app.core.config.settings import get_settings
+
+    settings = get_settings()
+    original = settings.telegram.dedup_store_path
+    settings.telegram.dedup_store_path = str(tmp_path / "telegram_dedup.json")
+    yield
+    settings.telegram.dedup_store_path = original

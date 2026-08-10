@@ -1,6 +1,6 @@
 # Análisis de Gaps y Estado del Proyecto
 
-> **Fecha de la auditoría**: 2026-08-07 (revisada; Fase 5 completada)
+> **Fecha de la auditoría**: 2026-08-07 (revisada; Fases 5 y 6 completadas)
 > **Alcance**: Revisión del código en `app/`, `tests/`, `config/` y scripts raíz contra los requisitos originales del proyecto (prompt de arquitectura) y la documentación en `docs/`.
 > **Objetivo**: Documentar el estado actual, los gaps y las recomendaciones para poder retomar el desarrollo desde este punto de forma ordenada.
 
@@ -8,7 +8,7 @@
 
 ## Resumen Ejecutivo
 
-PatternTrader tiene una **base sólida**: la arquitectura Clean/DDD está bien implementada, el backtesting es el módulo más maduro y completo, y hay **211 tests unitarios** que se recolectan sin errores. Desde la auditoría inicial se cerraron las fases 1-4 (bugs de runtime, arquitectura de estrategias, ciclo de vida completo, persistencia/API real) y la **fase 5 está completa**: el catálogo de patrones pasó de 8 a **21** (13 nuevos en `neutral/`), el catálogo de modelos ML de 1 a **9** (XGBoost, LightGBM, CatBoost, LSTM, Transformer, CNN, Isolation Forest, AutoEncoder) y se eliminó el `score()` muerto de los patrones. Los gaps principales restantes: **riesgo/telegram incompletos** (Fase 6) y **configuración/calidad** (Fase 7).
+PatternTrader tiene una **base sólida**: la arquitectura Clean/DDD está bien implementada, el backtesting es el módulo más maduro y completo, y hay **236 tests unitarios** que se recolectan sin errores. Desde la auditoría inicial se cerraron las fases 1-4 (bugs de runtime, arquitectura de estrategias, ciclo de vida completo, persistencia/API real), la **fase 5 está completa** (patrones 8→21, modelos ML 1→9, `score()` eliminado) y la **fase 6 está completa**: `StrategyManager` con gestión runtime + API, dedup de señales persistente y cooldown configurable, confirmación de entrega (`mark_delivered`/`mark_failed`), gate de envío por `min_priority`, Telegram mejorado (imagen con fallback, retries con backoff, timeframe/fecha) y `RiskEngine` alimentado con sector/correlación desde config. El gap principal restante: **configuración/calidad** (Fase 7).
 
 Estado por módulo:
 
@@ -22,17 +22,17 @@ Estado por módulo:
 | Health | ✅ Completo | 8 factores, pesos en YAML |
 | Scoring | ✅ Completo | Pesos en YAML; usa modelo de conocimiento cuando está entrenado |
 | Confirmación | ✅ Corregida | Ruptura direccional resuelta (§1.1); spread sigue placeholder |
-| Señales | ✅ Fase 4 | Persistencia DB (`signals`); dedup/cooldown ok; cooldown hardcodeado |
+| Señales | ✅ Fase 4+6 | Persistencia DB (`signals`); dedup persistente (JSON) + cooldown configurable en YAML; confirmación de entrega (`mark_delivered`/`mark_failed`) |
 | ML | ✅ 9/9 | Random Forest + XGBoost/LightGBM/CatBoost + LSTM/Transformer/CNN + Isolation Forest/AutoEncoder |
 | Aprendizaje continuo | ✅ Conectado | Recibe `TRADE_CLOSED`/`TRADE_OPENED`; registra el modelo entrenado en `ml_models` |
 | Backtesting | ✅ Completo | Motor + validaciones + optimización + métricas; resultados persistidos en DB |
-| Riesgo | ⚠️ Parcial | Cableado al pipeline (REJECTED); faltan sector/correlación/trailing |
-| Estrategia | ✅ Fase 2 completa | Registry/Factory + 3 estrategias cableadas al pipeline |
-| Telegram | ⚠️ Parcial | Sin imagen, retries, confirmación, timeframe |
+| Riesgo | ✅ Fase 6 | Cableado al pipeline (REJECTED) y backtest; sector/correlación alimentados desde config; trailing/ATR stops en `BacktestEngine` |
+| Estrategia | ✅ Fase 2+6 | Registry/Factory + `StrategyManager` (enable/disable/params en runtime) + 3 estrategias cableadas al pipeline + API |
+| Telegram | ✅ Fase 6 | Imagen (ChartGenerator + `sendPhoto`, fallback texto), retries con backoff, confirmación de entrega, dedup persistente, cooldown configurable, gate `min_priority`, timeframe/fecha en el mensaje |
 | DB | ✅ Fase 4 completa | 13 tablas + `knowledge_entries`; repos write-through + Alembic (3 migraciones) + rehidratación al arrancar |
 | API | ✅ Fase 4 | Routers de models/trades/lifecycle/signals reales y con persistencia |
-| Config | ⚠️ Parcial | Varios valores hardcodeados pese a existir en YAML |
-| Tests | ✅ 211 unitarios | Engines, DB, API, backtesting, learning, estrategias, patrones y modelos ML cubiertos |
+| Config | ⚠️ Parcial | Varios valores hardcodeados pese a existir en YAML (cooldown de señales y telegram ya en YAML) |
+| Tests | ✅ 236 unitarios | Engines, DB, API, backtesting, learning, estrategias, manager, telegram, patrones y modelos ML cubiertos |
 
 ---
 
@@ -233,7 +233,7 @@ Reglas implementadas: breakout, volume, ATR, trend, R/R, liquidity, distance-to-
 | Patterns | ✅ |
 | Dashboard | ✅ Backed por la instancia compartida del pipeline + repos de trades |
 | Backtests | ✅ 10 endpoints; resultados persistidos (`BacktestRepository`); datos sintéticos solo si el payload viene vacío |
-| Training | ⚠️ Solo `POST /learning/train` |
+| Training | ✅ `POST /learning/train`; el resto de rutas de learning existen y están implementadas (`/entries`, `/stats`, `/record`, `/predict`, `/mode` GET/POST) — `POST /predict` persiste en `predictions` |
 | Statistics | ⚠️ Solo por patrón |
 | AI Models | ✅ `GET /models`, `GET /models/{name}`, `POST /models/{name}/predict` (persiste predicciones) |
 | Signals | ✅ `GET /signals` y `GET /signals/{id}` leen de la DB (SignalRepository) |
@@ -344,13 +344,20 @@ Reglas implementadas: breakout, volume, ATR, trend, R/R, liquidity, distance-to-
 
 **Verificación**: 211 tests pasan (32 nuevos: 14 en patrones nuevos, 18 en modelos ML), flake8 limpio en archivos modificados, mypy sin errores nuevos (solo `import-untyped` preexistentes de librerías sin stubs).
 
-### Fase 6 — Riesgo y Telegram completos
-1. `RiskEngine` cableado al pipeline y reutilizado por el backtest (quitar duplicación).
-2. Exposición por sector y correlación; SL/TP dinámico y trailing stop en `BacktestEngine`.
-3. Telegram: imagen (ChartGenerator), timeframe, cooldown configurable, retries con backoff, confirmación de entrega, dedup persistente.
+### Fase 6 — Riesgo, Estrategias y Telegram completos
+1. `RiskEngine` cableado al pipeline y reutilizado por el backtest (quitar duplicación). ✅
+   - **Completado**: el `BacktestEngine` ya recibe/reutiliza el `RiskEngine` (sin duplicación de sizing) e implementa trailing stop y stops ATR; el `PatternService` alimenta el `RiskEngine` con `symbol_sectors`/`correlations` desde `config/settings.yaml` (`risk.symbol_sectors`, `risk.correlations`).
+2. Exposición por sector y correlación; SL/TP dinámico y trailing stop en `BacktestEngine`. ✅
+   - **Completado**: `_check_sector_exposure`/`_check_correlated_exposure` del `RiskEngine` ya reciben datos reales; el trailing/ATR stop estaba implementado y ahora se documenta.
+3. Telegram: imagen (ChartGenerator), timeframe, cooldown configurable, retries con backoff, confirmación de entrega, dedup persistente. ✅
+   - **Completado**: `TelegramNotifier.send_signal(signal, candles, pattern)` envía el gráfico vía `ChartGenerator` + `sendPhoto` (con fallback a texto si la imagen falla), añade **timeframe + fecha/hora** al mensaje, hace retries con backoff exponencial (`telegram.max_retries`/`retry_backoff_seconds`/`timeout_seconds`). El pipeline confirma la entrega (`SignalEngine.mark_delivered`/`mark_failed`) y el gate de envío es configurable (`telegram.min_priority`, default `CRITICAL`). El cooldown de señales se lee de `patterns.scoring.cooldown_minutes` y el dedup persiste en `telegram.dedup_store_path` (JSON).
+4. `StrategyManager` con gestión runtime y API de estrategias. ✅
+   - **Completado**: nuevo `app/strategy/manager.py` (enable/disable/params/reset en caliente, delega en `StrategyEngine`), inyectado en `PatternPipeline`/`PatternService`, con rutas `GET/PATCH /api/v1/strategies`.
+
+**Verificación**: 236 tests pasan (25 nuevos: 8 de telegram, 8 de la API de estrategias, 6 del manager, 2 de señales/dedup, 1 del gate `min_priority`), flake8 limpio en archivos modificados. `kaleido` añadido a `pyproject.toml` (requiere Chrome para renderizar; si no está disponible el notifier cae a texto).
 
 ### Fase 7 — Configuración y calidad
-1. Mover hardcodeos a YAML (cooldown, fees, capital inicial, tolerancias, `max_patterns_per_symbol`, `recalculate_interval_seconds`).
+1. Mover hardcodeos a YAML (fees, capital inicial, tolerancias, `max_patterns_per_symbol`, `recalculate_interval_seconds`). (*cooldown de señales y telegram ya movidos a YAML en Fase 6*).
 2. Consumir `backtesting.walk_forward_splits`/`monte_carlo_simulations` desde la API.
 3. Eliminar/limpiar código muerto (`optimizer/engine.py`, imports sin uso, `Signal.is_expired` sin aplicar). (*`score()` de patrones ya eliminado en Fase 5*).
 4. Tests de integración y e2e; tests de `BacktestRunner`, resto de rutas API y `run_backtest.py`. (Los repos DB, el `SignalEngine` y la ruta de models ya están cubiertos.)

@@ -9,6 +9,7 @@ from app.strategy.base import StrategyDecision
 from app.strategy.engine import StrategyEngine
 from app.strategy.evaluator import compare_strategies, run_strategy_backtest
 from app.strategy.factory import StrategyFactory
+from app.strategy.manager import StrategyManager
 from app.strategy.registry import StrategyRegistry
 
 
@@ -214,3 +215,61 @@ def test_strategy_decision_no_trade_shape():
     assert isinstance(decision, StrategyDecision)
     assert decision.is_entry is False
     assert decision.reasons
+
+
+def test_manager_lists_all_strategies():
+    manager = StrategyManager()
+    names = [s["name"] for s in manager.list()]
+    assert {"trend_follow", "breakout", "contrarian"} <= set(names)
+    trend = next(s for s in manager.list() if s["name"] == "trend_follow")
+    assert trend["enabled"] is True
+    assert "default_size" in trend["parameters"]
+
+
+def test_manager_disable_enable_rebuilds_engine():
+    manager = StrategyManager()
+    assert "trend_follow" in manager.engine.strategy_names
+    assert manager.disable("trend_follow") is True
+    assert "trend_follow" not in manager.engine.strategy_names
+    assert manager.enable("trend_follow") is True
+    assert "trend_follow" in manager.engine.strategy_names
+
+
+def test_manager_set_params_applies_to_engine():
+    manager = StrategyManager()
+    assert manager.set_params("trend_follow", {"default_size": 2.5}) is True
+    entry = next(s for s in manager.list() if s["name"] == "trend_follow")
+    assert entry["parameters"]["default_size"] == 2.5
+    strategy = next(
+        s for s in manager.engine.strategies if s.name == "trend_follow"
+    )
+    assert strategy.get_parameters()["default_size"] == 2.5
+
+
+def test_manager_unknown_strategy_returns_false():
+    manager = StrategyManager()
+    assert manager.enable("unknown") is False
+    assert manager.disable("unknown") is False
+    assert manager.set_params("unknown", {}) is False
+
+
+def test_manager_reset_restores_defaults():
+    manager = StrategyManager()
+    manager.disable("breakout")
+    manager.set_params("trend_follow", {"default_size": 9.9})
+    manager.reset()
+    breakout = next(s for s in manager.list() if s["name"] == "breakout")
+    assert breakout["enabled"] is True
+    trend = next(s for s in manager.list() if s["name"] == "trend_follow")
+    assert trend["parameters"]["default_size"] == 1.0
+
+
+def test_manager_evaluate_delegates_to_engine():
+    manager = StrategyManager()
+    hypothesis = build_hypothesis(
+        direction=TradeDirection.LONG,
+        indicators={"ema_9": 101.0, "ema_21": 99.0, "momentum": 2.0},
+    )
+    result = manager.evaluate(hypothesis)
+    assert result.has_entry
+    assert result.best is not None

@@ -125,7 +125,7 @@ async def test_pipeline_sends_telegram_for_critical():
 
     sent = []
 
-    async def fake_send(signal):
+    async def fake_send(signal, candles=None, pattern=None):
         sent.append(signal)
         return True
 
@@ -212,7 +212,7 @@ async def test_pipeline_signal_sent_event_is_enriched():
             strategy_params={"breakout": {"rsi_min": 25.0, "rsi_max": 80.0}},
         )
 
-        async def fake_send(signal):
+        async def fake_send(signal, candles=None, pattern=None):
             return True
 
         async def fake_create(pattern, score_result, ml_probability=0.0, strategy_signal=None):
@@ -292,7 +292,7 @@ async def test_pipeline_rejects_signal_when_risk_unacceptable():
 
     pipeline._risk.assess = rejected_assess
 
-    async def fake_send(signal):
+    async def fake_send(signal, candles=None, pattern=None):
         return True
 
     async def fake_create(pattern, score_result, ml_probability=0.0, strategy_signal=None):
@@ -329,7 +329,7 @@ async def test_pipeline_cancels_pending_signal_on_deformation():
         strategy_params={"breakout": {"rsi_min": 25.0, "rsi_max": 80.0}},
     )
 
-    async def fake_send(signal):
+    async def fake_send(signal, candles=None, pattern=None):
         return True
 
     async def fake_create(pattern, score_result, ml_probability=0.0, strategy_signal=None):
@@ -437,3 +437,50 @@ def test_prepare_price_levels_bear_pennant():
 
     assert pattern.entry_price == 50000
     assert pattern.stop_loss is not None and pattern.stop_loss > 50000
+
+
+@pytest.mark.asyncio
+async def test_pipeline_sends_when_priority_meets_min_priority():
+    from app.core.config.settings import get_settings
+
+    settings = get_settings()
+    original = settings.telegram.min_priority
+    settings.telegram.min_priority = "LOW"
+    try:
+        candles = build_double_top_candles()
+        pipeline = PatternPipeline(
+            data_source=lambda symbol, timeframe: candles,
+            strategy_params={"breakout": {"rsi_min": 25.0, "rsi_max": 80.0}},
+        )
+        sent = []
+
+        async def fake_send(signal, candles=None, pattern=None):
+            sent.append(signal)
+            return True
+
+        async def fake_create(pattern, score_result, ml_probability=0.0, strategy_signal=None):
+            return Signal(
+                symbol=pattern.symbol,
+                timeframe=pattern.timeframe,
+                pattern_name=pattern.pattern_name,
+                direction=pattern.direction.value,
+                priority=SignalPriority.HIGH,
+                entry_price=pattern.entry_price or 0,
+                stop_loss=pattern.stop_loss or 0,
+                take_profit=pattern.take_profit or 0,
+                risk_reward_ratio=2.0,
+                score=90.0,
+                health=pattern.health,
+                ml_probability=0.8,
+            )
+
+        pipeline._telegram.send_signal = fake_send
+        pipeline._signal_engine.create_signal = fake_create
+
+        for _ in range(4):
+            await pipeline.process_symbol("BTCUSDT", "1h")
+
+        assert len(sent) == 1
+        assert sent[0].priority == SignalPriority.HIGH
+    finally:
+        settings.telegram.min_priority = original

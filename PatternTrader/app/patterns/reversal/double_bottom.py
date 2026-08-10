@@ -5,6 +5,7 @@ from typing import Optional
 import numpy as np
 from scipy.signal import find_peaks as _scipy_find_peaks
 
+from app.core.config.settings import get_settings
 from app.core.logger import get_logger
 from app.market.candles.models import Candle
 from app.patterns.base_pattern import (
@@ -55,7 +56,8 @@ class DoubleBottomPattern(BasePattern):
             trough1_price = lows[trough1_idx]
             trough2_price = lows[trough2_idx]
 
-            if abs(trough1_price - trough2_price) / trough1_price > 0.02:
+            tolerance = get_settings().patterns.detection.peak_tolerance
+            if abs(trough1_price - trough2_price) / trough1_price > tolerance:
                 continue
 
             peak_idx = np.argmax(highs[trough1_idx:trough2_idx]) + trough1_idx

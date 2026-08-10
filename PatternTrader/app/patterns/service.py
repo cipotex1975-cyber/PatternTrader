@@ -9,7 +9,9 @@ from app.data.providers.factory import DataProviderFactory
 from app.database.repositories import LifecycleRepository, SignalRepository, TradeRepository
 from app.execution.engine import ExecutionEngine
 from app.patterns.pipeline import PatternPipeline
+from app.risk.engine import RiskEngine
 from app.scheduler.main import Scheduler
+from app.strategy.manager import StrategyManager
 
 logger = get_logger("PatternService")
 
@@ -33,15 +35,23 @@ class PatternService:
         self._candle_limit = lifecycle_settings.candle_limit
 
         self._provider: IDataProvider | None = None
+        self._risk = RiskEngine(
+            symbol_sectors=settings.risk.symbol_sectors,
+            correlations=settings.risk.correlations,
+        )
+        self._strategy_manager = StrategyManager()
         self._pipeline = PatternPipeline(
             max_candles=self._candle_limit,
             learning_service=learning_service,
             lifecycle_repository=lifecycle_repository or LifecycleRepository(),
             signal_repository=signal_repository or SignalRepository(),
+            risk_engine=self._risk,
+            strategy_manager=self._strategy_manager,
         )
         self._execution = ExecutionEngine(
             lifecycle=self._pipeline.lifecycle,
             repository=trade_repository or TradeRepository(),
+            risk_engine=self._risk,
         )
         self._scheduler = Scheduler()
 
@@ -52,6 +62,10 @@ class PatternService:
     @property
     def execution(self) -> ExecutionEngine:
         return self._execution
+
+    @property
+    def strategy_manager(self) -> StrategyManager:
+        return self._strategy_manager
 
     async def start(self) -> None:
         if not self._enabled:

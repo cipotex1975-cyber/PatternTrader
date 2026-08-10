@@ -85,6 +85,34 @@ def test_metrics_empty_returns_defaults():
     assert metrics.win_rate == 0.0
 
 
+def test_total_fees_uses_trade_fees_field():
+    trades = [_trade(0, 10.0), _trade(1, -5.0)]
+    trades[0].fees = 1.25
+    trades[1].fees = 0.75
+    curve = _equity_curve([100, 110, 105])
+    metrics = MetricsCalculator.calculate(
+        trades,
+        curve,
+        initial_capital=100,
+        start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        end_date=datetime(2024, 1, 3, tzinfo=timezone.utc),
+    )
+    assert metrics.total_fees == 2.0
+
+
+def test_total_fees_defaults_to_zero():
+    trades = [_trade(0, 10.0)]
+    curve = _equity_curve([100, 110])
+    metrics = MetricsCalculator.calculate(
+        trades,
+        curve,
+        initial_capital=100,
+        start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        end_date=datetime(2024, 1, 2, tzinfo=timezone.utc),
+    )
+    assert metrics.total_fees == 0.0
+
+
 def test_classification_metrics():
     cm = MetricsCalculator.classification_metrics(
         y_true=[1, 1, 0, 0, 1, 0],

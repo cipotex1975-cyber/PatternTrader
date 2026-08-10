@@ -30,7 +30,7 @@ PatternTrader incluye un motor de backtesting completo para evaluar estrategias 
 
 ### Script de Backtesting con Datos Reales
 
-El proyecto incluye un script completo `run_backtest.py` que carga datos históricos, detecta patrones automáticamente y ejecuta el backtest. Cada par de divisas tiene su propia configuración en `config/pairs.yaml`.
+El proyecto incluye un script completo `run_backtest.py` que carga datos históricos, detecta patrones automáticamente y ejecuta el backtest. Cada par de divisas tiene su propia configuración en `config/pairs.yaml` (window/step/sl_tp/exclude). Los parámetros económicos (capital inicial, comisión, slippage, riesgo por trade) se leen de la sección `backtesting:` + `risk.max_risk_per_trade` de `config/settings.yaml`, y el motor es `BacktestRunner` (no `BacktestEngine` directo).
 
 ```bash
 # Ejecutar backtest para un par (usa configuración del par)
@@ -61,7 +61,7 @@ python run_backtest.py --pair USDCAD --step 200 --max-patterns 300
 | `--max-patterns` | según par | Número máximo de patrones a detectar |
 | `--exclude` | según par | Patrones a excluir, separados por coma |
 
-**Patrones disponibles**: `double_bottom`, `double_top`, `inverse_head_and_shoulders`, `head_and_shoulders`, `bull_flag`, `bear_flag`, `bull_pennant`, `bear_pennant`
+**Patrones disponibles**: el script usa `PatternRegistry.get_all_instances()`, es decir, **todos los patrones registrados (21)**: `double_bottom`, `double_top`, `inverse_head_and_shoulders`, `head_and_shoulders`, `bull_flag`, `bear_flag`, `bull_pennant`, `bear_pennant` (reversión/continuación) más los 13 de `app/patterns/neutral/` (`ascending_triangle`, `descending_triangle`, `symmetric_triangle`, `rising_wedge`, `falling_wedge`, `rectangle`, `channel`, `cup_and_handle`, `rounded_bottom`, `diamond`, `broadening`, `triple_top`, `triple_bottom`). Se pueden excluir por CLI con `--exclude` o en `config/pairs.yaml`.
 
 ### Configuración por Par
 

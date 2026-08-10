@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.core.config.settings import get_settings
 from app.patterns.base_pattern import PatternResult, PatternType
 from app.scoring.models import ScoreResult
 from app.signals.engine import SignalEngine
@@ -138,6 +139,20 @@ async def test_clear_cooldown_allows_resend():
     assert await engine.create_signal(make_pattern(), make_score(96.0)) is not None
 
 
+def test_cooldown_minutes_reads_from_settings():
+    engine = SignalEngine()
+    assert engine._cooldown_minutes == get_settings().patterns.scoring.cooldown_minutes
+
+
+@pytest.mark.asyncio
+async def test_dedup_persists_across_engine_instances():
+    engine = SignalEngine()
+    assert await engine.create_signal(make_pattern(), make_score(96.0)) is not None
+
+    restarted = SignalEngine()
+    assert await restarted.create_signal(make_pattern(), make_score(96.0)) is None
+
+
 def test_signal_model_priority_score():
     low = SignalPriority.LOW
     assert Signal(symbol="S", timeframe="1h", pattern_name="p", direction="LONG",
@@ -155,3 +170,31 @@ def test_signal_is_expired():
         expires_at=datetime.utcnow() - timedelta(hours=1),
     )
     assert signal.is_expired
+
+
+@pytest.mark.asyncio
+async def test_mark_sent_skips_expired_signal():
+    repo = FakeSignalRepository()
+    engine = SignalEngine(repository=repo)
+    signal = await engine.create_signal(make_pattern(), make_score(96.0))
+    assert signal is not None
+    signal.expires_at = datetime.utcnow() - timedelta(hours=1)
+
+    sent = await engine.mark_sent(signal.id)
+    assert sent is None
+    assert signal.status == SignalStatus.FAILED
+    assert signal.metadata["failure_reason"] == "signal expired"
+
+
+def test_signal_ttl_hours_from_settings():
+    engine = SignalEngine()
+    assert engine._scoring_config.signal_ttl_hours == get_settings().patterns.scoring.signal_ttl_hours
+
+
+@pytest.mark.asyncio
+async def test_create_signal_expires_at_uses_configured_ttl():
+    engine = SignalEngine()
+    signal = await engine.create_signal(make_pattern(), make_score(96.0))
+    assert signal is not None
+    expected = signal.created_at + timedelta(hours=get_settings().patterns.scoring.signal_ttl_hours)
+    assert abs((signal.expires_at - expected).total_seconds()) < 1

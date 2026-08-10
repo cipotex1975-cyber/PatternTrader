@@ -29,6 +29,7 @@ Actualmente la API no requiere autenticación. En producción, se recomienda imp
 | Health | `/api/v1/health`, `/api/v1/info` | Estado del sistema |
 | Patterns | `/api/v1/patterns` | Patrones disponibles, estadísticas |
 | Signals | `/api/v1/signals` | Señales persistidas en DB |
+| Strategies | `/api/v1/strategies` | Gestión runtime de estrategias (estado y parámetros) |
 | Trades | `/api/v1/trades` | Trades persistidos en DB |
 | Backtests | `/api/v1/backtests` | Resultados de backtests persistidos (incluye `equity_curve` y `trades` reales) |
 | Learning | `/api/v1/learning` | Aprendizaje continuo (entries, stats, train, predict, mode) |
@@ -239,6 +240,71 @@ curl http://localhost:8000/api/v1/signals/550e8400-e29b-41d4-a716-446655440000
   "created_at": "2024-01-15T10:30:00Z"
 }
 ```
+
+---
+
+### Strategies
+
+Gestión **en caliente** de las estrategias registradas (`StrategyManager`).
+Permite consultar el estado (habilitada/deshabilitada, parámetros activos) y
+modificarlo sin reiniciar la API. Las estrategias se auto-registran al importar
+`app.strategy`.
+
+#### `GET /api/v1/strategies/`
+
+Lista las estrategias registradas con su estado actual.
+
+```bash
+curl http://localhost:8000/api/v1/strategies
+```
+
+**Respuesta**:
+
+```json
+{
+  "strategies": [
+    {
+      "name": "trend_follow",
+      "description": "Entra en la dirección de la tendencia dominante",
+      "enabled": true,
+      "params": {"min_score": 80.0, "max_risk": 0.02}
+    }
+  ]
+}
+```
+
+#### `GET /api/v1/strategies/{name}`
+
+Detalle de una estrategia concreta.
+
+```bash
+curl http://localhost:8000/api/v1/strategies/trend_follow
+```
+
+> Devuelve `404` si el nombre no está registrado.
+
+#### `PATCH /api/v1/strategies/{name}`
+
+Activa/desactiva la estrategia o actualiza sus parámetros en caliente.
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `enabled` | bool | `true` para habilitarla, `false` para deshabilitarla |
+| `params` | dict | Parámetros a actualizar (merge con los actuales) |
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/strategies/trend_follow \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+```
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/strategies/trend_follow \
+  -H "Content-Type: application/json" \
+  -d '{"params": {"min_score": 85.0}}'
+```
+
+**Respuesta**: la estrategia con el estado/parámetros actualizados.
 
 ---
 
