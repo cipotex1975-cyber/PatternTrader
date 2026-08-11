@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     JSON,
@@ -12,10 +12,38 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    TypeDecorator,
 )
 from sqlalchemy.orm import relationship
 
 from app.database.base import Base
+
+
+def utcnow() -> datetime:
+    """Datetime UTC con zona horaria (Postgres usa TIMESTAMPTZ)."""
+    return datetime.now(timezone.utc)
+
+
+class UTCDateTime(TypeDecorator):
+    """DateTime con zona horaria UTC.
+
+    Normaliza en bind los datetimes naive (p.ej. ``datetime.utcnow()``) a UTC
+    aware, de modo que la app funcione igual con Postgres (TIMESTAMPTZ) y con
+    SQLite en tests.
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is not None and value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is not None and value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value
 
 
 class Asset(Base):
@@ -27,8 +55,8 @@ class Asset(Base):
     exchange = Column(String(50))
     asset_type = Column(String(20))
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(UTCDateTime(), default=utcnow)
+    updated_at = Column(UTCDateTime(), default=utcnow, onupdate=utcnow)
 
     candles = relationship("Candle", back_populates="asset")
     patterns = relationship("Pattern", back_populates="asset")
@@ -40,13 +68,13 @@ class Candle(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     asset_id = Column(Integer, ForeignKey("assets.id"), nullable=False)
     timeframe = Column(String(10), nullable=False)
-    timestamp = Column(DateTime, nullable=False)
+    timestamp = Column(UTCDateTime(), nullable=False)
     open = Column(Float, nullable=False)
     high = Column(Float, nullable=False)
     low = Column(Float, nullable=False)
     close = Column(Float, nullable=False)
     volume = Column(Float, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(UTCDateTime(), default=utcnow)
 
     asset = relationship("Asset", back_populates="candles")
 
@@ -61,7 +89,7 @@ class Indicator(Base):
     name = Column(String(50), nullable=False)
     value = Column(Float)
     parameters = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(UTCDateTime(), default=utcnow)
 
 
 class Pattern(Base):
@@ -82,9 +110,9 @@ class Pattern(Base):
     risk_reward_ratio = Column(Float)
     key_levels = Column(JSON)
     status = Column(String(20), default="DETECTED")
-    detected_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    expires_at = Column(DateTime)
+    detected_at = Column(UTCDateTime(), default=utcnow)
+    updated_at = Column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+    expires_at = Column(UTCDateTime())
     metadata_json = Column(JSON)
 
     asset = relationship("Asset", back_populates="patterns")
@@ -99,9 +127,9 @@ class Lifecycle(Base):
     pattern_id = Column(Integer, ForeignKey("patterns.id"), nullable=False)
     current_state = Column(String(20), nullable=False)
     transitions = Column(JSON, default=list)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    closed_at = Column(DateTime)
+    created_at = Column(UTCDateTime(), default=utcnow)
+    updated_at = Column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+    closed_at = Column(UTCDateTime())
 
     pattern = relationship("Pattern", back_populates="lifecycle")
 
@@ -125,9 +153,9 @@ class Signal(Base):
     health = Column(Float)
     ml_probability = Column(Float)
     reasons = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    sent_at = Column(DateTime)
-    expires_at = Column(DateTime)
+    created_at = Column(UTCDateTime(), default=utcnow)
+    sent_at = Column(UTCDateTime())
+    expires_at = Column(UTCDateTime())
     metadata_json = Column(JSON)
 
 
@@ -140,9 +168,9 @@ class Trade(Base):
     timeframe = Column(String(10))
     direction = Column(String(10))
     entry_price = Column(Float, nullable=False)
-    entry_time = Column(DateTime, nullable=False)
+    entry_time = Column(UTCDateTime(), nullable=False)
     exit_price = Column(Float)
-    exit_time = Column(DateTime)
+    exit_time = Column(UTCDateTime())
     stop_loss = Column(Float)
     take_profit = Column(Float)
     size = Column(Float)
@@ -152,7 +180,7 @@ class Trade(Base):
     pattern_name = Column(String(50))
     score = Column(Float)
     metadata_json = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(UTCDateTime(), default=utcnow)
 
 
 class Backtest(Base):
@@ -170,11 +198,11 @@ class Backtest(Base):
     sharpe_ratio = Column(Float)
     max_drawdown = Column(Float)
     total_pnl = Column(Float)
-    start_date = Column(DateTime)
-    end_date = Column(DateTime)
+    start_date = Column(UTCDateTime())
+    end_date = Column(UTCDateTime())
     initial_capital = Column(Float)
     final_capital = Column(Float)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(UTCDateTime(), default=utcnow)
     metadata_json = Column(JSON)
 
 
@@ -190,7 +218,7 @@ class Prediction(Base):
     confidence = Column(Float)
     features_used = Column(JSON)
     actual_outcome = Column(Boolean)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(UTCDateTime(), default=utcnow)
     metadata_json = Column(JSON)
 
 
@@ -204,8 +232,8 @@ class MLModel(Base):
     path = Column(String(255))
     metrics = Column(JSON)
     is_active = Column(Boolean, default=False)
-    trained_at = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    trained_at = Column(UTCDateTime())
+    created_at = Column(UTCDateTime(), default=utcnow)
     metadata_json = Column(JSON)
 
 
@@ -216,7 +244,7 @@ class Metric(Base):
     name = Column(String(100), nullable=False)
     value = Column(Float)
     tags = Column(JSON)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(UTCDateTime(), default=utcnow)
 
 
 class Log(Base):
@@ -226,7 +254,7 @@ class Log(Base):
     level = Column(String(10), nullable=False)
     message = Column(Text)
     source = Column(String(100))
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(UTCDateTime(), default=utcnow)
     metadata_json = Column(JSON)
 
 
@@ -250,8 +278,8 @@ class KnowledgeEntry(Base):
     risk_reward = Column(Float, default=0.0)
     duration_seconds = Column(Float, default=0.0)
     score = Column(Float, default=0.0)
-    entry_time = Column(DateTime)
-    exit_time = Column(DateTime)
+    entry_time = Column(UTCDateTime())
+    exit_time = Column(UTCDateTime())
     image_path = Column(String(255), default="")
     ml_features = Column(JSON, default=list)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(UTCDateTime(), default=utcnow)

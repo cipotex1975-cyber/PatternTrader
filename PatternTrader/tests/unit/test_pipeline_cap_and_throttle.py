@@ -95,7 +95,9 @@ def _inject_active(pipeline: PatternPipeline, symbol: str, n: int) -> None:
 
 @pytest.mark.asyncio
 async def test_pipeline_respects_max_patterns_cap(monkeypatch):
-    monkeypatch.setattr(pipeline_module, "get_settings", lambda: settings_with(max_patterns=1, health_interval=0))
+    monkeypatch.setattr(
+        pipeline_module, "get_settings", lambda: settings_with(max_patterns=1, health_interval=0)
+    )
     pipeline = PatternPipeline()
     _inject_active(pipeline, "BTCUSDT", 2)
     detector = FakeDetector()
@@ -109,7 +111,9 @@ async def test_pipeline_respects_max_patterns_cap(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_pipeline_allows_new_pattern_below_cap(monkeypatch):
-    monkeypatch.setattr(pipeline_module, "get_settings", lambda: settings_with(max_patterns=5, health_interval=0))
+    monkeypatch.setattr(
+        pipeline_module, "get_settings", lambda: settings_with(max_patterns=5, health_interval=0)
+    )
     pipeline = PatternPipeline()
     _inject_active(pipeline, "BTCUSDT", 2)
     detector = FakeDetector()
@@ -123,39 +127,45 @@ async def test_pipeline_allows_new_pattern_below_cap(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_pipeline_health_recalculation_is_throttled(monkeypatch):
-    monkeypatch.setattr(pipeline_module, "get_settings", lambda: settings_with(max_patterns=50, health_interval=3600))
+    monkeypatch.setattr(
+        pipeline_module,
+        "get_settings",
+        lambda: settings_with(max_patterns=50, health_interval=3600),
+    )
     pipeline = PatternPipeline()
-    candles = double_top_candles()
 
     calls = []
+    real_calculate = pipeline._health.calculate
 
     async def spy_calculate(result, detector, candles, latest_indicators):
         calls.append(1)
-        return await pipeline._health.calculate(result, detector, candles, latest_indicators)
+        return await real_calculate(result, detector, candles, latest_indicators)
 
     pipeline._health.calculate = spy_calculate
 
-    await pipeline.process_symbol("BTCUSDT", "1h")
-    await pipeline.process_symbol("BTCUSDT", "1h")
+    await pipeline.process_symbol("BTCUSDT", "1h", candles=double_top_candles())
+    await pipeline.process_symbol("BTCUSDT", "1h", candles=double_top_candles())
 
     assert len(calls) == 1
 
 
 @pytest.mark.asyncio
 async def test_pipeline_health_recalculates_when_interval_elapsed(monkeypatch):
-    monkeypatch.setattr(pipeline_module, "get_settings", lambda: settings_with(max_patterns=50, health_interval=0))
+    monkeypatch.setattr(
+        pipeline_module, "get_settings", lambda: settings_with(max_patterns=50, health_interval=0)
+    )
     pipeline = PatternPipeline()
-    candles = double_top_candles()
 
     calls = []
+    real_calculate = pipeline._health.calculate
 
     async def spy_calculate(result, detector, candles, latest_indicators):
         calls.append(1)
-        return await pipeline._health.calculate(result, detector, candles, latest_indicators)
+        return await real_calculate(result, detector, candles, latest_indicators)
 
     pipeline._health.calculate = spy_calculate
 
-    await pipeline.process_symbol("BTCUSDT", "1h")
-    await pipeline.process_symbol("BTCUSDT", "1h")
+    await pipeline.process_symbol("BTCUSDT", "1h", candles=double_top_candles())
+    await pipeline.process_symbol("BTCUSDT", "1h", candles=double_top_candles())
 
     assert len(calls) == 2

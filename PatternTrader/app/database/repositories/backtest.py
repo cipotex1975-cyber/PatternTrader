@@ -1,6 +1,7 @@
 # mypy: ignore-errors
 from __future__ import annotations
 
+import math
 from typing import Any, Optional
 
 from sqlalchemy import select
@@ -8,6 +9,17 @@ from sqlalchemy import select
 from app.backtesting.models import BacktestConfig, BacktestMetrics, BacktestResult, Trade
 from app.database.base import get_async_session
 from app.database.models import Backtest as BacktestORM
+
+
+def _json_safe(value: Any) -> Any:
+    """Convierte floats no finitos a None (Postgres JSON no admite Infinity)."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    return value
 
 
 class BacktestRepository:
@@ -51,10 +63,10 @@ class BacktestRepository:
         m = result.metrics
         return BacktestORM(
             name=name,
-            config=result.config.model_dump(mode="json"),
-            metrics=m.model_dump(mode="json"),
-            trades=[t.model_dump(mode="json") for t in result.trades],
-            equity_curve=result.equity_curve,
+            config=_json_safe(result.config.model_dump(mode="json")),
+            metrics=_json_safe(m.model_dump(mode="json")),
+            trades=_json_safe([t.model_dump(mode="json") for t in result.trades]),
+            equity_curve=_json_safe(result.equity_curve),
             trades_count=len(result.trades),
             win_rate=m.win_rate,
             profit_factor=m.profit_factor,
@@ -65,7 +77,7 @@ class BacktestRepository:
             end_date=result.end_date,
             initial_capital=result.initial_capital,
             final_capital=result.final_capital,
-            metadata_json=result.metadata,
+            metadata_json=_json_safe(result.metadata),
         )
 
     @staticmethod

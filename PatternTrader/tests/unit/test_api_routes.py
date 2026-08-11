@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -227,9 +227,9 @@ def test_learning_entries_and_mode(sync_api_app):
     assert mode.status_code == 200
     assert mode.json()["mode"] == "OFFLINE"
 
-    changed = sync_api_app.post("/learning/mode", params={"mode": "ONLINE"})
+    changed = sync_api_app.post("/learning/mode", params={"mode": "online"})
     assert changed.status_code == 200
-    assert changed.json()["mode"] == "ONLINE"
+    assert changed.json()["mode"] == "online"
 
 
 def test_backtests_run_list_get(sync_api_app):

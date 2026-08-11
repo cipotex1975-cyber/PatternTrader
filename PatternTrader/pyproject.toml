@@ -65,15 +65,41 @@ profile = "black"
 line_length = 100
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = [
+    "MetaTrader5",
+    "catboost.*",
+    "ccxt",
+    "ccxt.async_support",
+    "ib_async",
+    "joblib",
+    "pandas.*",
+    "plotly.*",
+    "scipy.*",
+    "sklearn.*",
+    "yaml",
+    "yfinance",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["app.api.routes.*"]
+disallow_untyped_defs = false
+warn_return_any = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-v --cov=app --cov-report=term-missing"
+markers = [
+    "integration: tests de integración que requieren Postgres",
+    "e2e: tests extremo a extremo",
+]
 
 [tool.flake8]
 max-line-length = 100

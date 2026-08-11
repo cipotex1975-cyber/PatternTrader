@@ -291,7 +291,6 @@ class MonteCarloSimulator:
             max_drawdowns.append(float(dd.max()) if len(dd) else 0.0)
 
         finals = np.array(final_equities)
-        drawdowns = np.array(max_drawdowns)
 
         percentiles = {
             "p5": float(np.percentile(finals, 5)),

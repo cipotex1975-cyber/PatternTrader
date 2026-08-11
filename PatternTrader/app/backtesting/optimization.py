@@ -149,7 +149,8 @@ class BacktestOptimizer:
         if not param_grid:
             return [{}]
         keys = list(param_grid.keys())
-        return [dict(zip(keys, combo)) for combo in itertools.product(*[param_grid[k] for k in keys])]
+        values = [param_grid[k] for k in keys]
+        return [dict(zip(keys, combo)) for combo in itertools.product(*values)]
 
     def get_results(self) -> list[dict[str, Any]]:
         return self._results.copy()

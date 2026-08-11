@@ -52,7 +52,11 @@ class MetricsCalculator:
 
         gross_profit = sum(t.pnl for t in wins)
         gross_loss = abs(sum(t.pnl for t in losses))
-        profit_factor = gross_profit / gross_loss if gross_loss > 0 else (float("inf") if gross_profit > 0 else 0.0)
+        profit_factor = (
+            gross_profit / gross_loss
+            if gross_loss > 0
+            else (float("inf") if gross_profit > 0 else 0.0)
+        )
 
         returns = np.array([t.pnl_pct for t in closed], dtype=float)
         mean_return = float(returns.mean()) if len(returns) else 0.0
@@ -144,14 +148,12 @@ class MetricsCalculator:
                 "ulcer_index": 0.0,
             }
 
-        peak = values[0]
         max_dd = 0.0
         max_dd_pct = 0.0
         running_max = values[0]
         dd_values = []
         current_peak = 0
         max_duration = 0
-        dd_start = 0
 
         for i, value in enumerate(values):
             if value > running_max:
@@ -168,7 +170,9 @@ class MetricsCalculator:
             "max_drawdown_pct": max_dd_pct * 100,
             "average_drawdown_pct": (float(np.mean(dd_values)) if dd_values else 0.0) * 100,
             "max_drawdown_duration": max_duration,
-            "ulcer_index": float(np.sqrt(np.mean(np.square(dd_values)))) * 100 if dd_values else 0.0,
+            "ulcer_index": (
+                float(np.sqrt(np.mean(np.square(dd_values)))) * 100 if dd_values else 0.0
+            ),
         }
 
     @staticmethod

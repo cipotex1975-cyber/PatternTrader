@@ -130,7 +130,7 @@ async def test_pipeline_sends_telegram_for_critical():
         return True
 
     async def fake_create(pattern, score_result, ml_probability=0.0, strategy_signal=None):
-        return Signal(
+        signal = Signal(
             symbol=pattern.symbol,
             timeframe=pattern.timeframe,
             pattern_name=pattern.pattern_name,
@@ -144,6 +144,8 @@ async def test_pipeline_sends_telegram_for_critical():
             health=pattern.health,
             ml_probability=0.95,
         )
+        pipeline._signal_engine._signals[signal.id] = signal
+        return signal
 
     pipeline._telegram.send_signal = fake_send
     pipeline._signal_engine.create_signal = fake_create
@@ -216,7 +218,7 @@ async def test_pipeline_signal_sent_event_is_enriched():
             return True
 
         async def fake_create(pattern, score_result, ml_probability=0.0, strategy_signal=None):
-            return Signal(
+            signal = Signal(
                 symbol=pattern.symbol,
                 timeframe=pattern.timeframe,
                 pattern_name=pattern.pattern_name,
@@ -231,6 +233,8 @@ async def test_pipeline_signal_sent_event_is_enriched():
                 ml_probability=0.95,
                 metadata={"strategy": "breakout", "strategy_size": 0.5},
             )
+            pipeline._signal_engine._signals[signal.id] = signal
+            return signal
 
         pipeline._telegram.send_signal = fake_send
         pipeline._signal_engine.create_signal = fake_create
@@ -459,7 +463,7 @@ async def test_pipeline_sends_when_priority_meets_min_priority():
             return True
 
         async def fake_create(pattern, score_result, ml_probability=0.0, strategy_signal=None):
-            return Signal(
+            signal = Signal(
                 symbol=pattern.symbol,
                 timeframe=pattern.timeframe,
                 pattern_name=pattern.pattern_name,
@@ -473,6 +477,8 @@ async def test_pipeline_sends_when_priority_meets_min_priority():
                 health=pattern.health,
                 ml_probability=0.8,
             )
+            pipeline._signal_engine._signals[signal.id] = signal
+            return signal
 
         pipeline._telegram.send_signal = fake_send
         pipeline._signal_engine.create_signal = fake_create

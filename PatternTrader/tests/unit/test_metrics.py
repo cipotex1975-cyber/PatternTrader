@@ -64,7 +64,12 @@ def test_metrics_calculates_core():
 
 def test_metrics_calmar_ulcer_sortino_populated():
     trades = [_trade(i, 3.0 if i % 2 == 0 else -1.0) for i in range(20)]
-    curve = _equity_curve([100, 102, 101, 104, 103, 106, 98, 105, 110, 108, 112, 109, 115, 113, 117, 114, 119, 116, 121, 118, 123])
+    curve = _equity_curve(
+        [
+            100, 102, 101, 104, 103, 106, 98, 105, 110, 108, 112, 109, 115, 113, 117,
+            114, 119, 116, 121, 118, 123,
+        ]
+    )
     metrics = MetricsCalculator.calculate(
         trades,
         curve,
@@ -80,7 +85,13 @@ def test_metrics_calmar_ulcer_sortino_populated():
 
 
 def test_metrics_empty_returns_defaults():
-    metrics = MetricsCalculator.calculate([], [], initial_capital=100, start_date=datetime.utcnow(), end_date=datetime.utcnow())
+    metrics = MetricsCalculator.calculate(
+        [],
+        [],
+        initial_capital=100,
+        start_date=datetime.utcnow(),
+        end_date=datetime.utcnow(),
+    )
     assert metrics.total_trades == 0
     assert metrics.win_rate == 0.0
 

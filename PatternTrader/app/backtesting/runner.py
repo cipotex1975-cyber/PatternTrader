@@ -16,7 +16,12 @@ class BacktestRunner:
     def __init__(self, config: BacktestConfig | None = None) -> None:
         self._config = config or BacktestConfig()
 
-    def run(self, candles: list, patterns: list, config: BacktestConfig | None = None) -> BacktestResult:
+    def run(
+        self,
+        candles: list,
+        patterns: list,
+        config: BacktestConfig | None = None,
+    ) -> BacktestResult:
         """Backtest simple sobre un conjunto de velas y patrones."""
         engine = BacktestEngine(config or self._config)
         result = engine.run(candles, patterns)

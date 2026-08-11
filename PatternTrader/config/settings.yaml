@@ -167,6 +167,7 @@ backtesting:
   default_initial_capital: 100000
   default_commission: 0.001
   default_slippage: 0.0005
+  default_max_positions: 10
   walk_forward_splits: 5
   monte_carlo_simulations: 1000
 

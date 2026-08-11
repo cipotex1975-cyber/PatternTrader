@@ -201,6 +201,7 @@ class BacktestingSettings(BaseSettings):
     default_initial_capital: float = 100000
     default_commission: float = 0.001
     default_slippage: float = 0.0005
+    default_max_positions: int = 10
     walk_forward_splits: int = 5
     monte_carlo_simulations: int = 1000
 

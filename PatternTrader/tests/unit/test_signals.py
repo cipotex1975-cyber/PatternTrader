@@ -188,7 +188,10 @@ async def test_mark_sent_skips_expired_signal():
 
 def test_signal_ttl_hours_from_settings():
     engine = SignalEngine()
-    assert engine._scoring_config.signal_ttl_hours == get_settings().patterns.scoring.signal_ttl_hours
+    assert (
+        engine._scoring_config.signal_ttl_hours
+        == get_settings().patterns.scoring.signal_ttl_hours
+    )
 
 
 @pytest.mark.asyncio

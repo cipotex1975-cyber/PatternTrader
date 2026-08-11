@@ -297,7 +297,10 @@ class PatternPipeline:
 
             now = time.monotonic()
             last_calc = self._last_health_calc.get(pattern_id, 0.0)
-            if self._health_interval_seconds <= 0 or now - last_calc >= self._health_interval_seconds:
+            if (
+                self._health_interval_seconds <= 0
+                or now - last_calc >= self._health_interval_seconds
+            ):
                 report = await self._health.calculate(
                     result, detector, candles, latest_indicators
                 )

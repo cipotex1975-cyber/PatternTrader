@@ -2,3 +2,6 @@
 max-line-length = 100
 extend-ignore = E203
 exclude = .git,__pycache__,build,dist
+per-file-ignores =
+    run_backtest.py: E402
+    train_model.py: E402

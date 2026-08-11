@@ -111,17 +111,20 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def create_labels(df: pd.DataFrame, forward_periods: int = 5, threshold: float = 0.001) -> pd.Series:
+def create_labels(
+    df: pd.DataFrame, forward_periods: int = 5, threshold: float = 0.001
+) -> pd.Series:
     future_high = (
-                    df["high"]
-                    .shift(-1)
-                    .rolling(5)
-                    .max() )
-    #"¿Dentro de 5 horas el cierre estará al menos un 0.1% por encima del precio actual?"
-    #future_return = df["close"].shift(-forward_periods) / df["close"] - 1
+        df["high"]
+        .shift(-1)
+        .rolling(5)
+        .max()
+    )
+    # ¿Dentro de 5 horas el cierre estará al menos un 0.1% por encima del precio actual?
+    # future_return = df["close"].shift(-forward_periods) / df["close"] - 1
 
-    #¿En algún momento de las próximas 5 horas el precio llegó a subir un 0.1%?
-    future_return = future_high / df["close"] - 1                
+    # ¿En algún momento de las próximas 5 horas el precio llegó a subir un 0.1%?
+    future_return = future_high / df["close"] - 1
     labels = (future_return > threshold).astype(int)
     return labels
 
@@ -130,10 +133,24 @@ def main():
     parser = argparse.ArgumentParser(description="Train ML model with OHLCV data")
     parser.add_argument("data_file", type=str, help="Path to the data file")
     parser.add_argument("--test-size", type=float, default=0.2, help="Test size (default: 0.2)")
-    parser.add_argument("--n-estimators", type=int, default=500, help="Number of trees (default: 100)")
-    parser.add_argument("--max-depth", type=int, default=15, help="Maximum tree depth (default: 15)")
-    parser.add_argument("--forward-periods", type=int, default=5, help="Forward periods for labels (default: 5)")
-    parser.add_argument("--threshold", type=float, default=0.001, help="Threshold for positive label (default: 0.001)")
+    parser.add_argument(
+        "--n-estimators", type=int, default=500, help="Number of trees (default: 100)"
+    )
+    parser.add_argument(
+        "--max-depth", type=int, default=15, help="Maximum tree depth (default: 15)"
+    )
+    parser.add_argument(
+        "--forward-periods",
+        type=int,
+        default=5,
+        help="Forward periods for labels (default: 5)",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.001,
+        help="Threshold for positive label (default: 0.001)",
+    )
     parser.add_argument("--save-model", type=str, default=None, help="Path to save trained model")
     args = parser.parse_args()
 
@@ -150,7 +167,7 @@ def main():
     df = df.dropna(subset=FEATURE_NAMES + ["label"])
     print(f"Samples after dropping NaN: {len(df)}")
 
-    print(f"\nLabel distribution:")
+    print("\nLabel distribution:")
     print(f"  Positive (1): {int(df['label'].sum())} ({df['label'].mean():.2%})")
     print(f"  Negative (0): {int((df['label'] == 0).sum())} ({1 - df['label'].mean():.2%})")
 
@@ -161,11 +178,14 @@ def main():
         X, y, test_size=args.test_size, random_state=42, shuffle=False
     )
 
-    print(f"\nSplit:")
+    print("\nSplit:")
     print(f"  Train: {len(X_train)} samples")
     print(f"  Test:  {len(X_test)} samples")
 
-    print(f"\nTraining Random Forest (n_estimators={args.n_estimators}, max_depth={args.max_depth})...")
+    print(
+        f"\nTraining Random Forest (n_estimators={args.n_estimators}, "
+        f"max_depth={args.max_depth})..."
+    )
     model = RandomForestModel(
         n_estimators=args.n_estimators,
         max_depth=args.max_depth,

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 from collections import defaultdict
 
-import numpy as np
 import pandas as pd
 import yaml
 
@@ -16,15 +16,14 @@ from app.core.config.settings import get_settings
 from app.market.candles.models import Candle, CandleData
 from app.patterns.base_pattern import PatternResult, PatternStatus
 from app.patterns.registry import PatternRegistry
-import app.patterns.reversal.double_top
-import app.patterns.reversal.double_bottom
-import app.patterns.reversal.head_and_shoulders
-import app.patterns.reversal.inverse_head_and_shoulders
-import app.patterns.continuation.bull_flag
-import app.patterns.continuation.bear_flag
-import app.patterns.continuation.bull_pennant
-import app.patterns.continuation.bear_pennant
-from datetime import datetime, timezone
+import app.patterns.reversal.double_top  # noqa: F401  (registro por side-effect)
+import app.patterns.reversal.double_bottom  # noqa: F401  (registro por side-effect)
+import app.patterns.reversal.head_and_shoulders  # noqa: F401  (registro por side-effect)
+import app.patterns.reversal.inverse_head_and_shoulders  # noqa: F401
+import app.patterns.continuation.bull_flag  # noqa: F401  (registro por side-effect)
+import app.patterns.continuation.bear_flag  # noqa: F401  (registro por side-effect)
+import app.patterns.continuation.bull_pennant  # noqa: F401  (registro por side-effect)
+from datetime import timezone
 
 CONFIG_PATH = Path(__file__).parent / "config" / "pairs.yaml"
 
@@ -320,9 +319,7 @@ def print_results(result, symbol: str, timeframe: str) -> None:
                   f"exit={t.exit_price:.5f}  PnL=${t.pnl:>10,.2f}")
 
 
-def main() -> None:
-    import argparse
-
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Backtest de patrones chartistas")
     parser.add_argument(
         "--pair", type=str, default=None,
@@ -348,7 +345,32 @@ def main() -> None:
         "--exclude", type=str, default=None,
         help="Patrones a excluir, separados por coma (ej: bear_flag,double_top)",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def resolve_data_path(
+    symbol: str, timeframe: str, explicit_path: str | None = None
+) -> Path | None:
+    if explicit_path:
+        return Path(explicit_path)
+    data_dir = Path(__file__).parent / "app" / "datos_test"
+    candidates = list(data_dir.glob(f"{symbol}_{timeframe}_*.txt"))
+    if not candidates:
+        return None
+    return sorted(candidates)[-1]
+
+
+def resolve_excluded_patterns(
+    excluded_arg: str | None, pair_cfg: dict
+) -> set[str]:
+    if excluded_arg:
+        return set(excluded_arg.split(","))
+    return set(pair_cfg.get("exclude", []))
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
     pair_cfg = get_pair_config(args.pair)
     symbol = args.pair or "USDCAD"
@@ -358,18 +380,14 @@ def main() -> None:
     step = args.step if args.step is not None else pair_cfg["step"]
     max_patterns = args.max_patterns if args.max_patterns is not None else pair_cfg["max_patterns"]
 
-    excluded = set(args.exclude.split(",")) if args.exclude else set(pair_cfg.get("exclude", []))
+    excluded = resolve_excluded_patterns(args.exclude, pair_cfg)
 
-    if args.data:
-        data_path = Path(args.data)
-    else:
+    data_path = resolve_data_path(symbol, timeframe, args.data)
+    if data_path is None:
         data_dir = Path(__file__).parent / "app" / "datos_test"
-        candidates = list(data_dir.glob(f"{symbol}_{timeframe}_*.txt"))
-        if not candidates:
-            print(f"Error: no se encontro archivo de datos para {symbol}")
-            print(f"Buscando en: {data_dir}")
-            return
-        data_path = sorted(candidates)[-1]
+        print(f"Error: no se encontro archivo de datos para {symbol}")
+        print(f"Buscando en: {data_dir}")
+        return
 
     print(f"Par: {symbol} ({timeframe})")
     print(f"Config: window={window}, step={step}, max_patterns={max_patterns}")
@@ -411,7 +429,8 @@ def main() -> None:
         if raw_patterns:
             print("Detecciones raw sin preparar:")
             for p in raw_patterns[:5]:
-                print(f"  {p.pattern_name}: key_levels={p.key_levels}, confidence={p.confidence:.2f}")
+                print(f"  {p.pattern_name}: key_levels={p.key_levels}, "
+                      f"confidence={p.confidence:.2f}")
         return
 
     settings = get_settings()
@@ -419,7 +438,7 @@ def main() -> None:
         initial_capital=settings.backtesting.default_initial_capital,
         commission=settings.backtesting.default_commission,
         slippage=settings.backtesting.default_slippage,
-        max_positions=10,
+        max_positions=settings.backtesting.default_max_positions,
         risk_per_trade=settings.risk.max_risk_per_trade,
     )
 

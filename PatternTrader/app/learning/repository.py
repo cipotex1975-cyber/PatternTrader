@@ -37,7 +37,11 @@ class KnowledgeRepository:
         limit: int = 1000,
     ) -> list[KnowledgeEntry]:
         async with get_async_session() as session:
-            stmt = select(KnowledgeEntryORM).order_by(KnowledgeEntryORM.created_at.desc()).limit(limit)
+            stmt = (
+                select(KnowledgeEntryORM)
+                .order_by(KnowledgeEntryORM.created_at.desc())
+                .limit(limit)
+            )
             if instrument:
                 stmt = stmt.where(KnowledgeEntryORM.instrument == instrument)
             if timeframe:

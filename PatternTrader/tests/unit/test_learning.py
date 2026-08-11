@@ -4,7 +4,7 @@ import pytest
 
 from app.backtesting.models import Trade, TradeDirection, TradeStatus
 from app.learning.features import FeatureBuilder
-from app.learning.models import KnowledgeEntry, LearningMode, TradeOutcome
+from app.learning.models import LearningMode, TradeOutcome
 from app.learning.offline import OfflineLearner
 from app.learning.online import OnlineLearner
 from app.learning.repository import MemoryKnowledgeRepository
@@ -78,7 +78,11 @@ async def test_online_learning_incremental():
 
 @pytest.mark.asyncio
 async def test_offline_learning_with_cv():
-    svc = LearningService(repository=MemoryKnowledgeRepository(), mode=LearningMode.OFFLINE, min_samples=2)
+    svc = LearningService(
+        repository=MemoryKnowledgeRepository(),
+        mode=LearningMode.OFFLINE,
+        min_samples=2,
+    )
     await _populate(svc, n=12)
     report = await svc.train_offline(n_splits=3)
     assert report["trained"] is True
@@ -98,7 +102,11 @@ async def test_predict_falls_back_when_untrained():
 
 @pytest.mark.asyncio
 async def test_stats_aggregation():
-    svc = LearningService(repository=MemoryKnowledgeRepository(), mode=LearningMode.OFFLINE, min_samples=100)
+    svc = LearningService(
+        repository=MemoryKnowledgeRepository(),
+        mode=LearningMode.OFFLINE,
+        min_samples=100,
+    )
     await _populate(svc, n=10)
     stats = await svc.stats()
     assert stats["total_entries"] == 10

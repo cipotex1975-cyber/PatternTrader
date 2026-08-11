@@ -96,7 +96,20 @@ def _resolve_backtest_input(payload: dict[str, Any]) -> tuple[list[Candle], list
 
 
 def _config_from_payload(payload: dict[str, Any]) -> BacktestConfig:
-    return BacktestConfig(**{k: v for k, v in payload.get("config", {}).items()})
+    """Construye BacktestConfig usando los defaults de settings.yaml como
+    fallback para los campos que el payload no provee."""
+    settings = get_settings()
+    provided = payload.get("config", {})
+    defaults = {
+        "initial_capital": settings.backtesting.default_initial_capital,
+        "commission": settings.backtesting.default_commission,
+        "slippage": settings.backtesting.default_slippage,
+        "max_positions": settings.backtesting.default_max_positions,
+        "risk_per_trade": settings.risk.max_risk_per_trade,
+    }
+    merged = {k: v for k, v in defaults.items() if k not in provided}
+    merged.update(provided)
+    return BacktestConfig(**merged)
 
 
 @router.get("/")
