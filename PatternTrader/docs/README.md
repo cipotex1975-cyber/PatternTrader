@@ -484,7 +484,15 @@ mypy app/
 flake8 app/ tests/
 ```
 
-### Agregar un Nuevo Patrón
+### Entrenamiento Avanzado Multi-Modelo
+
+```bash
+# Entrenar y comparar los 9 modelos de ML para un par específico
+python train_and_compare.py app/datos_test/USDCAD_H1_201005311000_202606010000.txt \
+  --model all \
+  --metric roc_auc \
+  --db
+```
 
 1. Crear archivo en `app/patterns/reversal/` o `app/patterns/continuation/`
 2. Heredar de `BasePattern`

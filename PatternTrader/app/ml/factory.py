@@ -29,6 +29,18 @@ class MLModelFactory:
         return cls._instances[name]
 
     @classmethod
+    def create_new(cls, name: str, **kwargs: Any) -> BaseMLModel:
+        """Crea una instancia nueva (sin caché) del modelo indicado.
+
+        Útil para entrenar varias configuraciones del mismo modelo (p.ej. el
+        script `train_and_compare.py`) sin contaminar el singleton de la API.
+        """
+        if name not in cls._models:
+            raise ConfigurationError(f"Unknown ML model: {name}")
+
+        return cls._models[name](**kwargs)
+
+    @classmethod
     def get_all(cls) -> dict[str, type[BaseMLModel]]:
         return cls._models.copy()
 

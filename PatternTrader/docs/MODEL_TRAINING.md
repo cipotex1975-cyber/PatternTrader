@@ -232,3 +232,42 @@ print(f'Modelo cargado: {model.name}')
 print(f'Entrenado: {model.is_trained}')
 "
 ```
+
+---
+
+## Entrenamiento Avanzado Multi-Modelo y Comparación por Par (`train_and_compare.py`)
+
+Implementado a partir del plan de mejoras (`docs/gap_mejoraS_ml.md`), este script permite entrenar y comparar **los 9 modelos de ML** de la plataforma utilizando datos históricos OHLCV (en formato CSV/TXT tab-delimitado).
+
+### Características Principales
+1. **Soporte Multi-Modelo**: Evalúa en una misma corrida modelos tabulares (`random_forest`, `xgboost`, `lightgbm`, `catboost`), secuenciales (`lstm`, `transformer`, `cnn`) y de anomalías (`isolation_forest`, `autoencoder`).
+2. **Separación Cronológica**: Divide los datos respetando el orden temporal sin mezclar (`shuffle=False`).
+3. **Métricas Profesionales**: Compara Accuracy, Precision, Recall, F1-Score, ROC-AUC y PR-AUC.
+4. **Selección y Persistencia por Par**: Identifica automáticamente el mejor modelo según la métrica objetivo (ej. `--metric roc_auc`) y guarda el artefacto ganador en `models/` con sufijo de par (`{model_name}_{symbol}.{ext}`) junto a un archivo sidecar de metadatos (`.meta.json`).
+5. **Integración con DB y Scoring**: Con la bandera `--db`, registra y activa el modelo ganador en la base de datos (`ml_models`). El `ScoringEngine` utiliza automáticamente este sidecar para rehidratar el modelo específico del activo en tiempo de ejecución.
+
+### Ejemplo de Uso
+
+```bash
+python train_and_compare.py app/datos_test/USDCAD_H1_201005311000_202606010000.txt \
+  --model all \
+  --metric roc_auc \
+  --forward-periods 5 \
+  --threshold 0.001 \
+  --db
+```
+
+### Parámetros Principales
+
+| Parámetro | Default | Descripción |
+|-----------|---------|-------------|
+| `data_file` | (requerido) | Ruta al archivo de datos OHLCV (tab-delimited) |
+| `--model` | `all` | Modelo(s) a entrenar o `all` |
+| `--metric` | `roc_auc` | Métrica objetivo (`accuracy`, `precision`, `recall`, `f1`, `roc_auc`, `pr_auc`) |
+| `--forward-periods` | 5 | Velas hacia adelante para etiquetado |
+| `--threshold` | 0.001 | Retorno mínimo para label positivo |
+| `--sequence-length` | 30 | Longitud de ventana temporal para modelos secuenciales |
+| `--epochs` | 10 | Épocas de entrenamiento para modelos de PyTorch |
+| `--db` | `False` | Registrar el ganador en la base de datos y marcarlo como activo |
+| `--no-save` | `False` | No persistir el artefacto ganador en disco |
+

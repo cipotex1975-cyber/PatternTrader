@@ -5,128 +5,18 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 from sklearn.metrics import precision_score, recall_score, f1_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from app.ml.models.random_forest import RandomForestModel
-
-
-FEATURE_NAMES = [
-    "rsi",
-    "macd",
-    "macd_signal",
-    "macd_hist",
-    "ema_21",
-    "ema_50",
-    "atr",
-    "volume_ratio",
-    "price_change",
-    "high_low_range",
-    "close_position",
-    "trend_strength",
-]
-
-
-def load_data(file_path: str) -> pd.DataFrame:
-    df = pd.read_csv(file_path, sep="\t")
-    df.columns = [c.strip() for c in df.columns]
-
-    if "DateTime" in df.columns and "time" in df.columns:
-        df["datetime"] = pd.to_datetime(df["DateTime"] + " " + df["time"])
-    elif "DateTime" in df.columns:
-        df["datetime"] = pd.to_datetime(df["DateTime"])
-    else:
-        first_col = df.columns[0]
-        df["datetime"] = pd.to_datetime(df[first_col])
-
-    df = df.rename(columns={
-        "Open": "open",
-        "High": "high",
-        "Low": "low",
-        "Close": "close",
-        "Tickvol": "tickvol",
-        "Volume": "volume",
-        "Spread": "spread",
-    })
-
-    for col in ["open", "high", "low", "close", "tickvol", "volume", "spread"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    df = df.dropna(subset=["open", "high", "low", "close"])
-    df = df.sort_values("datetime").reset_index(drop=True)
-    return df
-
-
-def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    delta = series.diff()
-    gain = delta.where(delta > 0, 0.0)
-    loss = -delta.where(delta < 0, 0.0)
-    avg_gain = gain.rolling(window=period, min_periods=period).mean()
-    avg_loss = loss.rolling(window=period, min_periods=period).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-
-def calculate_ema(series: pd.Series, period: int) -> pd.Series:
-    return series.ewm(span=period, adjust=False).mean()
-
-
-def calculate_macd(series: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
-    ema12 = calculate_ema(series, 12)
-    ema26 = calculate_ema(series, 26)
-    macd = ema12 - ema26
-    signal = calculate_ema(macd, 9)
-    histogram = macd - signal
-    return macd, signal, histogram
-
-
-def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    high_low = df["high"] - df["low"]
-    high_close = (df["high"] - df["close"].shift(1)).abs()
-    low_close = (df["low"] - df["close"].shift(1)).abs()
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    return tr.rolling(window=period, min_periods=period).mean()
-
-
-def create_features(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-
-    df["rsi"] = calculate_rsi(df["close"], 14)
-    df["macd"], df["macd_signal"], df["macd_hist"] = calculate_macd(df["close"])
-    df["ema_21"] = calculate_ema(df["close"], 21)
-    df["ema_50"] = calculate_ema(df["close"], 50)
-    df["atr"] = calculate_atr(df, 14)
-
-    df["volume_ratio"] = df["tickvol"] / df["tickvol"].rolling(20, min_periods=1).mean()
-    df["price_change"] = df["close"].pct_change()
-    df["high_low_range"] = (df["high"] - df["low"]) / df["close"]
-    df["close_position"] = (df["close"] - df["low"]) / (df["high"] - df["low"]).replace(0, np.nan)
-    df["trend_strength"] = (df["ema_21"] - df["ema_50"]) / df["ema_50"]
-
-    return df
-
-
-def create_labels(
-    df: pd.DataFrame, forward_periods: int = 5, threshold: float = 0.001
-) -> pd.Series:
-    future_high = (
-        df["high"]
-        .shift(-1)
-        .rolling(5)
-        .max()
-    )
-    # ¿Dentro de 5 horas el cierre estará al menos un 0.1% por encima del precio actual?
-    # future_return = df["close"].shift(-forward_periods) / df["close"] - 1
-
-    # ¿En algún momento de las próximas 5 horas el precio llegó a subir un 0.1%?
-    future_return = future_high / df["close"] - 1
-    labels = (future_return > threshold).astype(int)
-    return labels
+from app.ml.training import (
+    FEATURE_NAMES,
+    create_features,
+    create_labels,
+    load_data,
+)
 
 
 def main():

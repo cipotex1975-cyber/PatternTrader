@@ -57,6 +57,26 @@ class MLModelRepository:
             result = await session.execute(stmt)
             return [self._to_dict(orm) for orm in result.scalars()]
 
+    async def get_active(self) -> list[dict[str, Any]]:
+        """Modelos registrados como activos (is_active=True)."""
+        async with get_async_session() as session:
+            stmt = select(MLModelORM).where(MLModelORM.is_active.is_(True))
+            result = await session.execute(stmt)
+            return [self._to_dict(orm) for orm in result.scalars()]
+
+    async def deactivate_by_symbol(self, symbol: str) -> None:
+        """Marca como inactivos los modelos registrados para un símbolo.
+
+        La convención de nombres ``{modelo}_{symbol}`` permite identificarlos
+        sin columnas adicionales (ver `train_and_compare.py`).
+        """
+        async with get_async_session() as session:
+            result = await session.execute(select(MLModelORM))
+            for orm in result.scalars():
+                if orm.name.endswith(f"_{symbol}"):
+                    orm.is_active = False
+            await session.flush()
+
     @staticmethod
     def _to_dict(orm: MLModelORM) -> dict[str, Any]:
         return {

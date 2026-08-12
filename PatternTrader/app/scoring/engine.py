@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,8 @@ import numpy as np
 from app.core.config.settings import get_settings
 from app.core.logger import get_logger
 from app.market.candles.models import Candle
+from app.ml.base import BaseMLModel
+from app.ml.factory import MLModelFactory
 from app.ml.features import extract_technical_features, features_to_dict
 from app.ml.models.random_forest import RandomForestModel
 from app.patterns.base_pattern import PatternResult
@@ -20,9 +23,11 @@ class ScoringEngine:
     def __init__(self) -> None:
         settings = get_settings()
         self._weights = settings.scoring.weights
-        self._ml_model: RandomForestModel | None = None
+        self._ml_model: BaseMLModel | None = None
+        self._symbol_models: dict[str, BaseMLModel] = {}
         self._knowledge: Any = None
-        self._load_ml_model(settings.ml.model_path)
+        self._model_path = settings.ml.model_path
+        self._load_ml_model(self._model_path)
 
     def attach_knowledge(self, learning_service: Any) -> None:
         """Conecta el modelo de aprendizaje continuo al scoring.
@@ -33,13 +38,32 @@ class ScoringEngine:
         self._knowledge = learning_service
 
     def _load_ml_model(self, model_path: str) -> None:
-        """Load trained ML model if available."""
+        """Load trained ML model if available.
+
+        Carga un modelo genérico (fallback) desde los artefactos ``*.pkl`` que no
+        tengan sidecar por par. Los modelos específicos de símbolo se cargan bajo
+        demanda en ``_load_ml_model_for_symbol``.
+        """
         model_dir = Path(model_path)
         if not model_dir.exists():
             logger.warning(f"ML model directory not found: {model_dir}")
             return
 
+        per_symbol: set[str] = set()
+        for meta_file in model_dir.glob("*.meta.json"):
+            try:
+                meta = json.loads(meta_file.read_text())
+                model_name = meta.get("model_name")
+                symbol = meta.get("symbol")
+                ext = meta.get("extension", ".pkl")
+                if model_name and symbol:
+                    per_symbol.add(f"{model_name}_{symbol}{ext}")
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Sidecar ilegible {meta_file}: {e}")
+
         for model_file in model_dir.glob("*.pkl"):
+            if model_file.name in per_symbol:
+                continue
             try:
                 self._ml_model = RandomForestModel()
                 self._ml_model.load(str(model_file))
@@ -47,6 +71,37 @@ class ScoringEngine:
                 break
             except Exception as e:
                 logger.error(f"Failed to load model {model_file}: {e}")
+
+    def _load_ml_model_for_symbol(self, symbol: str) -> BaseMLModel | None:
+        """Carga (y cachea) el modelo específico de un par usando su sidecar.
+
+        El sidecar ``{modelo}_{symbol}.meta.json`` identifica la clase del
+        artefacto para rehidratarlo correctamente sin depender de la DB.
+        """
+        if symbol in self._symbol_models:
+            return self._symbol_models[symbol]
+
+        model_dir = Path(self._model_path)
+        if not model_dir.exists():
+            return None
+
+        meta_files = sorted(model_dir.glob(f"*.{symbol}.meta.json"))
+        if not meta_files:
+            return None
+
+        try:
+            meta = json.loads(meta_files[0].read_text())
+            model_name = meta["model_name"]
+            ext = meta.get("extension", ".pkl")
+            artifact = model_dir / f"{model_name}_{symbol}{ext}"
+            model = MLModelFactory.create_new(model_name)
+            model.load(str(artifact))
+            self._symbol_models[symbol] = model
+            logger.info(f"Loaded per-symbol ML model: {model_name} for {symbol}")
+            return model
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to load per-symbol model for {symbol}: {e}")
+            return None
 
     def calculate_score(
         self,
@@ -313,8 +368,10 @@ class ScoringEngine:
         """Get ML model prediction score.
 
         Prefiere el modelo de aprendizaje continuo (alimentado con operaciones
-        reales cerradas) cuando está entrenado; si no, usa el RandomForest
-        estático. Sin modelo disponible devuelve un score neutro de 50.
+        reales cerradas) cuando está entrenado; si no, usa el modelo específico
+        del símbolo del patrón (entrenado por par con `train_and_compare.py`)
+        y, como último recurso, el modelo genérico estático. Sin modelo
+        disponible devuelve un score neutro de 50.
         """
         if (
             self._knowledge is not None
@@ -331,12 +388,27 @@ class ScoringEngine:
             )
             return max(0.0, min(100.0, prediction.probability * 100))
 
-        if features is None or self._ml_model is None or not self._ml_model.is_trained:
+        if features is None:
+            return 50.0
+
+        model: BaseMLModel | None = None
+        if pattern is not None and getattr(pattern, "symbol", ""):
+            model = self._load_ml_model_for_symbol(pattern.symbol)
+
+        if model is None:
+            model = self._ml_model
+
+        if model is None or not model.is_trained:
             return 50.0
 
         try:
-            proba = self._ml_model.predict_proba(features.reshape(1, -1))
-            return float(proba[0][1]) * 100
+            prediction = model.get_prediction(
+                features,
+                symbol=pattern.symbol if pattern else "",
+                timeframe=pattern.timeframe if pattern else "",
+                pattern_name=pattern.pattern_name if pattern else "",
+            )
+            return max(0.0, min(100.0, prediction.probability * 100))
         except Exception as e:
             logger.error(f"ML prediction failed: {e}")
             return 50.0
