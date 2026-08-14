@@ -138,6 +138,10 @@ class PatternPipeline:
         return self._lifecycle
 
     @property
+    def scoring(self) -> ScoringEngine:
+        return self._scoring
+
+    @property
     def tracked(self) -> dict[UUID, TrackedPattern]:
         return self._tracked
 

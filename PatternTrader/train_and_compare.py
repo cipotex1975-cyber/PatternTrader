@@ -36,8 +36,11 @@ def derive_symbol(file_path: str) -> str:
 def derive_timeframe(file_path: str) -> str:
     """Deriva el timeframe del nombre de archivo (H1, 1h, 4h, 1d...)."""
     parts = Path(file_path).stem.split("_")
-    if len(parts) >= 2 and parts[1].lower()[:1] in ("h", "m", "d", "w"):
-        return parts[1]
+    if len(parts) >= 2:
+        candidate = parts[1]
+        lowered = candidate.lower()
+        if lowered[0] in ("h", "m", "d", "w") or lowered[-1] in ("h", "m", "d", "w"):
+            return candidate
     return "H1"
 
 
@@ -92,7 +95,7 @@ async def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--model",
         type=str,
-        default="all",
+        default=None,
         help="Modelo(s) a entrenar, separados por coma o repetible (default: all)",
         action="append",
     )
@@ -149,7 +152,9 @@ async def main(argv: list[str] | None = None) -> None:
     )
     print(f"\nSplit cronológico (sin shuffle): train={len(X_train)} test={len(X_test)}")
 
-    model_names = [m.strip() for m in args.model]
+    model_names: list[str] = []
+    for group in args.model or ["all"]:
+        model_names.extend(name.strip() for name in group.split(",") if name.strip())
     print(f"\nEntrenando modelos: {', '.join(model_names)} (métrica objetivo: {args.metric})")
     summary, trained = run_comparison(
         X_train,
@@ -172,14 +177,11 @@ async def main(argv: list[str] | None = None) -> None:
         return
 
     print(
-        f"\nGanador: {winner['model']} | {args.metric}="
-        f"{winner['metrics'].get(args.metric):.4f}"
+        f"\nGanador: {winner['model']} | {args.metric}=" f"{winner['metrics'].get(args.metric):.4f}"
     )
 
     if not args.no_save:
-        artifact_path, _ = save_winner(
-            trained, winner, save_dir, symbol, metric=args.metric
-        )
+        artifact_path, _ = save_winner(trained, winner, save_dir, symbol, metric=args.metric)
         print(f"Artefacto guardado: {artifact_path}")
         summary_path = save_summary(summary, save_dir, symbol)
         print(f"Comparativa guardada: {summary_path}")

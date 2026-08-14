@@ -77,16 +77,34 @@ Para asegurar que la estrategia utilice por defecto el modelo óptimo entrenado 
 ## 5. Plan de Fases de Implementación
 
 ### Fase 1: Desarrollo de `train_and_compare.py`
-- [ ] Crear la estructura base de argumentos CLI (`--data-file`, `--symbol`, `--model`, `--metric`, `--save-dir`).
-- [ ] Integrar el preprocesamiento de datos y feature engineering compartido.
-- [ ] Implementar el bucle de instanciación y entrenamiento para modelos tabulares y secuenciales mediante `MLModelFactory`.
+- [x] Crear la estructura base de argumentos CLI (`--data-file`, `--symbol`, `--model`, `--metric`, `--save-dir`).
+- [x] Integrar el preprocesamiento de datos y feature engineering compartido.
+- [x] Implementar el bucle de instanciación y entrenamiento para modelos tabulares y secuenciales mediante `MLModelFactory`.
 
 ### Fase 2: Comparación y Persistencia por Par
-- [ ] Implementar la evaluación unificada (Accuracy, Precision, Recall, F1, ROC-AUC).
-- [ ] Generar salida tabular en consola comparando todos los modelos.
-- [ ] Implementar guardado de artefactos con nomenclatura por par (`{model_name}_{symbol}`).
-- [ ] Conectar con `MLModelRepository` para persistencia en base de datos.
+- [x] Implementar la evaluación unificada (Accuracy, Precision, Recall, F1, ROC-AUC).
+- [x] Generar salida tabular en consola comparando todos los modelos.
+- [x] Implementar guardado de artefactos con nomenclatura por par (`{model_name}_{symbol}`).
+- [x] Conectar con `MLModelRepository` para persistencia en base de datos.
 
 ### Fase 3: Integración en el Pipeline y Scoring
-- [ ] Actualizar `ScoringEngine` para carga dinámica basada en el símbolo del activo.
-- [ ] Añadir pruebas unitarias y de integración para el nuevo script de entrenamiento comparativo.
+- [x] Actualizar `ScoringEngine` para carga dinámica basada en el símbolo del activo.
+- [x] Añadir pruebas unitarias y de integración para el nuevo script de entrenamiento comparativo.
+
+#### Resumen de la Fase 3 (implementada)
+
+1. **Rehidratación por símbolo en `ScoringEngine`** (`app/scoring/engine.py`):
+   - `_load_ml_model_for_symbol(symbol)` busca los sidecar `*_{symbol}.meta.json` del par, rehidrata la clase correcta vía `MLModelFactory.create_new` y cachea la instancia.
+   - **Corrección**: el patrón de búsqueda usa guion bajo (`*_{symbol}.meta.json`), acorde con la nomenclatura real de `save_winner` (antes usaba punto y nunca encontraba el artefacto).
+   - **Candidatos múltiples**: si coexisten varios ganadores para el mismo símbolo (reentrenamientos con distintos modelos), se prioriza el sidecar con `trained_at` más reciente y, si su artefacto falla al cargar, se degrada al siguiente candidato.
+   - `ScoringEngine` acepta ahora un `model_path` opcional para facilitar pruebas y despliegues con directorios alternativos.
+   - El `PatternPipeline` no requiere cambios: el `ScoringEngine` inyecta automáticamente el modelo del par en el componente `ml_history` del scoring.
+
+2. **Correcciones en `train_and_compare.py`**:
+   - `--model` con `default=None` + `action="append"` (antes `default="all"` rompía argparse o entrenaba `all` junto al modelo pedido). Ahora también soporta valores separados por coma (`--model random_forest,xgboost`).
+   - `derive_timeframe` ahora reconoce timeframes con prefijo numérico (`1h`, `4h`, `1d`) y no solo `H1`.
+
+3. **Pruebas añadidas**:
+   - `tests/unit/test_scoring.py::TestScoringPerSymbolModel`: carga del ganador por par, símbolo desconocido → `None`, selección del sidecar más reciente, degradación cuando el artefacto más nuevo falta, y uso efectivo del modelo del par en `calculate_score`.
+   - `tests/unit/test_ml_training.py::TestTrainAndCompareCLI`: `derive_symbol`/`derive_timeframe` y ejecución completa de `main()` con `--no-save` y con persistencia del ganador.
+   - `tests/integration/test_learning_integration.py::test_register_in_db_activates_per_symbol`: `register_in_db` registra el ganador como activo y desactiva el modelo previo del mismo símbolo.

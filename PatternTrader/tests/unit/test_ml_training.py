@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import numpy as np
@@ -27,10 +28,10 @@ from app.ml.training.data import (
 def _make_df(n: int = 300, seed: int = 0) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     dates = pd.date_range("2020-01-01", periods=n, freq="h")
-    open_ = np.linspace(1.0, 2.0, n) + rng.normal(0, 0.0001, n)
-    close = open_ + rng.uniform(0.001, 0.005, n)
-    high = close + rng.uniform(0.001, 0.005, n)
-    low = open_ - rng.uniform(0, 0.001, n)
+    close = 1.0 + np.cumsum(rng.normal(0, 0.001, n))
+    open_ = close + rng.normal(0, 0.0002, n)
+    high = np.maximum(open_, close) + rng.uniform(0, 0.001, n)
+    low = np.minimum(open_, close) - rng.uniform(0, 0.001, n)
     return pd.DataFrame(
         {
             "DateTime": dates.strftime("%Y-%m-%d"),
@@ -141,7 +142,10 @@ class TestComparison:
         X, y = _make_matrix(n=100)
         split = 80
         summary, _ = run_comparison(
-            X[:split], y[:split], X[split:], y[split:],
+            X[:split],
+            y[:split],
+            X[split:],
+            y[split:],
             model_names=["random_forest"],
             hyperparams={"random_forest": {"n_estimators": 10, "max_depth": 3}},
         )
@@ -157,7 +161,10 @@ class TestComparison:
     def test_sequence_models_can_run(self):
         X, y = _make_matrix(n=80, features=12)
         summary, trained = run_comparison(
-            X[:60], y[:60], X[60:], y[60:],
+            X[:60],
+            y[:60],
+            X[60:],
+            y[60:],
             model_names=["cnn"],
             feature_names=[f"f{i}" for i in range(12)],
             sequence_length=10,
@@ -171,9 +178,7 @@ class TestComparison:
 class TestEvaluateAndSave:
     def test_evaluate_model_metrics(self):
         X, y = _make_matrix(n=50)
-        model = MLModelFactory.create_new(
-            "random_forest", n_estimators=10, max_depth=3
-        )
+        model = MLModelFactory.create_new("random_forest", n_estimators=10, max_depth=3)
         model.train(X, y)
         metrics = evaluate_model(model, X, y)
         for key in AVAILABLE_METRICS:
@@ -183,14 +188,15 @@ class TestEvaluateAndSave:
     def test_save_winner_writes_artifact_and_sidecar(self, tmp_path):
         X, y = _make_matrix(n=120)
         summary, trained = run_comparison(
-            X[:90], y[:90], X[90:], y[90:],
+            X[:90],
+            y[:90],
+            X[90:],
+            y[90:],
             model_names=["random_forest"],
             hyperparams={"random_forest": {"n_estimators": 10, "max_depth": 3}},
         )
         winner = select_winner(summary, "roc_auc")
-        artifact, sidecar = save_winner(
-            trained, winner, str(tmp_path), "USDCAD", metric="roc_auc"
-        )
+        artifact, sidecar = save_winner(trained, winner, str(tmp_path), "USDCAD", metric="roc_auc")
 
         assert artifact == str(tmp_path / "random_forest_USDCAD.pkl")
         assert sidecar == str(tmp_path / "random_forest_USDCAD.meta.json")
@@ -203,9 +209,7 @@ class TestEvaluateAndSave:
         assert meta["extension"] == ".pkl"
 
     def test_save_summary_json(self, tmp_path):
-        summary = pd.DataFrame(
-            [{"model": "random_forest", "status": "ok", "roc_auc": 0.7}]
-        )
+        summary = pd.DataFrame([{"model": "random_forest", "status": "ok", "roc_auc": 0.7}])
         path = save_summary(summary, str(tmp_path), "EURUSD")
         data = json.loads(Path(path).read_text())
         assert data[0]["model"] == "random_forest"
@@ -225,3 +229,50 @@ class TestSelectWinner:
         )
         winner = select_winner(summary, "roc_auc")
         assert winner["model"] == "c"
+
+
+class TestTrainAndCompareCLI:
+    def test_derive_symbol_and_timeframe(self):
+        from train_and_compare import derive_symbol, derive_timeframe
+
+        assert derive_symbol("USDCAD_H1_201005311000_202606010000.txt") == "USDCAD"
+        assert derive_symbol("USDJPYX_1h_730d.txt") == "USDJPYX"
+        assert derive_timeframe("USDCAD_H1_201005311000_202606010000.txt") == "H1"
+        assert derive_timeframe("USDJPYX_1h_730d.txt") == "1h"
+        assert derive_timeframe("BTCUSDT.csv") == "H1"
+
+    def test_main_runs_without_saving(self, tmp_path):
+        from train_and_compare import main
+
+        df = _make_df(n=250)
+        path = tmp_path / "EURUSD_H1.txt"
+        df.to_csv(path, sep="\t", index=False)
+
+        asyncio.run(main([str(path), "--model", "random_forest", "--no-save"]))
+
+        assert not list(tmp_path.glob("*.pkl"))
+        assert not list(tmp_path.glob("*.meta.json"))
+
+    def test_main_saves_winner_for_symbol(self, tmp_path):
+        from train_and_compare import main
+
+        df = _make_df(n=250)
+        path = tmp_path / "USDCAD_H1.txt"
+        df.to_csv(path, sep="\t", index=False)
+
+        asyncio.run(
+            main(
+                [
+                    str(path),
+                    "--model",
+                    "random_forest",
+                    "--save-dir",
+                    str(tmp_path / "models"),
+                ]
+            )
+        )
+
+        models_dir = tmp_path / "models"
+        assert (models_dir / "random_forest_USDCAD.pkl").exists()
+        assert (models_dir / "random_forest_USDCAD.meta.json").exists()
+        assert (models_dir / "USDCAD_comparison.json").exists()

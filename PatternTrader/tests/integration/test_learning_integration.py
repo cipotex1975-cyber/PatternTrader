@@ -99,6 +99,31 @@ async def test_ml_model_trained_at_stored_aware(pg_db):
 
 
 @requires_postgres
+async def test_register_in_db_activates_per_symbol(pg_db):
+    from train_and_compare import register_in_db
+
+    winner = {
+        "model": "random_forest",
+        "metrics": {"accuracy": 0.8, "roc_auc": 0.75},
+    }
+    await register_in_db("USDCAD", "H1", winner, "/tmp/random_forest_USDCAD.pkl", "roc_auc")
+
+    active = await MLModelRepository().get_active()
+    assert any(m["name"] == "random_forest_USDCAD" and m["is_active"] for m in active)
+
+    winner_new = {
+        "model": "xgboost",
+        "metrics": {"accuracy": 0.85, "roc_auc": 0.8},
+    }
+    await register_in_db("USDCAD", "H1", winner_new, "/tmp/xgboost_USDCAD.json", "roc_auc")
+
+    active = await MLModelRepository().get_active()
+    names = {m["name"] for m in active}
+    assert "xgboost_USDCAD" in names
+    assert "random_forest_USDCAD" not in names
+
+
+@requires_postgres
 async def test_signal_repository_roundtrip(pg_db):
     from app.database.repositories import SignalRepository
     from app.signals.models import Signal, SignalPriority

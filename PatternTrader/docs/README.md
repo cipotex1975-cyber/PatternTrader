@@ -443,6 +443,7 @@ Ver [CONFIGURATION.md](docs/CONFIGURATION.md) para más detalles.
 | [LEARNING.md](docs/LEARNING.md) | Aprendizaje continuo (offline y online) |
 | [CONFIGURATION.md](docs/CONFIGURATION.md) | Referencia de configuración |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Guía de despliegue |
+| [SIMULATION.md](docs/SIMULATION.md) | Simulación completa del pipeline desde archivo OHLCV (`simulate_pipeline.py`) |
 | [GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md) | Auditoría de estado, gaps y roadmap de continuación |
 | [plan_fase_4.md](docs/plan_fase_4.md) | Plan y ejecución de la Fase 4 (persistencia y API real) |
 

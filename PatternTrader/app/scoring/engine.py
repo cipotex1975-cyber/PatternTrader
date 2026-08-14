@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import numpy as np
 
@@ -20,14 +20,33 @@ logger = get_logger("ScoringEngine")
 
 
 class ScoringEngine:
-    def __init__(self) -> None:
+    def __init__(self, model_path: str | None = None) -> None:
         settings = get_settings()
         self._weights = settings.scoring.weights
         self._ml_model: BaseMLModel | None = None
         self._symbol_models: dict[str, BaseMLModel] = {}
         self._knowledge: Any = None
-        self._model_path = settings.ml.model_path
+        self._model_path = model_path or settings.ml.model_path
         self._load_ml_model(self._model_path)
+
+    def active_models(self) -> dict[str, str]:
+        """Devuelve {símbolo: nombre del modelo ML} cargados por par.
+
+        Útil para reportes (p.ej. ``simulate_pipeline.py``) y para saber qué
+        modelo entrenado con ``train_and_compare.py`` se está usando en vivo.
+        """
+        return {symbol: model.name for symbol, model in self._symbol_models.items()}
+
+    def ensure_models(self, symbols: Iterable[str]) -> dict[str, str]:
+        """Precarga (y cachea) los modelos por par de los símbolos indicados.
+
+        Devuelve ``{symbol: model_name}`` para cada símbolo con un modelo
+        entrenado disponible en ``model_path``; los símbolos sin modelo se
+        omiten. Evita el coste de carga diferida en la primera predicción.
+        """
+        for symbol in symbols:
+            self._load_ml_model_for_symbol(symbol)
+        return self.active_models()
 
     def attach_knowledge(self, learning_service: Any) -> None:
         """Conecta el modelo de aprendizaje continuo al scoring.
@@ -77,6 +96,9 @@ class ScoringEngine:
 
         El sidecar ``{modelo}_{symbol}.meta.json`` identifica la clase del
         artefacto para rehidratarlo correctamente sin depender de la DB.
+        Cuando coexisten varios candidatos para el mismo símbolo (p.ej. tras
+        reentrenamientos con distintos ganadores) se prioriza el más reciente
+        por ``trained_at`` y, si falla su carga, se degrada al siguiente.
         """
         if symbol in self._symbol_models:
             return self._symbol_models[symbol]
@@ -85,23 +107,36 @@ class ScoringEngine:
         if not model_dir.exists():
             return None
 
-        meta_files = sorted(model_dir.glob(f"*.{symbol}.meta.json"))
+        meta_files = sorted(
+            model_dir.glob(f"*_{symbol}.meta.json"),
+            key=self._meta_timestamp,
+            reverse=True,
+        )
         if not meta_files:
             return None
 
+        for meta_file in meta_files:
+            try:
+                meta = json.loads(meta_file.read_text())
+                model_name = meta["model_name"]
+                ext = meta.get("extension", ".pkl")
+                artifact = model_dir / f"{model_name}_{symbol}{ext}"
+                model = MLModelFactory.create_new(model_name)
+                model.load(str(artifact))
+                self._symbol_models[symbol] = model
+                logger.info(f"Loaded per-symbol ML model: {model_name} for {symbol}")
+                return model
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"Failed to load per-symbol model for {symbol}: {e}")
+        return None
+
+    @staticmethod
+    def _meta_timestamp(meta_file: Path) -> str:
+        """Timestamp (ISO) de un sidecar para ordenar candidatos de un par."""
         try:
-            meta = json.loads(meta_files[0].read_text())
-            model_name = meta["model_name"]
-            ext = meta.get("extension", ".pkl")
-            artifact = model_dir / f"{model_name}_{symbol}{ext}"
-            model = MLModelFactory.create_new(model_name)
-            model.load(str(artifact))
-            self._symbol_models[symbol] = model
-            logger.info(f"Loaded per-symbol ML model: {model_name} for {symbol}")
-            return model
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Failed to load per-symbol model for {symbol}: {e}")
-            return None
+            return str(json.loads(meta_file.read_text()).get("trained_at", ""))
+        except Exception:  # noqa: BLE001
+            return ""
 
     def calculate_score(
         self,

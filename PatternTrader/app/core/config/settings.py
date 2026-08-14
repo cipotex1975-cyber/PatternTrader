@@ -11,6 +11,8 @@ from pydantic_settings import BaseSettings
 
 
 class DatabaseSettings(BaseSettings):
+    model_config = {"env_prefix": "DB_"}
+
     host: str = "localhost"
     port: int = 5432
     name: str = "pattern_trader"
@@ -282,7 +284,12 @@ class Settings(BaseSettings):
     backtesting: BacktestingSettings = Field(default_factory=BacktestingSettings)
     ml: MLSettings = Field(default_factory=MLSettings)
 
-    model_config = {"env_prefix": "", "env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_prefix": "",
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
 
 
 def _load_yaml_config(config_path: Path) -> dict[str, Any]:

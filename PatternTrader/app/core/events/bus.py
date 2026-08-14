@@ -15,7 +15,7 @@ class EventBus:
         self._handlers: dict[EventType, list[Callable[..., Coroutine[Any, Any, None]]]] = (
             defaultdict(list)
         )
-        self._queue: asyncio.Queue[Event] = asyncio.Queue()
+        self._queue: asyncio.Queue[Event] | None = None
         self._running = False
         self._task: asyncio.Task | None = None
 
@@ -33,13 +33,16 @@ class EventBus:
             logger.debug(f"Handler {handler.__name__} unsubscribed from {event_type.value}")
 
     async def publish(self, event: Event) -> None:
+        if self._queue is None:
+            self._queue = asyncio.Queue()
         await self._queue.put(event)
         logger.debug(f"Event {event.type.value} published from {event.source}")
 
     async def _process_events(self) -> None:
+        queue = self._queue
         while self._running:
             try:
-                event = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+                event = await asyncio.wait_for(queue.get(), timeout=1.0)
                 handlers = self._handlers.get(event.type, [])
                 for handler in handlers:
                     try:
@@ -55,6 +58,7 @@ class EventBus:
 
     async def start(self) -> None:
         if not self._running:
+            self._queue = asyncio.Queue()
             self._running = True
             self._task = asyncio.create_task(self._process_events())
             logger.info("Event bus started")
@@ -67,6 +71,8 @@ class EventBus:
                 await self._task
             except asyncio.CancelledError:
                 pass
+            self._task = None
+        self._queue = None
         logger.info("Event bus stopped")
 
 

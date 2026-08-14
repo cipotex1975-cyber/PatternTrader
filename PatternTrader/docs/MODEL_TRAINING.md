@@ -133,36 +133,20 @@ probability = model.predict_proba(features)
 
 ### Uso en ScoringEngine
 
-El `ScoringEngine` en `app/scoring/engine.py` usa el modelo ML para evaluar patrones:
+El `ScoringEngine` en `app/scoring/engine.py` carga automáticamente el modelo ML **específico del símbolo** que se está evaluando:
+
+1. **Carga por par** (`_load_ml_model_for_symbol`): busca el sidecar `*_{symbol}.meta.json` en `ml.model_path`, rehidrata la clase del artefacto con `MLModelFactory.create_new` y cachea la instancia. Si existen varios candidatos para el símbolo, prioriza el más reciente por `trained_at`.
+2. **Fallback genérico**: si no hay modelo del par, usa el primer artefacto `*.pkl` sin sidecar por par (modelo estático).
+3. **Aprendizaje continuo**: si `attach_knowledge` conectó un `LearningService` entrenado, ese modelo tiene prioridad sobre el por-par.
 
 ```python
-from app.ml.models.random_forest import RandomForestModel
-from app.core.config.settings import get_settings
-from pathlib import Path
+from app.scoring.engine import ScoringEngine
 
-class ScoringEngine:
-    def __init__(self) -> None:
-        settings = get_settings()
-        self._weights = settings.scoring.weights
-        
-        # Cargar modelo ML si existe
-        model_path = Path(settings.ml.model_path) / "rf_usdcad.pkl"
-        if model_path.exists():
-            self._ml_model = RandomForestModel()
-            self._ml_model.load(str(model_path))
-        else:
-            self._ml_model = None
-    
-    def _get_ml_score(self, features: np.ndarray) -> float:
-        """Obtener score del modelo ML."""
-        if self._ml_model is None or not self._ml_model.is_trained:
-            return 50.0  # Default cuando no hay modelo
-        
-        try:
-            proba = self._ml_model.predict_proba(features.reshape(1, -1))
-            return float(proba[0][1]) * 100  # Probabilidad de éxito * 100
-        except Exception:
-            return 50.0
+# Directorio por defecto (config/settings.yaml → ml.model_path)
+engine = ScoringEngine()
+
+# Directorio alternativo (útil para testing/despliegue)
+engine = ScoringEngine(model_path="/ruta/a/models/")
 ```
 
 ---
@@ -270,4 +254,14 @@ python train_and_compare.py app/datos_test/USDCAD_H1_201005311000_202606010000.t
 | `--epochs` | 10 | Épocas de entrenamiento para modelos de PyTorch |
 | `--db` | `False` | Registrar el ganador en la base de datos y marcarlo como activo |
 | `--no-save` | `False` | No persistir el artefacto ganador en disco |
+
+### Ejecución de la Fase 3 (Pipeline, Scoring y Pruebas)
+
+La Fase 3 del plan (`docs/gap_mejoraS_ml.md`) está implementada:
+
+- **Integración con el pipeline**: `PatternPipeline` usa `ScoringEngine`, que inyecta automáticamente el modelo entrenado del símbolo en el componente `ml_history` sin cambios adicionales.
+- **Selección del mejor candidato**: si hay varios ganadores para un símbolo (reentrenamientos), el `ScoringEngine` elige el sidecar más reciente (`trained_at`) y degrada al siguiente si el artefacto falla.
+- **Pruebas**:
+  - Unitarias: `tests/unit/test_scoring.py` (rehidratación por símbolo) y `tests/unit/test_ml_training.py` (CLI completo de `train_and_compare.py`).
+  - Integración (requiere Postgres): `tests/integration/test_learning_integration.py` → `register_in_db` activa el ganador del par y desactiva el anterior.
 
