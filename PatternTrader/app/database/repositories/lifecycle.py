@@ -25,9 +25,7 @@ class LifecycleRepository:
     def __init__(self, asset_repository: AssetRepository | None = None) -> None:
         self._assets = asset_repository or AssetRepository()
 
-    async def register_pattern(
-        self, pattern: PatternResult, lifecycle: LifecycleEvent
-    ) -> None:
+    async def register_pattern(self, pattern: PatternResult, lifecycle: LifecycleEvent) -> None:
         asset_id = await self._assets.get_or_create(pattern.symbol)
         async with get_async_session() as session:
             pattern_orm = PatternORM(
@@ -76,9 +74,7 @@ class LifecycleRepository:
             if lifecycle_orm is None:
                 return
             lifecycle_orm.current_state = lifecycle.current_state.value
-            lifecycle_orm.transitions = self._serialize_transitions(
-                lifecycle.transitions
-            )
+            lifecycle_orm.transitions = self._serialize_transitions(lifecycle.transitions)
             lifecycle_orm.closed_at = lifecycle.closed_at
 
     @staticmethod
@@ -159,9 +155,7 @@ class LifecycleRepository:
             timeframe=pattern.timeframe,
             pattern_name=pattern.pattern_name,
             current_state=LifecycleState(lifecycle.current_state),
-            transitions=LifecycleRepository._deserialize_transitions(
-                lifecycle.transitions or []
-            ),
+            transitions=LifecycleRepository._deserialize_transitions(lifecycle.transitions or []),
             created_at=lifecycle.created_at or datetime.utcnow(),
             updated_at=lifecycle.updated_at or datetime.utcnow(),
             closed_at=lifecycle.closed_at,

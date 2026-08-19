@@ -46,9 +46,9 @@ class LSTMModel(SequenceModel):
         return config
 
     def load(self, path: str) -> None:
-        from app.ml.models.sequence_base import _SequenceClassifier
-
         import torch
+
+        from app.ml.models.sequence_base import _SequenceClassifier
 
         state = torch.load(path, weights_only=False)
         config = state["config"]

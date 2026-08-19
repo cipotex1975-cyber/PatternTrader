@@ -47,20 +47,12 @@ class ContrarianStrategy(BaseStrategy):
         indicators = hypothesis.indicators
 
         if pattern.pattern_type != PatternType.REVERSAL:
-            return self._no_trade(
-                f"Patrón {pattern.pattern_name} no es de reversa"
-            )
+            return self._no_trade(f"Patrón {pattern.pattern_name} no es de reversa")
         if hypothesis.total_score < self._parameters["min_score"]:
-            return self._no_trade(
-                f"Score {hypothesis.total_score:.1f} por debajo del mínimo"
-            )
+            return self._no_trade(f"Score {hypothesis.total_score:.1f} por debajo del mínimo")
         if pattern.health < self._parameters["min_health"]:
             return self._no_trade(f"Salud {pattern.health:.1f} por debajo del mínimo")
-        if (
-            pattern.entry_price is None
-            or pattern.stop_loss is None
-            or pattern.take_profit is None
-        ):
+        if pattern.entry_price is None or pattern.stop_loss is None or pattern.take_profit is None:
             return self._no_trade("Niveles de precio incompletos")
 
         rsi = indicators.get("rsi")
@@ -76,13 +68,9 @@ class ContrarianStrategy(BaseStrategy):
             if rsi > self._parameters["oversold_rsi"]:
                 return self._no_trade(f"RSI {rsi:.1f} no está sobrevendido")
             if momentum < -max_momentum:
-                return self._no_trade(
-                    f"Momentum {momentum:.2f} aún en caída fuerte"
-                )
+                return self._no_trade(f"Momentum {momentum:.2f} aún en caída fuerte")
             if ema_fast >= ema_slow:
-                return self._no_trade(
-                    "Sin tendencia bajista previa (EMA9 >= EMA21)"
-                )
+                return self._no_trade("Sin tendencia bajista previa (EMA9 >= EMA21)")
             reasons = [
                 f"RSI sobrevendido ({rsi:.1f})",
                 f"Momentum estabilizando ({momentum:.2f})",
@@ -91,13 +79,9 @@ class ContrarianStrategy(BaseStrategy):
             if rsi < self._parameters["overbought_rsi"]:
                 return self._no_trade(f"RSI {rsi:.1f} no está sobrecomprado")
             if momentum > max_momentum:
-                return self._no_trade(
-                    f"Momentum {momentum:.2f} aún en subida fuerte"
-                )
+                return self._no_trade(f"Momentum {momentum:.2f} aún en subida fuerte")
             if ema_fast <= ema_slow:
-                return self._no_trade(
-                    "Sin tendencia alcista previa (EMA9 <= EMA21)"
-                )
+                return self._no_trade("Sin tendencia alcista previa (EMA9 <= EMA21)")
             reasons = [
                 f"RSI sobrecomprado ({rsi:.1f})",
                 f"Momentum perdiendo fuerza ({momentum:.2f})",

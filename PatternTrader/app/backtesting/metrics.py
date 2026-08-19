@@ -67,9 +67,7 @@ class MetricsCalculator:
         downside_dev = _safe_std(downside.tolist()) if len(downside) else 0.0
         sortino = (mean_return / downside_dev) * np.sqrt(TRADING_DAYS) if downside_dev > 0 else 0.0
 
-        expected_value = (
-            (win_rate * avg_win) + ((1 - win_rate) * avg_loss) if closed else 0.0
-        )
+        expected_value = (win_rate * avg_win) + ((1 - win_rate) * avg_loss) if closed else 0.0
 
         risk_per_trade = [
             abs(t.entry_price - t.stop_loss) * t.size
@@ -79,8 +77,7 @@ class MetricsCalculator:
         expectancy_r = 0.0
         if risk_per_trade and len(risk_per_trade) == len(closed):
             r_values = [
-                t.pnl / risk if risk > 0 else 0.0
-                for t, risk in zip(closed, risk_per_trade)
+                t.pnl / risk if risk > 0 else 0.0 for t, risk in zip(closed, risk_per_trade)
             ]
             expectancy_r = float(np.mean(r_values)) if r_values else 0.0
 

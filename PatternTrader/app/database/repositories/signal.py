@@ -53,11 +53,7 @@ class SignalRepository:
         limit: int = 100,
     ) -> list[Signal]:
         async with get_async_session() as session:
-            stmt = (
-                select(SignalORM)
-                .order_by(SignalORM.created_at.desc())
-                .limit(limit)
-            )
+            stmt = select(SignalORM).order_by(SignalORM.created_at.desc()).limit(limit)
             if status is not None:
                 stmt = stmt.where(SignalORM.status == status.value)
             if priority is not None:

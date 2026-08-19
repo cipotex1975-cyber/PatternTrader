@@ -37,15 +37,17 @@ def load_data(file_path: str) -> pd.DataFrame:
         first_col = df.columns[0]
         df["datetime"] = pd.to_datetime(df[first_col])
 
-    df = df.rename(columns={
-        "Open": "open",
-        "High": "high",
-        "Low": "low",
-        "Close": "close",
-        "Tickvol": "tickvol",
-        "Volume": "volume",
-        "Spread": "spread",
-    })
+    df = df.rename(
+        columns={
+            "Open": "open",
+            "High": "high",
+            "Low": "low",
+            "Close": "close",
+            "Tickvol": "tickvol",
+            "Volume": "volume",
+            "Spread": "spread",
+        }
+    )
 
     for col in ["open", "high", "low", "close", "tickvol", "volume", "spread"]:
         if col in df.columns:
@@ -114,18 +116,26 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
 def create_labels(
     df: pd.DataFrame, forward_periods: int = 5, threshold: float = 0.001
 ) -> pd.Series:
-    """Label 1 si en las próximas ``forward_periods`` velas el precio llega a subir
-    más de ``threshold`` respecto al cierre actual; 0 en caso contrario."""
+    """Label 1 si alguna de las próximas `forward_periods` velas
+    alcanza un high superior al cierre actual por `threshold`.
+    """
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
+
+    # Máximo de HIGH entre t+1 y t+forward_periods.
     future_high = (
         df["high"]
-        .shift(-1)
-        .rolling(forward_periods)
+        .rolling(window=forward_periods, min_periods=forward_periods)
         .max()
+        .shift(-forward_periods)
     )
+
     future_return = future_high / df["close"] - 1
-    labels = (future_return > threshold).astype(int)
+
+    labels = pd.Series(np.nan, index=df.index, dtype="float64")
+    valid = future_return.notna()
+    labels.loc[valid] = (future_return.loc[valid] > threshold).astype(int)
+
     return labels
 
 
@@ -178,6 +188,4 @@ def format_for_model(
             raise ValueError(f"{model_name} requiere etiquetas para formatear secuencias")
         windows, labels = build_sequences(X, y, sequence_length)
         return windows, labels
-    return np.asarray(X, dtype=np.float32), (
-        None if y is None else np.asarray(y, dtype=np.int64)
-    )
+    return np.asarray(X, dtype=np.float32), (None if y is None else np.asarray(y, dtype=np.int64))

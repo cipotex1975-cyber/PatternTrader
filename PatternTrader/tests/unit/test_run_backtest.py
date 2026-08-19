@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from app.patterns.base_pattern import PatternResult, PatternType
-
 from run_backtest import (
     _derive_sl_tp,
     get_pair_config,

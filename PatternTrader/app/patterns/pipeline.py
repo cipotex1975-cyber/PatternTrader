@@ -199,9 +199,7 @@ class PatternPipeline:
             logger.error(f"Failed to fetch candles for {symbol} {timeframe}: {e}")
             return []
 
-    async def _emit_candle_update(
-        self, symbol: str, timeframe: str, candles: list[Candle]
-    ) -> None:
+    async def _emit_candle_update(self, symbol: str, timeframe: str, candles: list[Candle]) -> None:
         if not candles:
             return
         latest = candles[-1].data
@@ -230,13 +228,10 @@ class PatternPipeline:
         latest_indicators: dict[str, float],
     ) -> None:
         active_count = sum(
-            1
-            for t in self._tracked.values()
-            if t.result.symbol == symbol and t.result.is_active
+            1 for t in self._tracked.values() if t.result.symbol == symbol and t.result.is_active
         )
         at_pattern_cap = (
-            self._max_patterns_per_symbol > 0
-            and active_count >= self._max_patterns_per_symbol
+            self._max_patterns_per_symbol > 0 and active_count >= self._max_patterns_per_symbol
         )
 
         for detector in self._detectors:
@@ -305,9 +300,7 @@ class PatternPipeline:
                 self._health_interval_seconds <= 0
                 or now - last_calc >= self._health_interval_seconds
             ):
-                report = await self._health.calculate(
-                    result, detector, candles, latest_indicators
-                )
+                report = await self._health.calculate(result, detector, candles, latest_indicators)
                 result.update_health(report.health)
                 result.metadata["health_report"] = report.model_dump()
                 self._last_health_calc[pattern_id] = now
@@ -440,8 +433,7 @@ class PatternPipeline:
                 result, PatternStatus.REJECTED, reason=f"Risk rejected: {reason}"
             )
             logger.info(
-                f"Signal rejected by risk: {result.symbol} {result.pattern_name} "
-                f"({reason})"
+                f"Signal rejected by risk: {result.symbol} {result.pattern_name} " f"({reason})"
             )
             return
 
@@ -457,15 +449,11 @@ class PatternPipeline:
             sent = await self._signal_engine.mark_sent(signal.id)
             if sent is None:
                 return
-            delivered = await self._telegram.send_signal(
-                signal, candles=candles, pattern=result
-            )
+            delivered = await self._telegram.send_signal(signal, candles=candles, pattern=result)
             if delivered:
                 await self._signal_engine.mark_delivered(signal.id)
             else:
-                await self._signal_engine.mark_failed(
-                    signal.id, reason="telegram send failed"
-                )
+                await self._signal_engine.mark_failed(signal.id, reason="telegram send failed")
             features = extract_technical_features(candles)
             await self._event_bus.publish(
                 Event(

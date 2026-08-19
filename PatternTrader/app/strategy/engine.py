@@ -71,9 +71,7 @@ class StrategyEngine:
 
         best: Optional[StrategyDecision] = None
         for decision in decisions:
-            if decision.is_entry and (
-                best is None or decision.confidence > best.confidence
-            ):
+            if decision.is_entry and (best is None or decision.confidence > best.confidence):
                 best = decision
 
         return StrategyEngineResult(decisions=decisions, best=best)

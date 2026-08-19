@@ -95,8 +95,7 @@ class SignalEngine:
             health=pattern.health,
             ml_probability=ml_probability,
             reasons=reasons,
-            expires_at=datetime.utcnow()
-            + timedelta(hours=self._scoring_config.signal_ttl_hours),
+            expires_at=datetime.utcnow() + timedelta(hours=self._scoring_config.signal_ttl_hours),
             metadata=metadata,
         )
 
@@ -181,9 +180,7 @@ class SignalEngine:
             return None
         signal.mark_sent()
         if self._repository is not None:
-            await self._repository.update_status(
-                signal.id, signal.status, sent_at=signal.sent_at
-            )
+            await self._repository.update_status(signal.id, signal.status, sent_at=signal.sent_at)
         return signal
 
     async def mark_delivered(self, signal_id: UUID) -> Optional[Signal]:
@@ -228,9 +225,7 @@ class SignalEngine:
             directory = os.path.dirname(self._dedup_store_path)
             if directory:
                 os.makedirs(directory, exist_ok=True)
-            payload = {
-                key: value.isoformat() for key, value in self._sent_signals.items()
-            }
+            payload = {key: value.isoformat() for key, value in self._sent_signals.items()}
             with open(self._dedup_store_path, "w") as f:
                 json.dump(payload, f, indent=2)
         except OSError as e:

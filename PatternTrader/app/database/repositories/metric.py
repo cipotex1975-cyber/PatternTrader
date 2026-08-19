@@ -33,11 +33,7 @@ class MetricRepository:
 
     async def list(self, name: Optional[str] = None, limit: int = 1000) -> list[MetricORM]:
         async with get_async_session() as session:
-            stmt = (
-                select(MetricORM)
-                .order_by(MetricORM.timestamp.desc())
-                .limit(limit)
-            )
+            stmt = select(MetricORM).order_by(MetricORM.timestamp.desc()).limit(limit)
             if name is not None:
                 stmt = stmt.where(MetricORM.name == name)
             result = await session.execute(stmt)

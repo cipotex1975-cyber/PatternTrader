@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.backtesting.models import TradeStatus, TradeDirection
+from app.backtesting.models import TradeDirection, TradeStatus
 from app.core.events.bus import EventBus
 from app.core.events.models import Event, EventType
 from app.execution.engine import ExecutionEngine
@@ -237,9 +237,7 @@ async def test_invalid_signal_does_not_open_and_cancels_lifecycle():
         stop_loss=51000.0,
         take_profit=48000.0,
     )
-    await engine._on_signal_sent(
-        Event(type=EventType.SIGNAL_SENT, source="test", data=data)
-    )
+    await engine._on_signal_sent(Event(type=EventType.SIGNAL_SENT, source="test", data=data))
 
     assert len(engine.get_open_trades()) == 0
     assert lifecycle_event.current_state == LifecycleState.CANCELLED

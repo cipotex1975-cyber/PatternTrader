@@ -240,9 +240,7 @@ def test_manager_set_params_applies_to_engine():
     assert manager.set_params("trend_follow", {"default_size": 2.5}) is True
     entry = next(s for s in manager.list() if s["name"] == "trend_follow")
     assert entry["parameters"]["default_size"] == 2.5
-    strategy = next(
-        s for s in manager.engine.strategies if s.name == "trend_follow"
-    )
+    strategy = next(s for s in manager.engine.strategies if s.name == "trend_follow")
     assert strategy.get_parameters()["default_size"] == 2.5
 
 

@@ -47,16 +47,10 @@ class BreakoutStrategy(BaseStrategy):
         indicators = hypothesis.indicators
 
         if hypothesis.total_score < self._parameters["min_score"]:
-            return self._no_trade(
-                f"Score {hypothesis.total_score:.1f} por debajo del mínimo"
-            )
+            return self._no_trade(f"Score {hypothesis.total_score:.1f} por debajo del mínimo")
         if pattern.health < self._parameters["min_health"]:
             return self._no_trade(f"Salud {pattern.health:.1f} por debajo del mínimo")
-        if (
-            pattern.entry_price is None
-            or pattern.stop_loss is None
-            or pattern.take_profit is None
-        ):
+        if pattern.entry_price is None or pattern.stop_loss is None or pattern.take_profit is None:
             return self._no_trade("Niveles de precio incompletos")
 
         rsi = indicators.get("rsi")
@@ -68,9 +62,7 @@ class BreakoutStrategy(BaseStrategy):
 
         if pattern.direction == TradeDirection.LONG:
             if momentum < min_momentum:
-                return self._no_trade(
-                    f"Momentum {momentum:.2f} no soporta ruptura alcista"
-                )
+                return self._no_trade(f"Momentum {momentum:.2f} no soporta ruptura alcista")
             if rsi < self._parameters["rsi_min"] or rsi > self._parameters["rsi_max"]:
                 return self._no_trade(f"RSI {rsi:.1f} fuera de rango de ruptura")
             reasons = [
@@ -79,9 +71,7 @@ class BreakoutStrategy(BaseStrategy):
             ]
         else:
             if momentum > -min_momentum:
-                return self._no_trade(
-                    f"Momentum {momentum:.2f} no soporta ruptura bajista"
-                )
+                return self._no_trade(f"Momentum {momentum:.2f} no soporta ruptura bajista")
             short_rsi_min = 100.0 - self._parameters["rsi_max"]
             short_rsi_max = 100.0 - self._parameters["rsi_min"]
             if rsi < short_rsi_min or rsi > short_rsi_max:

@@ -143,9 +143,7 @@ class RiskEngine:
 
         return warnings
 
-    def _check_sector_exposure(
-        self, position: PositionSize, warnings: list[str]
-    ) -> None:
+    def _check_sector_exposure(self, position: PositionSize, warnings: list[str]) -> None:
         if not self._symbol_sectors:
             return
         sector = self._symbol_sectors.get(position.symbol, _DEFAULT_SECTOR)
@@ -155,22 +153,16 @@ class RiskEngine:
                 sector_notional += notional
         sector_pct = sector_notional / self._capital if self._capital > 0 else 0
         if sector_pct > self._limits.max_correlated_exposure:
-            warnings.append(
-                f"Sector {sector} exposure ({sector_pct:.2%}) exceeds correlated limit"
-            )
+            warnings.append(f"Sector {sector} exposure ({sector_pct:.2%}) exceeds correlated limit")
 
-    def _check_correlated_exposure(
-        self, position: PositionSize, warnings: list[str]
-    ) -> None:
+    def _check_correlated_exposure(self, position: PositionSize, warnings: list[str]) -> None:
         related = self._get_correlated_symbols(position.symbol)
         if not related:
             return
         correlated_notional = position.size * position.entry_price
         for symbol in related:
             correlated_notional += self._open_positions.get(symbol, 0)
-        correlated_pct = (
-            correlated_notional / self._capital if self._capital > 0 else 0
-        )
+        correlated_pct = correlated_notional / self._capital if self._capital > 0 else 0
         if correlated_pct > self._limits.max_correlated_exposure:
             warnings.append(
                 f"Correlated exposure ({correlated_pct:.2%}) exceeds "
@@ -180,9 +172,7 @@ class RiskEngine:
     def _get_correlated_symbols(self, symbol: str) -> list[str]:
         symbol_corr = self._correlations.get(symbol, {})
         return sorted(
-            other
-            for other, corr in symbol_corr.items()
-            if corr >= self._correlation_threshold
+            other for other, corr in symbol_corr.items() if corr >= self._correlation_threshold
         )
 
     def _generate_recommendations(self, position: PositionSize, warnings: list[str]) -> list[str]:

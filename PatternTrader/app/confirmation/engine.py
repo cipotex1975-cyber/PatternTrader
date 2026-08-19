@@ -247,9 +247,7 @@ class ConfirmationEngine:
 
         if pattern.pattern_type.value == "reversal":
             passed = (
-                ema_21 < ema_50
-                if pattern.direction == TradeDirection.LONG
-                else ema_21 > ema_50
+                ema_21 < ema_50 if pattern.direction == TradeDirection.LONG else ema_21 > ema_50
             )
         elif pattern.direction == TradeDirection.LONG:
             passed = ema_21 > ema_50

@@ -69,9 +69,7 @@ class ChannelPattern(BasePattern):
             symbol=symbol,
             timeframe=timeframe,
             direction=TradeDirection.LONG,
-            confidence=self._calculate_confidence(
-                res_slope, sup_slope, height, res_end
-            ),
+            confidence=self._calculate_confidence(res_slope, sup_slope, height, res_end),
             key_levels={
                 "neckline": res_end,
                 "resistance": line_at(res_slope, res_intercept, 0),

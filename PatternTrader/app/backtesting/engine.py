@@ -30,9 +30,7 @@ class BacktestEngine:
         self._trades: list[Trade] = []
         self._equity_curve: list[dict] = []
         self._capital = self._config.initial_capital
-        self._risk = risk_engine or RiskEngine(
-            initial_capital=self._config.initial_capital
-        )
+        self._risk = risk_engine or RiskEngine(initial_capital=self._config.initial_capital)
         self._candles: list[Candle] = []
 
     def run(
@@ -170,8 +168,7 @@ class BacktestEngine:
 
         if not assessment.is_acceptable:
             logger.debug(
-                f"Trade rejected by RiskEngine: {pattern.symbol} "
-                f"warnings={assessment.warnings}"
+                f"Trade rejected by RiskEngine: {pattern.symbol} " f"warnings={assessment.warnings}"
             )
             return
 
@@ -233,9 +230,7 @@ class BacktestEngine:
         trade.pnl -= commission
 
         self._capital += trade.pnl
-        self._risk.close_position(
-            trade.symbol, trade.size, trade.entry_price, trade.pnl
-        )
+        self._risk.close_position(trade.symbol, trade.size, trade.entry_price, trade.pnl)
         self._risk.set_capital(self._capital)
         trade.metadata["close_reason"] = reason
 

@@ -25,11 +25,7 @@ def build_signal(
 ) -> Optional[StrategySignal]:
     """Construye una StrategySignal a partir de los niveles del patrón."""
     pattern = hypothesis.pattern
-    if (
-        pattern.entry_price is None
-        or pattern.stop_loss is None
-        or pattern.take_profit is None
-    ):
+    if pattern.entry_price is None or pattern.stop_loss is None or pattern.take_profit is None:
         return None
 
     direction = (

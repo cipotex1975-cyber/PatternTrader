@@ -27,7 +27,4 @@ class StrategyFactory:
         cls, parameters: Optional[dict[str, dict[str, Any]]] = None
     ) -> list[BaseStrategy]:
         parameters = parameters or {}
-        return [
-            cls.create(name, parameters.get(name))
-            for name in StrategyRegistry.get_all()
-        ]
+        return [cls.create(name, parameters.get(name)) for name in StrategyRegistry.get_all()]

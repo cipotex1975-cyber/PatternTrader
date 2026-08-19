@@ -1,6 +1,5 @@
-from datetime import datetime, timedelta, timezone
-
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -9,8 +8,8 @@ from app.core.events.models import EventType
 from app.lifecycle.models import LifecycleState
 from app.market.candles.models import Candle, CandleData
 from app.ml.features import TECHNICAL_FEATURE_NAMES
-from app.patterns.base_pattern import PatternResult, PatternType, TradeDirection
 from app.patterns import pipeline as pipeline_module
+from app.patterns.base_pattern import PatternResult, PatternType, TradeDirection
 from app.patterns.pipeline import PatternPipeline
 from app.risk.models import PositionSize, RiskAssessment
 from app.signals.models import Signal, SignalPriority

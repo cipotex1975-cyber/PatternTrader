@@ -35,11 +35,7 @@ class LogRepository:
 
     async def list(self, level: Optional[str] = None, limit: int = 500) -> list[LogORM]:
         async with get_async_session() as session:
-            stmt = (
-                select(LogORM)
-                .order_by(LogORM.timestamp.desc())
-                .limit(limit)
-            )
+            stmt = select(LogORM).order_by(LogORM.timestamp.desc()).limit(limit)
             if level is not None:
                 stmt = stmt.where(LogORM.level == level)
             result = await session.execute(stmt)

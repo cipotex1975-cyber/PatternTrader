@@ -29,8 +29,14 @@ def _trade(i: int, pnl: float) -> Trade:
 
 def _equity_curve(values):
     return [
-        {"timestamp": (datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(days=i)).isoformat(),
-         "equity": v, "capital": v, "open_pnl": 0.0}
+        {
+            "timestamp": (
+                datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(days=i)
+            ).isoformat(),
+            "equity": v,
+            "capital": v,
+            "open_pnl": 0.0,
+        }
         for i, v in enumerate(values)
     ]
 
@@ -66,8 +72,27 @@ def test_metrics_calmar_ulcer_sortino_populated():
     trades = [_trade(i, 3.0 if i % 2 == 0 else -1.0) for i in range(20)]
     curve = _equity_curve(
         [
-            100, 102, 101, 104, 103, 106, 98, 105, 110, 108, 112, 109, 115, 113, 117,
-            114, 119, 116, 121, 118, 123,
+            100,
+            102,
+            101,
+            104,
+            103,
+            106,
+            98,
+            105,
+            110,
+            108,
+            112,
+            109,
+            115,
+            113,
+            117,
+            114,
+            119,
+            116,
+            121,
+            118,
+            123,
         ]
     )
     metrics = MetricsCalculator.calculate(

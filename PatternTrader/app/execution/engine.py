@@ -94,9 +94,7 @@ class ExecutionEngine:
         take_profit = data.get("take_profit")
 
         if not symbol or not entry_price or not stop_loss or not take_profit:
-            logger.warning(
-                f"Invalid trade payload for {symbol}: missing price levels"
-            )
+            logger.warning(f"Invalid trade payload for {symbol}: missing price levels")
             return None
         if entry_price <= 0 or stop_loss <= 0 or take_profit <= 0:
             logger.warning(f"Invalid price levels for {symbol}")
@@ -208,17 +206,13 @@ class ExecutionEngine:
             trade.pnl = (trade.exit_price - trade.entry_price) * trade.size
         else:
             trade.pnl = (trade.entry_price - trade.exit_price) * trade.size
-        trade.pnl_pct = (
-            trade.pnl / (trade.entry_price * trade.size) if trade.entry_price else 0.0
-        )
+        trade.pnl_pct = trade.pnl / (trade.entry_price * trade.size) if trade.entry_price else 0.0
 
         self._open_trades.pop(trade_id, None)
         self._closed_trades[trade_id] = trade
 
         if self._risk is not None:
-            self._risk.close_position(
-                trade.symbol, trade.size, trade.entry_price, trade.pnl
-            )
+            self._risk.close_position(trade.symbol, trade.size, trade.entry_price, trade.pnl)
 
         if self._repository is not None:
             await self._repository.update_closed(trade)
@@ -233,9 +227,7 @@ class ExecutionEngine:
 
         if reason in (ExitReason.TAKE_PROFIT, ExitReason.STOP_LOSS):
             state = (
-                LifecycleState.TP_HIT
-                if reason == ExitReason.TAKE_PROFIT
-                else LifecycleState.SL_HIT
+                LifecycleState.TP_HIT if reason == ExitReason.TAKE_PROFIT else LifecycleState.SL_HIT
             )
             await self._transition_lifecycle(
                 trade, state, f"{reason.value} hit @ {trade.exit_price}"
@@ -250,22 +242,16 @@ class ExecutionEngine:
         )
         return trade
 
-    async def _transition_lifecycle(
-        self, trade: Trade, state: LifecycleState, reason: str
-    ) -> None:
+    async def _transition_lifecycle(self, trade: Trade, state: LifecycleState, reason: str) -> None:
         if self._lifecycle is None:
             return
         pattern_id = (trade.metadata or {}).get("pattern_id")
         if not pattern_id:
             return
         try:
-            await self._lifecycle.transition_by_pattern(
-                UUID(str(pattern_id)), state, reason
-            )
+            await self._lifecycle.transition_by_pattern(UUID(str(pattern_id)), state, reason)
         except (ValueError, AttributeError) as e:
-            logger.warning(
-                f"Could not transition lifecycle for pattern {pattern_id}: {e}"
-            )
+            logger.warning(f"Could not transition lifecycle for pattern {pattern_id}: {e}")
 
     def get_open_trades(self) -> list[Trade]:
         return list(self._open_trades.values())

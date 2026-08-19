@@ -217,9 +217,7 @@ class OutOfSampleValidator(BaseValidator):
 
     method = "out_of_sample"
 
-    def __init__(
-        self, test_ratio: float = 0.3, evaluate_fn: Optional[EvaluateFn] = None
-    ) -> None:
+    def __init__(self, test_ratio: float = 0.3, evaluate_fn: Optional[EvaluateFn] = None) -> None:
         super().__init__(evaluate_fn)
         self._test_ratio = test_ratio
 
@@ -251,9 +249,7 @@ class CrossValidator(BaseValidator):
 
     method = "cross_validation"
 
-    def __init__(
-        self, n_splits: int = 5, evaluate_fn: Optional[EvaluateFn] = None
-    ) -> None:
+    def __init__(self, n_splits: int = 5, evaluate_fn: Optional[EvaluateFn] = None) -> None:
         super().__init__(evaluate_fn)
         self._n_splits = n_splits
 

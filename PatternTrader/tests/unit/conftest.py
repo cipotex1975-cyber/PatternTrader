@@ -16,9 +16,7 @@ async def sync_db():
     async with engine.begin() as conn:
         await conn.run_sync(base.Base.metadata.create_all)
     base._engine = engine
-    base._session_factory = async_sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False
-    )
+    base._session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     yield
     await engine.dispose()
     base.reset_engine()

@@ -79,9 +79,7 @@ async def _truncate_all_tables() -> None:
 
     from app.database.base import Base, get_engine
 
-    tables = ", ".join(
-        table.name for table in reversed(Base.metadata.sorted_tables)
-    )
+    tables = ", ".join(table.name for table in reversed(Base.metadata.sorted_tables))
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE TABLE {tables} RESTART IDENTITY CASCADE"))

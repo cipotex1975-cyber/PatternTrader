@@ -94,9 +94,7 @@ class RoundedBottomPattern(BasePattern):
         latest_close = candles[-1].data.close
         return latest_close > neckline * 0.98
 
-    def _calculate_confidence(
-        self, vertex_x: float, n: int, height: float, left_y: float
-    ) -> float:
+    def _calculate_confidence(self, vertex_x: float, n: int, height: float, left_y: float) -> float:
         normalized = vertex_x / max(1, n - 1)
         centered = 1.0 - min(1.0, abs(normalized - 0.5) * 2)
         depth = min(1.0, height / left_y * 20)

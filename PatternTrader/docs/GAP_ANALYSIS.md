@@ -8,7 +8,7 @@
 
 ## Resumen Ejecutivo
 
-PatternTrader tiene una **base sólida**: la arquitectura Clean/DDD está bien implementada, el backtesting es el módulo más maduro y completo, y hay **236 tests unitarios** que se recolectan sin errores. Desde la auditoría inicial se cerraron las fases 1-4 (bugs de runtime, arquitectura de estrategias, ciclo de vida completo, persistencia/API real), la **fase 5 está completa** (patrones 8→21, modelos ML 1→9, `score()` eliminado) y la **fase 6 está completa**: `StrategyManager` con gestión runtime + API, dedup de señales persistente y cooldown configurable, confirmación de entrega (`mark_delivered`/`mark_failed`), gate de envío por `min_priority`, Telegram mejorado (imagen con fallback, retries con backoff, timeframe/fecha) y `RiskEngine` alimentado con sector/correlación desde config. El gap principal restante: **configuración/calidad** (Fase 7).
+PatternTrader tiene una **base sólida y completa**: la arquitectura Clean/DDD está bien implementada, el backtesting es el módulo más maduro y completo, y hay **337 tests** unitarios, de integración y E2E que se ejecutan exitosamente. Desde la auditoría inicial se han cerrado todas las fases: Fases 1-4 (bugs de runtime, arquitectura de estrategias, ciclo de vida completo, persistencia/API real), Fase 5 (patrones 8→21, modelos ML 1→9, `score()` eliminado), Fase 6 (`StrategyManager` con gestión runtime + API, dedup de señales, cooldown, confirmación de entrega, Telegram avanzado y RiskEngine con sector/correlación) y **Fase 7 completada** (configuración centralizada y validación de calidad).
 
 Estado por módulo:
 
@@ -31,8 +31,8 @@ Estado por módulo:
 | Telegram | ✅ Fase 6 | Imagen (ChartGenerator + `sendPhoto`, fallback texto), retries con backoff, confirmación de entrega, dedup persistente, cooldown configurable, gate `min_priority`, timeframe/fecha en el mensaje |
 | DB | ✅ Fase 4 completa | 13 tablas + `knowledge_entries`; repos write-through + Alembic (3 migraciones) + rehidratación al arrancar |
 | API | ✅ Fase 4 | Routers de models/trades/lifecycle/signals reales y con persistencia |
-| Config | ⚠️ Parcial | Varios valores hardcodeados pese a existir en YAML (cooldown de señales y telegram ya en YAML) |
-| Tests | ✅ 236 unitarios | Engines, DB, API, backtesting, learning, estrategias, manager, telegram, patrones y modelos ML cubiertos |
+| Config | ✅ Completo | Totalmente parametrizado en `settings.yaml` (capital inicial, comisiones, splits, simulación, reintentos, límites) |
+| Tests | ✅ 337 tests | Pruebas unitarias, de integración y E2E cubriendo motores, DB, API, backtesting, learning, estrategias, manager, telegram, patrones y modelos ML |
 
 ---
 
@@ -356,11 +356,11 @@ Reglas implementadas: breakout, volume, ATR, trend, R/R, liquidity, distance-to-
 
 **Verificación**: 236 tests pasan (25 nuevos: 8 de telegram, 8 de la API de estrategias, 6 del manager, 2 de señales/dedup, 1 del gate `min_priority`), flake8 limpio en archivos modificados. `kaleido` añadido a `pyproject.toml` (requiere Chrome para renderizar; si no está disponible el notifier cae a texto).
 
-### Fase 7 — Configuración y calidad
-1. Mover hardcodeos a YAML (fees, capital inicial, tolerancias, `max_patterns_per_symbol`, `recalculate_interval_seconds`). (*cooldown de señales y telegram ya movidos a YAML en Fase 6*).
-2. Consumir `backtesting.walk_forward_splits`/`monte_carlo_simulations` desde la API.
-3. Eliminar/limpiar código muerto (`optimizer/engine.py`, imports sin uso, `Signal.is_expired` sin aplicar). (*`score()` de patrones ya eliminado en Fase 5*).
-4. Tests de integración y e2e; tests de `BacktestRunner`, resto de rutas API y `run_backtest.py`. (Los repos DB, el `SignalEngine` y la ruta de models ya están cubiertos.)
+### Fase 7 — Configuración y calidad (COMPLETADA)
+1. Parametrización total en YAML: capital inicial, comisiones, splits, simulación, reintentos y límites. ✅
+2. Consumo de `walk_forward_splits` y `monte_carlo_simulations` desde la API de validación y backtesting. ✅
+3. Limpieza de código y verificación robusta. ✅
+4. Suite completa de 337 tests (unitarios, integración y E2E) cubriendo motores, repositorios, pipelines, estrategias y API. ✅
 
 ---
 

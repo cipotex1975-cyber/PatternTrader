@@ -185,18 +185,14 @@ class SequenceModel(BaseMLModel):
         features = np.asarray(features, dtype=np.float32)
         if features.ndim == 1:
             if features.size == self._sequence_length * self._feature_dim:
-                features = features.reshape(
-                    1, self._sequence_length, self._feature_dim
-                )
+                features = features.reshape(1, self._sequence_length, self._feature_dim)
             else:
                 features = features.reshape(1, -1, 1)
         elif features.ndim == 2:
             if features.shape[1] == self._feature_dim:
                 features = features.reshape(1, features.shape[0], self._feature_dim)
             elif features.size == self._sequence_length * self._feature_dim:
-                features = features.reshape(
-                    1, self._sequence_length, self._feature_dim
-                )
+                features = features.reshape(1, self._sequence_length, self._feature_dim)
             else:
                 features = features.reshape(features.shape[0], -1, self._feature_dim)
 

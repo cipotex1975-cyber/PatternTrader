@@ -126,9 +126,9 @@ class BacktestOptimizer:
                 logger.error(f"Error evaluando {params}: {e}")
                 raise optuna.TrialPruned() from e
 
-        study = optuna.create_study(direction=direction, sampler=optuna.samplers.TPESampler(
-            seed=self._random_state
-        ))
+        study = optuna.create_study(
+            direction=direction, sampler=optuna.samplers.TPESampler(seed=self._random_state)
+        )
         study.optimize(objective, n_trials=n_trials, timeout=timeout)
 
         evaluated = [

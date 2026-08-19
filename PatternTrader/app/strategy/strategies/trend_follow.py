@@ -45,16 +45,10 @@ class TrendFollowStrategy(BaseStrategy):
         indicators = hypothesis.indicators
 
         if hypothesis.total_score < self._parameters["min_score"]:
-            return self._no_trade(
-                f"Score {hypothesis.total_score:.1f} por debajo del mínimo"
-            )
+            return self._no_trade(f"Score {hypothesis.total_score:.1f} por debajo del mínimo")
         if pattern.health < self._parameters["min_health"]:
             return self._no_trade(f"Salud {pattern.health:.1f} por debajo del mínimo")
-        if (
-            pattern.entry_price is None
-            or pattern.stop_loss is None
-            or pattern.take_profit is None
-        ):
+        if pattern.entry_price is None or pattern.stop_loss is None or pattern.take_profit is None:
             return self._no_trade("Niveles de precio incompletos")
 
         ema_fast = indicators.get("ema_9")
@@ -69,9 +63,7 @@ class TrendFollowStrategy(BaseStrategy):
             if ema_fast <= ema_slow:
                 return self._no_trade("Tendencia no alcista (EMA9 <= EMA21)")
             if momentum < threshold:
-                return self._no_trade(
-                    f"Momentum {momentum:.2f} no soporta entrada larga"
-                )
+                return self._no_trade(f"Momentum {momentum:.2f} no soporta entrada larga")
             reasons = [
                 "Tendencia alcista (EMA9 > EMA21)",
                 f"Momentum positivo ({momentum:.2f})",
@@ -80,9 +72,7 @@ class TrendFollowStrategy(BaseStrategy):
             if ema_fast >= ema_slow:
                 return self._no_trade("Tendencia no bajista (EMA9 >= EMA21)")
             if momentum > -threshold:
-                return self._no_trade(
-                    f"Momentum {momentum:.2f} no soporta entrada corta"
-                )
+                return self._no_trade(f"Momentum {momentum:.2f} no soporta entrada corta")
             reasons = [
                 "Tendencia bajista (EMA9 < EMA21)",
                 f"Momentum negativo ({momentum:.2f})",

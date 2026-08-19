@@ -67,9 +67,7 @@ class AutoEncoderModel(BaseMLModel):
     def _ensure_model(self) -> nn.Module:
         if self._model is None:
             torch.manual_seed(self._random_state)
-            self._model = _AutoEncoderNetwork(
-                self._input_dim, self._hidden_dim, self._latent_dim
-            )
+            self._model = _AutoEncoderNetwork(self._input_dim, self._hidden_dim, self._latent_dim)
         return self._model
 
     def _prepare(self, X: np.ndarray) -> np.ndarray:
@@ -186,9 +184,7 @@ class AutoEncoderModel(BaseMLModel):
     def load(self, path: str) -> None:
         state = torch.load(path, weights_only=False)
         self._apply_config(state["config"])
-        self._model = _AutoEncoderNetwork(
-            self._input_dim, self._hidden_dim, self._latent_dim
-        )
+        self._model = _AutoEncoderNetwork(self._input_dim, self._hidden_dim, self._latent_dim)
         self._model.load_state_dict(state["state_dict"])
         self._is_trained = True
         logger.info(f"Model loaded from {path}")

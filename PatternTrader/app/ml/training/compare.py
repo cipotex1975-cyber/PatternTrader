@@ -154,9 +154,7 @@ def run_comparison(
     modelo y ``trained`` mapea nombre → instancia entrenada.
     """
     if metric not in AVAILABLE_METRICS:
-        raise ValueError(
-            f"Metric desconocida: {metric}. Válidas: {', '.join(AVAILABLE_METRICS)}"
-        )
+        raise ValueError(f"Metric desconocida: {metric}. Válidas: {', '.join(AVAILABLE_METRICS)}")
 
     registered = set(MLModelFactory.get_all())
     if not model_names or "all" in model_names:
@@ -230,9 +228,7 @@ def run_comparison(
     return summary, trained
 
 
-def select_winner(
-    summary: pd.DataFrame, metric: str = "roc_auc"
-) -> dict[str, Any] | None:
+def select_winner(summary: pd.DataFrame, metric: str = "roc_auc") -> dict[str, Any] | None:
     """Elige la fila con mejor métrica objetivo entre los modelos exitosos."""
     valid = summary[summary["status"] == "ok"].copy()
     if metric not in valid.columns:
@@ -291,9 +287,7 @@ def save_winner(
     return str(artifact), str(sidecar)
 
 
-def save_summary(
-    summary: pd.DataFrame, save_dir: str, symbol: str
-) -> str:
+def save_summary(summary: pd.DataFrame, save_dir: str, symbol: str) -> str:
     """Guarda la tabla comparativa completa en JSON para trazabilidad."""
     path = Path(save_dir) / f"{symbol}_comparison.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -330,9 +324,7 @@ def format_summary_table(summary: pd.DataFrame, metric: str = "roc_auc") -> str:
         for col in columns[1:]:
             val = row.get(col)
             cells.append(f"{val:>7.4f}" if isinstance(val, (int, float)) else f"{'-':>7}")
-        lines.append(
-            f"{str(row.get('model', '')):<18} {' '.join(cells)}  {row.get('status', '')}"
-        )
+        lines.append(f"{str(row.get('model', '')):<18} {' '.join(cells)}  {row.get('status', '')}")
     if metric in summary.columns:
         lines.append("")
         lines.append(f"Mejor según '{metric}': {select_winner(summary, metric)}")

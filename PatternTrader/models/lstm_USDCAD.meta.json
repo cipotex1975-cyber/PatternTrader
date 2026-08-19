@@ -1,0 +1,19 @@
+{
+  "model_name": "lstm",
+  "symbol": "USDCAD",
+  "extension": ".pt",
+  "metric": "roc_auc",
+  "version": "20260819_194444",
+  "trained_at": "2026-08-19T19:44:44.000974+00:00",
+  "metrics": {
+    "train_accuracy": 4.657202261404622,
+    "samples_train": 79467,
+    "samples_test": 19846,
+    "accuracy": 0.7914441197218584,
+    "precision": 0.7356419948786733,
+    "recall": 0.7537481259370314,
+    "f1": 0.7445850046282012,
+    "roc_auc": 0.8657592648533021,
+    "pr_auc": 0.8386857698723952
+  }
+}

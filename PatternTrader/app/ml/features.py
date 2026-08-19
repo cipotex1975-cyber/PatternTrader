@@ -56,9 +56,7 @@ def _macd(series: np.ndarray) -> tuple[float, float, float]:
     return macd_line, signal_line, histogram
 
 
-def _atr(
-    highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14
-) -> float:
+def _atr(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> float:
     tr1 = highs[-period:] - lows[-period:]
     tr2 = np.abs(highs[-period:] - closes[-period - 1 : -1])
     tr3 = np.abs(lows[-period:] - closes[-period - 1 : -1])
@@ -92,9 +90,7 @@ def extract_technical_features(candles: list[Candle]) -> Optional[np.ndarray]:
         price_change = (closes[-1] - closes[-2]) / closes[-2] if closes[-2] != 0 else 0
         high_low_range = (highs[-1] - lows[-1]) / closes[-1] if closes[-1] != 0 else 0
         close_position = (
-            (closes[-1] - lows[-1]) / (highs[-1] - lows[-1])
-            if (highs[-1] - lows[-1]) != 0
-            else 0.5
+            (closes[-1] - lows[-1]) / (highs[-1] - lows[-1]) if (highs[-1] - lows[-1]) != 0 else 0.5
         )
         trend_strength = (ema_21 - ema_50) / ema_50 if ema_50 != 0 else 0
 
@@ -124,6 +120,4 @@ def features_to_dict(features: Optional[np.ndarray]) -> dict[str, float]:
     ``indicators`` (FeatureBuilder, LearningService.predict, etc.)."""
     if features is None:
         return {}
-    return {
-        name: float(value) for name, value in zip(TECHNICAL_FEATURE_NAMES, features)
-    }
+    return {name: float(value) for name, value in zip(TECHNICAL_FEATURE_NAMES, features)}

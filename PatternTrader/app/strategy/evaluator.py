@@ -40,9 +40,7 @@ def run_strategy_backtest(
                     wins += 1
 
     win_rate = wins / outcomes if outcomes else None
-    avg_confidence = (
-        sum(s.confidence for s in signals) / len(signals) if signals else 0.0
-    )
+    avg_confidence = sum(s.confidence for s in signals) / len(signals) if signals else 0.0
 
     result: dict[str, Any] = {
         "strategy": strategy_name,
@@ -68,7 +66,4 @@ def compare_strategies(
     """Compara varias estrategias sobre las mismas hipótesis (backtest)."""
     parameters = parameters or {}
     names = strategy_names or list(StrategyRegistry.get_all().keys())
-    return [
-        run_strategy_backtest(hypotheses, name, parameters.get(name))
-        for name in names
-    ]
+    return [run_strategy_backtest(hypotheses, name, parameters.get(name)) for name in names]

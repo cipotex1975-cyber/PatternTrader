@@ -3,10 +3,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core.config.settings import Settings
+from app.market.candles.models import Candle, CandleData
 from app.patterns import pipeline as pipeline_module
 from app.patterns.base_pattern import PatternResult, PatternType, TradeDirection
 from app.patterns.pipeline import PatternPipeline, TrackedPattern
-from app.market.candles.models import Candle, CandleData
 
 
 def build_candles(closes, volumes=None):

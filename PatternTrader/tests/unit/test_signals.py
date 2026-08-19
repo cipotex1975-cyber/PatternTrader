@@ -69,8 +69,12 @@ async def test_create_signal_low_score_returns_none():
 @pytest.mark.asyncio
 async def test_create_signal_priority_bands():
     engine = SignalEngine()
-    bands = [(95.0, SignalPriority.CRITICAL), (85.0, SignalPriority.HIGH),
-             (75.0, SignalPriority.MEDIUM), (60.0, SignalPriority.LOW)]
+    bands = [
+        (95.0, SignalPriority.CRITICAL),
+        (85.0, SignalPriority.HIGH),
+        (75.0, SignalPriority.MEDIUM),
+        (60.0, SignalPriority.LOW),
+    ]
     for i, (score, expected) in enumerate(bands):
         signal = await engine.create_signal(make_pattern(symbol=f"PAIR{i}"), make_score(score))
         assert signal is not None
@@ -89,9 +93,7 @@ async def test_create_signal_cooldown_dedup():
 @pytest.mark.asyncio
 async def test_create_signal_invalid_prices_returns_none():
     engine = SignalEngine()
-    signal = await engine.create_signal(
-        make_pattern(entry_price=None), make_score(96.0)
-    )
+    signal = await engine.create_signal(make_pattern(entry_price=None), make_score(96.0))
     assert signal is None
 
 
@@ -155,17 +157,38 @@ async def test_dedup_persists_across_engine_instances():
 
 def test_signal_model_priority_score():
     low = SignalPriority.LOW
-    assert Signal(symbol="S", timeframe="1h", pattern_name="p", direction="LONG",
-                  priority=low, entry_price=1.0, stop_loss=2.0, take_profit=3.0,
-                  risk_reward_ratio=1.0, score=50.0, health=50.0, ml_probability=0.5
-                  ).priority_score == 25
+    assert (
+        Signal(
+            symbol="S",
+            timeframe="1h",
+            pattern_name="p",
+            direction="LONG",
+            priority=low,
+            entry_price=1.0,
+            stop_loss=2.0,
+            take_profit=3.0,
+            risk_reward_ratio=1.0,
+            score=50.0,
+            health=50.0,
+            ml_probability=0.5,
+        ).priority_score
+        == 25
+    )
 
 
 def test_signal_is_expired():
     signal = Signal(
-        symbol="S", timeframe="1h", pattern_name="p", direction="LONG",
-        priority=SignalPriority.MEDIUM, entry_price=1.0, stop_loss=2.0,
-        take_profit=3.0, risk_reward_ratio=1.0, score=50.0, health=50.0,
+        symbol="S",
+        timeframe="1h",
+        pattern_name="p",
+        direction="LONG",
+        priority=SignalPriority.MEDIUM,
+        entry_price=1.0,
+        stop_loss=2.0,
+        take_profit=3.0,
+        risk_reward_ratio=1.0,
+        score=50.0,
+        health=50.0,
         ml_probability=0.5,
         expires_at=datetime.utcnow() - timedelta(hours=1),
     )
@@ -189,8 +212,7 @@ async def test_mark_sent_skips_expired_signal():
 def test_signal_ttl_hours_from_settings():
     engine = SignalEngine()
     assert (
-        engine._scoring_config.signal_ttl_hours
-        == get_settings().patterns.scoring.signal_ttl_hours
+        engine._scoring_config.signal_ttl_hours == get_settings().patterns.scoring.signal_ttl_hours
     )
 
 

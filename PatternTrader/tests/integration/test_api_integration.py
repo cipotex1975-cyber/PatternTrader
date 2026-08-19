@@ -1,3 +1,6 @@
+from datetime import datetime, timezone
+from uuid import uuid4
+
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
@@ -19,9 +22,6 @@ from app.learning.service import LearningService
 from app.patterns.service import PatternService
 
 from ..conftest import requires_postgres
-
-from datetime import datetime, timezone
-from uuid import uuid4
 
 
 def _build_app() -> FastAPI:

@@ -46,9 +46,9 @@ def _pattern() -> PatternResult:
 
 @requires_postgres
 async def test_backtest_roundtrip_persisted(pg_db):
-    result = BacktestRunner(
-        BacktestConfig(initial_capital=10000, commission=0.001)
-    ).run(_candles(), [_pattern()])
+    result = BacktestRunner(BacktestConfig(initial_capital=10000, commission=0.001)).run(
+        _candles(), [_pattern()]
+    )
 
     repo = BacktestRepository()
     backtest_id = await repo.add(result, name="integration-roundtrip")

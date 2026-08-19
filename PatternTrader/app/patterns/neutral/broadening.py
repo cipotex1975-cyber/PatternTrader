@@ -53,9 +53,7 @@ class BroadeningPattern(BasePattern):
         if sup_slope >= -0.0001 * line_at(sup_slope, sup_intercept, n - 1):
             return None
 
-        start_range = line_at(res_slope, res_intercept, 0) - line_at(
-            sup_slope, sup_intercept, 0
-        )
+        start_range = line_at(res_slope, res_intercept, 0) - line_at(sup_slope, sup_intercept, 0)
         end_range = line_at(res_slope, res_intercept, n - 1) - line_at(
             sup_slope, sup_intercept, n - 1
         )
@@ -78,9 +76,7 @@ class BroadeningPattern(BasePattern):
             symbol=symbol,
             timeframe=timeframe,
             direction=TradeDirection.LONG,
-            confidence=self._calculate_confidence(
-                start_range, end_range, res_slope, sup_slope
-            ),
+            confidence=self._calculate_confidence(start_range, end_range, res_slope, sup_slope),
             key_levels={
                 "neckline": resistance,
                 "resistance": resistance,

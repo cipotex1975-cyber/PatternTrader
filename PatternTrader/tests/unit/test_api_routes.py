@@ -86,6 +86,7 @@ class FakeLearningService:
         class P:
             def model_dump(self, mode="json"):
                 return {"model_name": "knowledge", "probability": 0.6}
+
         return P()
 
     def set_mode(self, mode) -> None:
@@ -179,9 +180,7 @@ def test_trades_get_unknown_404(sync_api_app):
 
 @pytest.mark.asyncio
 async def test_lifecycle_statistics_and_list(sync_api_app):
-    await sync_api_app.app.state.pattern_service.pipeline.lifecycle.register(
-        make_pattern()
-    )
+    await sync_api_app.app.state.pattern_service.pipeline.lifecycle.register(make_pattern())
     stats = sync_api_app.get("/lifecycle/statistics")
     assert stats.status_code == 200
     assert stats.json()["total"] == 1
@@ -198,9 +197,7 @@ async def test_lifecycle_unknown_404(sync_api_app):
 
 @pytest.mark.asyncio
 async def test_dashboard_overview_and_active(sync_api_app):
-    await sync_api_app.app.state.pattern_service.pipeline.lifecycle.register(
-        make_pattern()
-    )
+    await sync_api_app.app.state.pattern_service.pipeline.lifecycle.register(make_pattern())
     overview = sync_api_app.get("/dashboard/overview")
     assert overview.status_code == 200
     body = overview.json()

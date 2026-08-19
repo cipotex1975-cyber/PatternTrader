@@ -38,9 +38,7 @@ class BacktestRepository:
 
     async def get(self, backtest_id: int) -> Optional[dict[str, Any]]:
         async with get_async_session() as session:
-            result = await session.execute(
-                select(BacktestORM).where(BacktestORM.id == backtest_id)
-            )
+            result = await session.execute(select(BacktestORM).where(BacktestORM.id == backtest_id))
             orm = result.scalar_one_or_none()
             return self._to_dict(orm) if orm is not None else None
 

@@ -25,9 +25,7 @@ class MLModelRepository:
         metadata: Optional[dict[str, Any]] = None,
     ) -> None:
         async with get_async_session() as session:
-            result = await session.execute(
-                select(MLModelORM).where(MLModelORM.name == name)
-            )
+            result = await session.execute(select(MLModelORM).where(MLModelORM.name == name))
             orm = result.scalar_one_or_none()
             if orm is None:
                 orm = MLModelORM(name=name)
@@ -45,9 +43,7 @@ class MLModelRepository:
 
     async def get(self, name: str) -> Optional[dict[str, Any]]:
         async with get_async_session() as session:
-            result = await session.execute(
-                select(MLModelORM).where(MLModelORM.name == name)
-            )
+            result = await session.execute(select(MLModelORM).where(MLModelORM.name == name))
             orm = result.scalar_one_or_none()
             return self._to_dict(orm) if orm is not None else None
 

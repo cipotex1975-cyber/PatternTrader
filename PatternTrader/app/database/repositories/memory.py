@@ -17,9 +17,7 @@ class MemoryLifecycleRepository:
         self.patterns: dict[str, PatternResult] = {}
         self.lifecycles: dict[str, dict[str, Any]] = {}
 
-    async def register_pattern(
-        self, pattern: PatternResult, lifecycle: LifecycleEvent
-    ) -> None:
+    async def register_pattern(self, pattern: PatternResult, lifecycle: LifecycleEvent) -> None:
         self.patterns[str(pattern.id)] = pattern
         self.lifecycles[str(lifecycle.pattern_id)] = self._snapshot(lifecycle)
 

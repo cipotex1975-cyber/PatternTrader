@@ -127,9 +127,7 @@ class OfflineLearner:
                 }
             )
 
-        cm = MetricsCalculator.classification_metrics(
-            all_true, all_pred, all_proba
-        )
+        cm = MetricsCalculator.classification_metrics(all_true, all_pred, all_proba)
         return {
             "n_splits": len(fold_metrics),
             "per_fold": fold_metrics,

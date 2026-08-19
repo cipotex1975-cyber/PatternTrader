@@ -7,9 +7,7 @@ def _objective(**params):
 
 def test_grid_search_finds_best():
     optimizer = BacktestOptimizer(random_state=42)
-    result = optimizer.grid_search(
-        {"a": [1, 2, 3, 4], "b": [4, 5, 6]}, _objective
-    )
+    result = optimizer.grid_search({"a": [1, 2, 3, 4], "b": [4, 5, 6]}, _objective)
     assert result["best_params"] == {"a": 3, "b": 5}
     assert result["total_evaluations"] == 12
     assert result["best_score"] == 0.0
@@ -17,9 +15,7 @@ def test_grid_search_finds_best():
 
 def test_grid_search_minimization():
     optimizer = BacktestOptimizer(random_state=42)
-    result = optimizer.grid_search(
-        {"a": [0, 3]}, _objective, maximize=False
-    )
+    result = optimizer.grid_search({"a": [0, 3]}, _objective, maximize=False)
     assert result["best_params"] == {"a": 0}
 
 

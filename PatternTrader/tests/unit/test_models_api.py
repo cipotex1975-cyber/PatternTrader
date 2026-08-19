@@ -64,9 +64,7 @@ async def test_get_unknown_model_returns_404(client):
 
 @pytest.mark.asyncio
 async def test_predict_untrained_model_returns_400(client):
-    resp = client.post(
-        "/models/random_forest/predict", json={"features": [1.0, 2.0, 3.0, 4.0]}
-    )
+    resp = client.post("/models/random_forest/predict", json={"features": [1.0, 2.0, 3.0, 4.0]})
     assert resp.status_code == 400
 
 

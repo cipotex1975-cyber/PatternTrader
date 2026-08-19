@@ -279,9 +279,7 @@ async def rolling_window(payload: dict[str, Any]):
 @router.post("/cross-validate")
 async def cross_validate(payload: dict[str, Any]):
     candles, evaluate = _validation_runner(payload)
-    validator = CrossValidator(
-        n_splits=payload.get("n_splits", 5), evaluate_fn=evaluate
-    )
+    validator = CrossValidator(n_splits=payload.get("n_splits", 5), evaluate_fn=evaluate)
     return validator.run(candles).model_dump(mode="json")
 
 
@@ -319,9 +317,7 @@ async def optimize(payload: dict[str, Any]):
     if method == "grid":
         return optimizer.grid_search(param_grid, objective)
     if method == "random":
-        return optimizer.random_search(
-            param_grid, objective, n_iter=payload.get("n_iter", 50)
-        )
+        return optimizer.random_search(param_grid, objective, n_iter=payload.get("n_iter", 50))
     if method == "bayesian":
         return optimizer.bayesian_optimization(
             param_grid, objective, n_trials=payload.get("n_trials", 50)

@@ -20,9 +20,7 @@ class TradeRepository:
 
     async def update_closed(self, trade: Trade) -> None:
         async with get_async_session() as session:
-            result = await session.execute(
-                select(TradeORM).where(TradeORM.trade_uuid == trade.id)
-            )
+            result = await session.execute(select(TradeORM).where(TradeORM.trade_uuid == trade.id))
             orm = result.scalar_one_or_none()
             if orm is None:
                 return
