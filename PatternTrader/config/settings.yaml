@@ -16,6 +16,8 @@ logging:
   rotation: "100 MB"
   retention: "30 days"
   compression: "gz"
+  trades_rotation: "1 day"
+  trades_retention: "90 days"
 
 market:
   default_timeframes:

@@ -115,10 +115,28 @@ producción se recomienda correr `alembic upgrade head` explícitamente.
 logging:
   level: "INFO"                   # Nivel: DEBUG/INFO/WARNING/ERROR
   format: "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}"
-  rotation: "100 MB"              # Rotación de archivos
-  retention: "30 days"            # Retención de logs
+  rotation: "100 MB"              # Rotación de archivos (app y errors)
+  retention: "30 days"            # Retención de logs (app y errors)
   compression: "gz"               # Compresión
+  trades_rotation: "1 day"        # Rotación del log de trades
+  trades_retention: "90 days"     # Retención del log de trades
 ```
+
+Los eventos se escriben en **4 destinos** simultáneamente:
+
+| Destino | Contenido | Rotación/Retención |
+|---|---|---|
+| Pantalla (stderr) | Todo, con colores | — |
+| `logs/app_YYYY-MM-DD.log` | Según `logging.level` | `rotation` / `retention` |
+| `logs/errors_YYYY-MM-DD.log` | Solo ERROR | `rotation` / `retention` |
+| `logs/trades_YYYY-MM-DD.log` | INFO (eventos de trading) | `trades_rotation` / `trades_retention` |
+
+- El directorio `logs/` siempre se resuelve **relativo a la raíz del repo**,
+  independientemente del directorio desde donde ejecutes el comando.
+- La configuración se aplica automáticamente la primera vez que cualquier
+  módulo pide un logger (`get_logger()`); no es necesario llamar
+  `setup_logger()` manualmente (sigue disponible para reconfigurar, p. ej.
+  `simulate_pipeline.py --quiet`).
 
 ### Telegram
 

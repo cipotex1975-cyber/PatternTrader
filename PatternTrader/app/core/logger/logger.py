@@ -8,8 +8,13 @@ from loguru import logger
 
 from app.core.config.settings import get_settings
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_LOG_DIR = _REPO_ROOT / "logs"
+_CONFIGURED = False
+
 
 def setup_logger() -> None:
+    global _CONFIGURED
     settings = get_settings()
     logger.remove()
 
@@ -24,11 +29,10 @@ def setup_logger() -> None:
         diagnose=True,
     )
 
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
+    _LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     logger.add(
-        log_dir / "app_{time:YYYY-MM-DD}.log",
+        _LOG_DIR / "app_{time:YYYY-MM-DD}.log",
         format=log_format,
         level=settings.logging.level,
         rotation=settings.logging.rotation,
@@ -39,7 +43,7 @@ def setup_logger() -> None:
     )
 
     logger.add(
-        log_dir / "errors_{time:YYYY-MM-DD}.log",
+        _LOG_DIR / "errors_{time:YYYY-MM-DD}.log",
         format=log_format,
         level="ERROR",
         rotation=settings.logging.rotation,
@@ -50,16 +54,24 @@ def setup_logger() -> None:
     )
 
     logger.add(
-        log_dir / "trades_{time:YYYY-MM-DD}.log",
+        _LOG_DIR / "trades_{time:YYYY-MM-DD}.log",
         format=log_format,
         level="INFO",
-        rotation="1 day",
-        retention="90 days",
-        compression="gz",
+        rotation=settings.logging.trades_rotation,
+        retention=settings.logging.trades_retention,
+        compression=settings.logging.compression,
     )
+
+    _CONFIGURED = True
+
+
+def _ensure_configured() -> None:
+    if not _CONFIGURED:
+        setup_logger()
 
 
 def get_logger(name: str | None = None) -> Any:
+    _ensure_configured()
     if name:
         return logger.bind(name=name)
     return logger

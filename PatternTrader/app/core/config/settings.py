@@ -317,6 +317,8 @@ class LoggingSettings(BaseSettings):
     rotation: str = "100 MB"
     retention: str = "30 days"
     compression: str = "gz"
+    trades_rotation: str = "1 day"
+    trades_retention: str = "90 days"
 
 
 class ServerSettings(BaseSettings):
