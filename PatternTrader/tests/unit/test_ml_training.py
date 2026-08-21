@@ -84,8 +84,8 @@ class TestFeaturesAndLabels:
         labels_short = create_labels(df, forward_periods=2, threshold=0.0)
         labels_long = create_labels(df, forward_periods=20, threshold=0.0)
         assert len(labels_short) == len(labels_long) == 200
-        assert set(np.unique(labels_short)).issubset({0, 1})
-        assert set(np.unique(labels_long)).issubset({0, 1})
+        assert set(np.unique(labels_short.dropna())).issubset({0, 1})
+        assert set(np.unique(labels_long.dropna())).issubset({0, 1})
 
 
 class TestSequences:

@@ -10,64 +10,12 @@ server:
   workers: 4
   reload: true
 
-database:
-  host: "localhost"
-  port: 5432
-  name: "pattern_trader"
-  user: "postgres"
-  password: "${DB_PASSWORD}"
-  pool_size: 20
-  max_overflow: 10
-  echo: false
-
 logging:
   level: "INFO"
   format: "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}"
   rotation: "100 MB"
   retention: "30 days"
   compression: "gz"
-
-telegram:
-  bot_token: "${TELEGRAM_BOT_TOKEN}"
-  chat_id: "${TELEGRAM_CHAT_ID}"
-  enabled: false
-  cooldown_minutes: 5
-  max_retries: 3
-  retry_backoff_seconds: 2.0
-  timeout_seconds: 10.0
-  dedup_store_path: "./data/state/telegram_dedup.json"
-  send_image: true
-  min_priority: "CRITICAL"
-
-data_providers:
-  default: "binance"
-  binance:
-    api_key: "${BINANCE_API_KEY}"
-    api_secret: "${BINANCE_API_SECRET}"
-    testnet: true
-  bybit:
-    api_key: "${BYBIT_API_KEY}"
-    api_secret: "${BYBIT_API_SECRET}"
-    testnet: true
-  yahoo:
-    enabled: true
-  polygon:
-    api_key: "${POLYGON_API_KEY}"
-    enabled: true
-  alphavantage:
-    api_key: "${ALPHAVANTAGE_API_KEY}"
-    enabled: true
-  metatrader:
-    enabled: false
-    login: 0
-    password: "${METATRADER_PASSWORD}"
-    server: ""
-    path: ""
-  interactive_brokers:
-    enabled: false
-    host: "127.0.0.1"
-    port: 7497
-    client_id: 1
 
 market:
   default_timeframes:

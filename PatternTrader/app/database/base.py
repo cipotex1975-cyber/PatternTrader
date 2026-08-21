@@ -55,6 +55,19 @@ def reset_engine() -> None:
     _session_factory = None
 
 
+async def dispose_engine() -> None:
+    """Cierra el pool de conexiones del engine actual y descarta el singleton.
+
+    A diferencia de ``reset_engine`` (síncrono, no cierra conexiones), esta
+    versión libera las conexiones abiertas; úsala al cambiar de base de datos
+    en tests para no acumular pools huérfanos ni bloquear TRUNCATE por locks."""
+    global _engine, _session_factory
+    if _engine is not None:
+        await _engine.dispose()
+    _engine = None
+    _session_factory = None
+
+
 async def init_db() -> None:
     """Crea el esquema si no existe (equivalente a ``create_all``)."""
     from app.database import models  # noqa: F401  (registra los modelos en Base)

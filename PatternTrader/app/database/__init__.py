@@ -1,5 +1,6 @@
 from app.database.base import (
     Base,
+    dispose_engine,
     get_async_session,
     get_engine,
     get_session_factory,
@@ -29,6 +30,7 @@ __all__ = [
     "get_async_session",
     "init_db",
     "reset_engine",
+    "dispose_engine",
     "Asset",
     "Candle",
     "Indicator",

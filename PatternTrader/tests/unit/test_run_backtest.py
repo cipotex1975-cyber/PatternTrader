@@ -1,4 +1,5 @@
 from pathlib import Path
+from uuid import uuid4
 
 from app.patterns.base_pattern import PatternResult, PatternType
 from run_backtest import (
@@ -11,7 +12,7 @@ from run_backtest import (
 )
 
 DATA_FILE = (
-    Path(__file__).resolve().parent.parent
+    Path(__file__).resolve().parents[2]
     / "app"
     / "datos_test"
     / "USDCAD_H1_201005311000_202606010000.txt"
@@ -20,7 +21,7 @@ DATA_FILE = (
 
 def _pattern(name: str, key_levels: dict) -> PatternResult:
     return PatternResult(
-        id="test",
+        id=uuid4(),
         symbol="USDCAD",
         timeframe="H1",
         pattern_name=name,
@@ -33,7 +34,7 @@ def _pattern(name: str, key_levels: dict) -> PatternResult:
         take_profit=0.0,
         risk_reward_ratio=2.0,
         key_levels=key_levels,
-        status="detected",
+        status="DETECTED",
     )
 
 
@@ -173,9 +174,9 @@ class TestResolveExcluded:
 
 class TestMainSmoke:
     def test_runs_backtest_with_capped_inputs(self, capsys):
-        main(["--max-candles", "500", "--max-patterns", "5"])
+        main(["--max-candles", "3000", "--max-patterns", "5"])
 
         out = capsys.readouterr().out
         assert "RESULTADOS DEL BACKTEST" in out
         assert "METRICAS DE TRADING" in out
-        assert "Velas cargadas: 500" in out
+        assert "Velas cargadas: 3000" in out

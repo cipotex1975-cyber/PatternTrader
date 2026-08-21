@@ -83,38 +83,45 @@ class TelegramNotifier:
         emoji = priority_emoji.get(signal.priority, "⚪")
         direction = "📈 LONG" if signal.direction == "LONG" else "📉 SHORT"
         timestamp = signal.created_at.strftime("%Y-%m-%d %H:%M UTC")
+        symbol = self._escape_html(signal.symbol)
+        timeframe = self._escape_html(signal.timeframe)
+        pattern_name = self._escape_html(signal.pattern_name)
 
         message = f"""
-🚨 **Nueva Señal**
+🚨 <b>Nueva Señal</b>
 
-{emoji} **{signal.symbol}** · {signal.timeframe}
+{emoji} <b>{symbol}</b> · {timeframe}
 
 {direction}
 
-**Patrón:** {signal.pattern_name}
-**Score:** {signal.score:.1f}
-**Health:** {signal.health:.1f}%
-**Probabilidad IA:** {signal.ml_probability:.0%}
-**Fecha:** {timestamp}
+<b>Patrón:</b> {pattern_name}
+<b>Score:</b> {signal.score:.1f}
+<b>Health:</b> {signal.health:.1f}%
+<b>Probabilidad IA:</b> {signal.ml_probability:.0%}
+<b>Fecha:</b> {timestamp}
 
-**Entrada:** {signal.entry_price:,.2f}
-**Stop Loss:** {signal.stop_loss:,.2f}
-**Take Profit:** {signal.take_profit:,.2f}
-**R/R:** {signal.risk_reward_ratio:.2f}
+<b>Entrada:</b> {signal.entry_price:,.2f}
+<b>Stop Loss:</b> {signal.stop_loss:,.2f}
+<b>Take Profit:</b> {signal.take_profit:,.2f}
+<b>R/R:</b> {signal.risk_reward_ratio:.2f}
 
-**Motivo:**
+<b>Motivo:</b>
 """
         for reason in signal.reasons[:5]:
-            message += f"✔ {reason}\n"
+            message += f"✔ {self._escape_html(reason)}\n"
 
         return message.strip()
+
+    @staticmethod
+    def _escape_html(value: str) -> str:
+        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     async def _send_message(self, message: str) -> None:
         url = f"https://api.telegram.org/bot{self._bot_token}/sendMessage"
         payload = {
             "chat_id": self._chat_id,
             "text": message,
-            "parse_mode": "Markdown",
+            "parse_mode": "HTML",
         }
         await self._post_with_retries(url, json=payload)
 

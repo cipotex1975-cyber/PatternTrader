@@ -2,7 +2,18 @@
 
 ## Visión General
 
-PatternTrader utiliza archivos YAML para la configuración. Toda la configuración se encuentra en `config/settings.yaml`.
+PatternTrader utiliza archivos YAML para la configuración. Toda la configuración se encuentra en `config/settings.yaml`, **excepto la base de datos, Telegram y los proveedores de datos**, que se configuran mediante variables en el archivo `.env` (o variables de entorno reales).
+
+## Prioridad de Configuración (secciones en `.env`)
+
+De mayor a menor prioridad:
+
+1. Variable de entorno real (`DB_HOST`, `TELEGRAM_BOT_TOKEN`, `BINANCE_API_KEY`, ...)
+2. Archivo `.env` (leído directamente por cada clase de settings)
+3. Defaults en código (`app/core/config/settings.py`)
+
+> Nota: la URL completa `DATABASE_URL` (si está presente como variable de
+> entorno) tiene prioridad sobre los campos discretos.
 
 ---
 
@@ -11,10 +22,7 @@ PatternTrader utiliza archivos YAML para la configuración. Toda la configuraci�
 ```yaml
 application:      # Configuración de la aplicación
 server:           # Servidor web
-database:         # Base de datos
 logging:          # Sistema de logs
-telegram:         # Notificaciones Telegram
-data_providers:   # Proveedores de datos
 market:           # Configuración del mercado
 patterns:         # Configuración de patrones
 strategies:       # Estrategias de trading
@@ -23,6 +31,11 @@ risk:             # Gestión de riesgo
 backtesting:      # Motor de backtesting
 ml:               # Modelos de ML
 ```
+
+> La base de datos, Telegram y los proveedores de datos NO se configuran en
+> el YAML (los valores del YAML pisarían el `.env`); se configuran vía
+> `.env` / variables `DB_*`, `TELEGRAM_*` y por proveedor (`BINANCE_*`,
+> `BYBIT_*`, `POLYGON_*`, ...).
 
 ---
 
@@ -50,16 +63,26 @@ server:
 
 ### Database
 
-```yaml
-database:
-  host: "localhost"               # Host de PostgreSQL
-  port: 5432                      # Puerto
-  name: "pattern_trader"          # Nombre de la base de datos
-  user: "postgres"                # Usuario
-  password: "${DB_PASSWORD}"      # Contraseña (variable de entorno)
-  pool_size: 20                   # Tamaño del pool de conexiones
-  max_overflow: 10                # Conexiones extra
-  echo: false                     # Log de queries SQL
+La base de datos se configura en el archivo `.env` (raíz del proyecto) con
+prefijo `DB_`:
+
+```env
+DB_HOST=localhost               # Host de PostgreSQL
+DB_PORT=5432                    # Puerto
+DB_NAME=pattern_trader          # Nombre de la base de datos
+DB_USER=postgres                # Usuario
+DB_PASSWORD=postgres            # Contraseña
+# DB_POOL_SIZE=20               # Tamaño del pool de conexiones
+# DB_MAX_OVERFLOW=10            # Conexiones extra
+# DB_ECHO=false                 # Log de queries SQL
+```
+
+Opcionalmente, una URL completa como variable de entorno real (no basta con
+ponerla en `.env`, debe estar exportada en el entorno) tiene prioridad sobre
+los campos discretos:
+
+```bash
+export DATABASE_URL=postgresql+asyncpg://usuario:password@host:5432/pattern_trader
 ```
 
 ### Migraciones (Alembic)
@@ -99,53 +122,60 @@ logging:
 
 ### Telegram
 
-```yaml
-telegram:
-  bot_token: "${TELEGRAM_BOT_TOKEN}"  # Token del bot
-  chat_id: "${TELEGRAM_CHAT_ID}"      # ID del chat
-  enabled: false                       # Habilitar/deshabilitar
+Telegram se configura en el archivo `.env` (raíz del proyecto) con prefijo
+`TELEGRAM_`:
+
+```env
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11  # Token del bot
+TELEGRAM_CHAT_ID=-1001234567890                               # ID del chat
+# TELEGRAM_ENABLED=false                                      # Habilitar/deshabilitar
+# TELEGRAM_COOLDOWN_MINUTES=5                                 # Cooldown entre señales
+# TELEGRAM_MAX_RETRIES=3                                      # Reintentos con backoff
+# TELEGRAM_SEND_IMAGE=true                                    # Enviar gráfico (sendPhoto)
+# TELEGRAM_MIN_PRIORITY=CRITICAL                              # Gate de envío por prioridad
 ```
+
+Al igual que la base de datos, NO se configura en el YAML (los valores del
+YAML pisarían el `.env`).
 
 ### Data Providers
 
-```yaml
-data_providers:
-  default: "binance"              # Proveedor por defecto
-  
-  binance:
-    api_key: "${BINANCE_API_KEY}"
-    api_secret: "${BINANCE_API_SECRET}"
-    testnet: true                 # Usar testnet
-  
-  bybit:
-    api_key: "${BYBIT_API_KEY}"
-    api_secret: "${BYBIT_API_SECRET}"
-    testnet: true
-  
-  yahoo:
-    enabled: true                 # Yahoo Finance (sin API key requerida)
-  
-  polygon:
-    api_key: "${POLYGON_API_KEY}" # API key de Polygon.io
-    enabled: true
-  
-  alphavantage:
-    api_key: "${ALPHAVANTAGE_API_KEY}"  # API key de AlphaVantage
-    enabled: true
-  
-  metatrader:
-    enabled: false                # Requiere terminal MetaTrader 5 local
-    login: 0                      # Login de la cuenta
-    password: "${METATRADER_PASSWORD}"
-    server: ""                    # Servidor del broker
-    path: ""                      # Ruta del terminal MT5
-  
-  interactive_brokers:
-    enabled: false                # Requiere IB Gateway o TWS con API
-    host: "127.0.0.1"
-    port: 7497                    # 7497=paper, 7496=live
-    client_id: 1
+Los proveedores de datos se configuran en el archivo `.env` con prefijos por
+proveedor (`BINANCE_`, `BYBIT_`, `POLYGON_`, ...):
+
+```env
+# DATA_PROVIDERS_DEFAULT=binance        # Proveedor por defecto
+
+BINANCE_API_KEY=tu_api_key
+BINANCE_API_SECRET=tu_api_secret
+# BINANCE_TESTNET=true                 # Usar testnet
+
+BYBIT_API_KEY=tu_api_key
+BYBIT_API_SECRET=tu_api_secret
+# BYBIT_TESTNET=true
+
+# YAHOO_ENABLED=true                   # Yahoo Finance (sin API key)
+
+POLYGON_API_KEY=tu_api_key
+# POLYGON_ENABLED=true
+
+ALPHAVANTAGE_API_KEY=tu_api_key
+# ALPHAVANTAGE_ENABLED=true            # Free tier: 25 req/día
+
+# METATRADER_ENABLED=false             # Requiere terminal MT5 local
+# METATRADER_LOGIN=0
+# METATRADER_PASSWORD=
+# METATRADER_SERVER=
+# METATRADER_PATH=
+
+# INTERACTIVE_BROKERS_ENABLED=false    # Requiere IB Gateway/TWS
+# INTERACTIVE_BROKERS_HOST=127.0.0.1
+# INTERACTIVE_BROKERS_PORT=7497        # 7497=paper, 7496=live
+# INTERACTIVE_BROKERS_CLIENT_ID=1
 ```
+
+Al igual que la base de datos y Telegram, NO se configuran en el YAML (los
+valores del YAML pisarían el `.env`).
 
 ### Proveedores Disponibles
 
@@ -354,7 +384,9 @@ ml:
 
 ## Variables de Entorno
 
-Las variables de entorno se usan para valores sensibles:
+Las variables de entorno se usan para valores sensibles. Todas pueden
+definirse en el archivo `.env` (la aplicación lo lee automáticamente) o
+exportarse como variables reales:
 
 ```bash
 # Base de datos
@@ -461,9 +493,11 @@ server:
 
 logging:
   level: "DEBUG"
+```
 
-database:
-  echo: true  # Log queries
+```env
+# .env
+DB_ECHO=true  # Log queries
 ```
 
 ### Production
@@ -479,10 +513,12 @@ server:
 
 logging:
   level: "WARNING"
+```
 
-database:
-  echo: false
-  pool_size: 30
+```env
+# .env
+DB_ECHO=false
+DB_POOL_SIZE=30
 ```
 
 ---
@@ -533,55 +569,34 @@ server:
   workers: 8
   reload: false
 
-database:
-  host: "db.example.com"
-  port: 5432
-  name: "pattern_trader_prod"
-  user: "admin"
-  password: "${DB_PASSWORD}"
-  pool_size: 50
-  max_overflow: 20
-  echo: false
+# La base de datos se configura en .env, no en el YAML:
+#   DB_HOST=db.example.com
+#   DB_NAME=pattern_trader_prod
+#   DB_USER=admin
+#   DB_PASSWORD=...
+#   DB_POOL_SIZE=50
+#   DB_MAX_OVERFLOW=20
+#   DB_ECHO=false
 
 logging:
   level: "INFO"
   rotation: "500 MB"
   retention: "90 days"
 
-telegram:
-  bot_token: "${TELEGRAM_BOT_TOKEN}"
-  chat_id: "${TELEGRAM_CHAT_ID}"
-  enabled: true
+# Telegram se configura en .env, no en el YAML:
+#   TELEGRAM_BOT_TOKEN=...
+#   TELEGRAM_CHAT_ID=...
+#   TELEGRAM_ENABLED=true
 
-data_providers:
-  default: "binance"
-  binance:
-    api_key: "${BINANCE_API_KEY}"
-    api_secret: "${BINANCE_API_SECRET}"
-    testnet: false  # Production
-  bybit:
-    api_key: "${BYBIT_API_KEY}"
-    api_secret: "${BYBIT_API_SECRET}"
-    testnet: false
-  yahoo:
-    enabled: true
-  polygon:
-    api_key: "${POLYGON_API_KEY}"
-    enabled: true
-  alphavantage:
-    api_key: "${ALPHAVANTAGE_API_KEY}"
-    enabled: false  # Rate limit bajo (25 req/día)
-  metatrader:
-    enabled: false
-    login: 0
-    password: "${METATRADER_PASSWORD}"
-    server: ""
-    path: ""
-  interactive_brokers:
-    enabled: false
-    host: "127.0.0.1"
-    port: 7497
-    client_id: 1
+# Los proveedores de datos se configuran en .env, no en el YAML:
+#   BINANCE_API_KEY=...
+#   BINANCE_API_SECRET=...
+#   BINANCE_TESTNET=false
+#   BYBIT_API_KEY=...
+#   BYBIT_API_SECRET=...
+#   POLYGON_API_KEY=...
+#   ALPHAVANTAGE_API_KEY=...
+#   ALPHAVANTAGE_ENABLED=false
 
 market:
   default_timeframes:

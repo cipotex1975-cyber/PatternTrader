@@ -113,8 +113,9 @@ DB_PORT=5432
 DB_NAME=pattern_trader
 DB_USER=pattern_user
 DB_PASSWORD=tu_password
-# Opcional: URL completa de conexión (tiene prioridad sobre los campos discretos)
-# DATABASE_URL=postgresql+asyncpg://pattern_user:tu_password@localhost:5432/pattern_trader
+# Opcional: URL completa de conexión (como variable de entorno exportada
+# tiene prioridad sobre los campos discretos de arriba)
+# export DATABASE_URL=postgresql+asyncpg://pattern_user:tu_password@localhost:5432/pattern_trader
 TELEGRAM_BOT_TOKEN=tu_token
 TELEGRAM_CHAT_ID=tu_chat_id
 EOF

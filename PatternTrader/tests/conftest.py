@@ -56,7 +56,7 @@ async def _create_database() -> None:
     import asyncpg
 
     name = TEST_DATABASE_URL.rsplit("/", 1)[1]
-    admin = TEST_DATABASE_URL.replace(f"/{name}", "/postgres")
+    admin = TEST_DATABASE_URL.replace(f"/{name}", "/postgres").replace("+asyncpg", "")
     conn = await asyncpg.connect(admin)
     try:
         await conn.execute(f'CREATE DATABASE "{name}"')
@@ -88,16 +88,16 @@ async def _truncate_all_tables() -> None:
 @pytest.fixture
 async def pg_db(tmp_path) -> AsyncIterator[None]:
     from app.core.config.settings import get_settings
-    from app.database.base import init_db, reset_engine
+    from app.database.base import dispose_engine, init_db
 
     settings = get_settings()
     original_dedup = settings.telegram.dedup_store_path
     settings.telegram.dedup_store_path = str(tmp_path / "telegram_dedup.json")
 
     os.environ["DATABASE_URL"] = TEST_DATABASE_URL
-    reset_engine()
+    await dispose_engine()
     await init_db()
     yield
     await _truncate_all_tables()
-    reset_engine()
+    await dispose_engine()
     settings.telegram.dedup_store_path = original_dedup

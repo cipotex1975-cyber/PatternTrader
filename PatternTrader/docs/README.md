@@ -87,7 +87,13 @@ pip install -e ".[dev]"
 # Editar la configuración principal
 nano config/settings.yaml
 
-# Configurar variables de entorno
+# La base de datos, Telegram y los proveedores de datos se configuran
+# en el archivo .env, que la aplicación lee automáticamente:
+#   DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ENABLED
+#   BINANCE_API_KEY, BYBIT_API_KEY, POLYGON_API_KEY, ...
+
+# Variables de entorno (alternativa al .env)
 export DB_PASSWORD="tu_password"
 export TELEGRAM_BOT_TOKEN="tu_token"
 export TELEGRAM_CHAT_ID="tu_chat_id"

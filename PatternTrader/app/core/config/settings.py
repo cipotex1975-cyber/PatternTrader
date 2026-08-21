@@ -9,9 +9,17 @@ import yaml
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_ENV_FILE = _REPO_ROOT / ".env"
+
 
 class DatabaseSettings(BaseSettings):
-    model_config = {"env_prefix": "DB_"}
+    model_config = {
+        "env_prefix": "DB_",
+        "env_file": _ENV_FILE,
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
 
     host: str = "localhost"
     port: int = 5432
@@ -33,6 +41,13 @@ class DatabaseSettings(BaseSettings):
 
 
 class TelegramSettings(BaseSettings):
+    model_config = {
+        "env_prefix": "TELEGRAM_",
+        "env_file": _ENV_FILE,
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
+
     bot_token: str = ""
     chat_id: str = ""
     enabled: bool = False
@@ -46,32 +61,74 @@ class TelegramSettings(BaseSettings):
 
 
 class BinanceSettings(BaseSettings):
+    model_config = {
+        "env_prefix": "BINANCE_",
+        "env_file": _ENV_FILE,
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
+
     api_key: str = ""
     api_secret: str = ""
     testnet: bool = True
 
 
 class BybitSettings(BaseSettings):
+    model_config = {
+        "env_prefix": "BYBIT_",
+        "env_file": _ENV_FILE,
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
+
     api_key: str = ""
     api_secret: str = ""
     testnet: bool = True
 
 
 class YahooSettings(BaseSettings):
+    model_config = {
+        "env_prefix": "YAHOO_",
+        "env_file": _ENV_FILE,
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
+
     enabled: bool = True
 
 
 class PolygonSettings(BaseSettings):
+    model_config = {
+        "env_prefix": "POLYGON_",
+        "env_file": _ENV_FILE,
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
+
     api_key: str = ""
     enabled: bool = True
 
 
 class AlphaVantageSettings(BaseSettings):
+    model_config = {
+        "env_prefix": "ALPHAVANTAGE_",
+        "env_file": _ENV_FILE,
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
+
     api_key: str = ""
     enabled: bool = True
 
 
 class MetaTraderSettings(BaseSettings):
+    model_config = {
+        "env_prefix": "METATRADER_",
+        "env_file": _ENV_FILE,
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
+
     enabled: bool = False
     login: int = 0
     password: str = ""
@@ -80,6 +137,13 @@ class MetaTraderSettings(BaseSettings):
 
 
 class InteractiveBrokersSettings(BaseSettings):
+    model_config = {
+        "env_prefix": "INTERACTIVE_BROKERS_",
+        "env_file": _ENV_FILE,
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
+
     enabled: bool = False
     host: str = "127.0.0.1"
     port: int = 7497

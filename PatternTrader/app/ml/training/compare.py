@@ -20,7 +20,7 @@ from app.core.config.settings import Settings
 from app.core.logger import get_logger
 from app.ml.base import BaseMLModel
 from app.ml.factory import MLModelFactory
-from app.ml.training.data import format_for_model
+from app.ml.training.data import SEQUENCE_MODELS, format_for_model
 
 logger = get_logger("TrainAndCompare")
 
@@ -135,6 +135,41 @@ def evaluate_model(model: BaseMLModel, X: np.ndarray, y: np.ndarray) -> dict[str
     return metrics
 
 
+def build_test_sequences(
+    X_train: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    sequence_length: int = 30,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Construye las secuencias de test usando el contexto final del train.
+
+    Las últimas `sequence_length - 1` muestras de train se utilizan como
+    contexto histórico para construir las primeras ventanas de test.
+
+    Las etiquetas devueltas pertenecen exclusivamente a X_test.
+    """
+    context = sequence_length - 1
+
+    if len(X_train) < context:
+        raise ValueError(
+            f"Se necesitan al menos {context} muestras de train " f"para construir el contexto."
+        )
+
+    X_context = np.concatenate(
+        [X_train[-context:], X_test],
+        axis=0,
+    )
+
+    windows = np.stack(
+        [
+            X_context[i - sequence_length + 1 : i + 1]
+            for i in range(sequence_length - 1, len(X_context))
+        ]
+    )
+
+    return windows, y_test
+
+
 def run_comparison(
     X_train: np.ndarray,
     y_train: np.ndarray,
@@ -150,13 +185,20 @@ def run_comparison(
 ) -> tuple[pd.DataFrame, dict[str, BaseMLModel]]:
     """Entrena todos los modelos solicitados sobre el mismo split y compara métricas.
 
+    Para modelos secuenciales (LSTM, CNN, Transformer), las primeras
+    ventanas del test utilizan las últimas `sequence_length - 1` muestras
+    del train como contexto histórico.
+
     Retorna (summary, trained) donde ``summary`` es un DataFrame con una fila por
     modelo y ``trained`` mapea nombre → instancia entrenada.
     """
     if metric not in AVAILABLE_METRICS:
-        raise ValueError(f"Metric desconocida: {metric}. Válidas: {', '.join(AVAILABLE_METRICS)}")
+        raise ValueError(
+            f"Metric desconocida: {metric}. " f"Válidas: {', '.join(AVAILABLE_METRICS)}"
+        )
 
     registered = set(MLModelFactory.get_all())
+
     if not model_names or "all" in model_names:
         selected = sorted(registered)
     else:
@@ -173,11 +215,45 @@ def run_comparison(
 
     for name in selected:
         try:
-            X_tr, y_tr = format_for_model(name, X_train, y_train, sequence_length)
-            X_te, y_te = format_for_model(name, X_test, y_test, sequence_length)
+            # ---------------------------------------------------------
+            # TRAIN
+            # ---------------------------------------------------------
+            X_tr, y_tr = format_for_model(
+                name,
+                X_train,
+                y_train,
+                sequence_length,
+            )
+
+            # ---------------------------------------------------------
+            # TEST
+            # ---------------------------------------------------------
+            if name in SEQUENCE_MODELS:
+                # Para modelos secuenciales, utilizamos las últimas
+                # sequence_length - 1 muestras del train como contexto
+                # histórico para las primeras muestras del test.
+                X_te, y_te = build_test_sequences(
+                    X_train,
+                    X_test,
+                    y_test,
+                    sequence_length,
+                )
+            else:
+                # Modelos tabulares/anomaly detection:
+                # mantienen el comportamiento original.
+                X_te, y_te = format_for_model(  # type: ignore[assignment]
+                    name,
+                    X_test,
+                    y_test,
+                    sequence_length,
+                )
+
             if y_tr is None or y_te is None:
                 raise ValueError(f"{name}: no se pudieron formatear las etiquetas")
 
+            # ---------------------------------------------------------
+            # CREAR MODELO
+            # ---------------------------------------------------------
             kwargs = _model_kwargs(
                 name,
                 feature_names=feature_names,
@@ -186,9 +262,26 @@ def run_comparison(
                 settings=settings,
                 hyperparams=hyperparams,
             )
+
             model = MLModelFactory.create_new(name, **kwargs)
-            train_metrics = model.train(X_tr, y_tr, feature_names=feature_names)
-            eval_metrics = evaluate_model(model, X_te, y_te)
+
+            # ---------------------------------------------------------
+            # TRAIN
+            # ---------------------------------------------------------
+            train_metrics = model.train(
+                X_tr,
+                y_tr,
+                feature_names=feature_names,
+            )
+
+            # ---------------------------------------------------------
+            # EVALUACIÓN SOBRE TEST
+            # ---------------------------------------------------------
+            eval_metrics = evaluate_model(
+                model,
+                X_te,
+                y_te,
+            )
 
             train_acc = train_metrics.get("train_accuracy")
             train_loss = train_metrics.get("loss")
@@ -204,14 +297,20 @@ def run_comparison(
                 "samples_train": int(X_tr.shape[0]),
                 "samples_test": int(X_te.shape[0]),
             }
+
             row.update(eval_metrics)
             rows.append(row)
             trained[name] = model
+
             logger.info(
-                f"{name}: train={row['train_accuracy']:.4f} {metric}={row.get(metric, 'n/a')}"
+                f"{name}: "
+                f"train={row['train_accuracy']:.4f} "
+                f"{metric}={row.get(metric, 'n/a')}"
             )
+
         except Exception as e:  # noqa: BLE001
             logger.error(f"{name}: falló el entrenamiento: {e}")
+
             rows.append(
                 {
                     "model": name,
@@ -223,8 +322,10 @@ def run_comparison(
             )
 
     summary = pd.DataFrame(rows)
+
     if summary.empty:
         raise RuntimeError("Ningún modelo se entrenó correctamente")
+
     return summary, trained
 
 
