@@ -223,8 +223,9 @@ class ScoringEngine:
             )
         )
 
-        ml_features = self._extract_ml_features(candles)
-        ml_score = self._get_ml_score(ml_features, pattern)
+        model = self._resolve_model(pattern)
+        ml_features = self._extract_ml_features(candles, model=model)
+        ml_score = self._get_ml_score(ml_features, pattern, model=model)
         components.append(
             ScoreComponent(
                 name="ml_history",
@@ -386,19 +387,57 @@ class ScoringEngine:
         avg_score = sum(c.score * c.weight for c in components) / weights_sum
         return avg_score / 100.0
 
+    def _resolve_model(self, pattern: PatternResult | None) -> BaseMLModel | None:
+        if self._knowledge is not None and getattr(self._knowledge, "is_trained", False):
+            return None
+
+        model: BaseMLModel | None = None
+        if pattern is not None and pattern.symbol:
+            model = self._load_ml_model_for_symbol(pattern.symbol)
+
+        if model is None:
+            model = self._ml_model
+        return model
+
     def _extract_ml_features(
         self,
         candles: list[Candle] | None,
+        model: BaseMLModel | None = None,
     ) -> np.ndarray | None:
         """Extract features for ML model prediction."""
         if not candles or len(candles) < 20:
             return None
+
+        seq_len = (
+            model._sequence_length
+            if model is not None and hasattr(model, "_sequence_length")
+            else 0
+        )
+        if seq_len > 0 and len(candles) >= seq_len:
+            feature_rows = []
+            start_idx = max(0, len(candles) - seq_len)
+            for i in range(start_idx, len(candles)):
+                sub_candles = candles[: i + 1]
+                if len(sub_candles) >= 20:
+                    feat = extract_technical_features(sub_candles)
+                    if feat is not None:
+                        feature_rows.append(feat)
+            if feature_rows:
+                arr = np.array(feature_rows, dtype=np.float32)
+                if len(arr) < seq_len and len(arr) > 0:
+                    padding = np.tile(arr[0], (seq_len - len(arr), 1))
+                    arr = np.vstack([padding, arr])
+                elif len(arr) > seq_len:
+                    arr = arr[-seq_len:]
+                return arr
+
         return extract_technical_features(candles)
 
     def _get_ml_score(
         self,
         features: np.ndarray | None,
         pattern: PatternResult | None = None,
+        model: BaseMLModel | None = None,
     ) -> float:
         """Get ML model prediction score.
 
@@ -413,7 +452,8 @@ class ScoringEngine:
             and getattr(self._knowledge, "is_trained", False)
             and features is not None
         ):
-            indicators = features_to_dict(features)
+            feat_vec = features[-1] if features.ndim == 2 else features
+            indicators = features_to_dict(feat_vec)
             prediction = self._knowledge.predict(
                 indicators=indicators,
                 variables={},
@@ -421,17 +461,13 @@ class ScoringEngine:
                 timeframe=pattern.timeframe if pattern else "",
                 pattern=pattern.pattern_name if pattern else "",
             )
-            return max(0.0, min(100.0, prediction.probability * 100))
+            return float(max(0.0, min(100.0, prediction.probability * 100)))
 
         if features is None:
             return 50.0
 
-        model: BaseMLModel | None = None
-        if pattern is not None and getattr(pattern, "symbol", ""):
-            model = self._load_ml_model_for_symbol(pattern.symbol)
-
         if model is None:
-            model = self._ml_model
+            model = self._resolve_model(pattern)
 
         if model is None or not model.is_trained:
             return 50.0
@@ -443,7 +479,7 @@ class ScoringEngine:
                 timeframe=pattern.timeframe if pattern else "",
                 pattern_name=pattern.pattern_name if pattern else "",
             )
-            return max(0.0, min(100.0, prediction.probability * 100))
+            return float(max(0.0, min(100.0, prediction.probability * 100)))
         except Exception as e:
             logger.error(f"ML prediction failed: {e}")
             return 50.0
