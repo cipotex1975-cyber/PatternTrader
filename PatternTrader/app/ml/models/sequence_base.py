@@ -43,6 +43,7 @@ class SequenceModel(BaseMLModel):
         learning_rate: float = 1e-3,
         batch_size: int = 16,
         random_state: int = 42,
+        patience: int = 5,
         **kwargs: Any,
     ) -> None:
         super().__init__()
@@ -53,7 +54,9 @@ class SequenceModel(BaseMLModel):
         self._learning_rate = learning_rate
         self._batch_size = batch_size
         self._random_state = random_state
+        self._patience = patience
         self._model: nn.Module | None = None
+        self._scaler = None  # StandardScaler for scaling sequence data
 
     @property
     def model_type(self) -> str:
@@ -91,7 +94,10 @@ class SequenceModel(BaseMLModel):
     def _prepare(self, X: np.ndarray) -> np.ndarray:
         X = np.asarray(X, dtype=np.float32)
         if X.ndim == 2:
-            X = X.reshape(X.shape[0], X.shape[1], 1)
+            if X.shape[1] == self._sequence_length * self._feature_dim:
+                X = X.reshape(X.shape[0], self._sequence_length, self._feature_dim)
+            else:
+                X = X.reshape(X.shape[0], X.shape[1], 1)
         return X
 
     def train(
@@ -114,7 +120,7 @@ class SequenceModel(BaseMLModel):
         optimizer = torch.optim.Adam(model.parameters(), lr=self._learning_rate)
         criterion = nn.CrossEntropyLoss()
 
-        dataset = TensorDataset(torch.tensor(X), torch.tensor(y, dtype=torch.long))
+        dataset = TensorDataset(torch.tensor(X), torch.tensor(y, dtype=np.int64))
         loader = DataLoader(dataset, batch_size=self._batch_size, shuffle=True)
 
         total_loss = 0.0

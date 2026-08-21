@@ -5,22 +5,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-import pandas as pd
 from sklearn.metrics import (
     accuracy_score,
-    average_precision_score,
-    f1_score,
     precision_score,
     recall_score,
+    f1_score,
     roc_auc_score,
+    average_precision_score,
 )
-
-from app.core.config.settings import Settings
-from app.core.logger import get_logger
-from app.ml.base import BaseMLModel
-from app.ml.factory import MLModelFactory
+import numpy as np
+import pandas as pd
 from app.ml.training.data import SEQUENCE_MODELS, format_for_model
+from imblearn.over_sampling import SMOTEN
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import TimeSeriesSplit
+from app.ml.factory import MLModelFactory
+from app.ml.base import BaseMLModel
+from app.core.config import Settings
+from app.core.logger import get_logger
 
 logger = get_logger("TrainAndCompare")
 
@@ -182,6 +184,10 @@ def run_comparison(
     epochs: int = 10,
     settings: Settings | None = None,
     hyperparams: dict[str, dict[str, Any]] | None = None,
+    use_smoten: bool = False,
+    early_stop_rounds: int = 20,
+    patience: int = 5,
+    walk_forward_splits: int = 5,
 ) -> tuple[pd.DataFrame, dict[str, BaseMLModel]]:
     """Entrena todos los modelos solicitados sobre el mismo split y compara métricas.
 

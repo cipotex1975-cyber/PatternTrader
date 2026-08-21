@@ -114,28 +114,45 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def create_labels(
-    df: pd.DataFrame, forward_periods: int = 5, threshold: float = 0.001
+    df: pd.DataFrame,
+    forward_periods: int = 5,
+    threshold: float = 0.003,
+    min_up_moves: int = 2,
 ) -> pd.Series:
-    """Label 1 si alguna de las próximas `forward_periods` velas
-    alcanza un high superior al cierre actual por `threshold`.
+    """Create binary labels for the dataset.
+
+    A candle is labelled **1** (positive) if **at least** ``min_up_moves`` of the next
+    ``forward_periods`` candles have a ``high`` price that exceeds the current ``close``
+    by ``threshold`` (expressed as a proportion, e.g. 0.003 → 0.3 %).
+
+    Parameters
+    ----------
+    df: pd.DataFrame
+        Input DataFrame with at least ``close`` and ``high`` columns.
+    forward_periods: int, default 5
+        Number of future candles to look ahead.
+    threshold: float, default 0.003
+        Minimum relative price increase required for a forward candle to be counted.
+    min_up_moves: int, default 2
+        Minimum number of forward candles that must satisfy the threshold to label
+        the current candle as positive.
     """
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
 
-    # Máximo de HIGH entre t+1 y t+forward_periods.
-    future_high = (
-        df["high"]
-        .rolling(window=forward_periods, min_periods=forward_periods)
-        .max()
-        .shift(-forward_periods)
-    )
-
-    future_return = future_high / df["close"] - 1
-
-    labels = pd.Series(np.nan, index=df.index, dtype="float64")
-    valid = future_return.notna()
-    labels.loc[valid] = (future_return.loc[valid] > threshold).astype(int)
-
+    # Compute a boolean matrix where each column k indicates whether the high at t+k
+    # exceeds the current close by the threshold.
+    up_moves = []
+    for k in range(1, forward_periods + 1):
+        future_high = df["high"].shift(-k)
+        condition = (future_high / df["close"] - 1) > threshold
+        up_moves.append(condition.astype(int))
+    # Sum across the forward window.
+    up_sum = sum(up_moves)
+    # Positive label if the count meets or exceeds the required moves.
+    labels = (up_sum >= min_up_moves).astype(int)
+    # Ensure we have no NaNs at the tail where the shift produced missing values.
+    labels.iloc[-forward_periods:] = np.nan
     return labels
 
 

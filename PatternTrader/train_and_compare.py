@@ -118,6 +118,11 @@ async def main(argv: list[str] | None = None) -> None:
         "--sequence-length", type=int, default=30, help="Longitud de ventana (modelos secuenciales)"
     )
     parser.add_argument("--epochs", type=int, default=10, help="Épocas (modelos secuenciales)")
+    parser.add_argument("--min-up-moves", type=int, default=2, help="Número mínimo de forward periods que deben superar el umbral para etiquetar como positivo")
+    parser.add_argument("--use-smoten", action="store_true", help="Aplicar SMOTEN para balancear clases en los modelos tabulares")
+    parser.add_argument("--walk-forward-splits", type=int, default=5, help="Número de folds para validación walk‑forward")
+    parser.add_argument("--early-stop-rounds", type=int, default=20, help="Early‑stopping rounds para modelos de árbol")
+    parser.add_argument("--patience", type=int, default=5, help="Patience para early‑stopping en modelos secuenciales")
     parser.add_argument(
         "--db",
         action="store_true",
