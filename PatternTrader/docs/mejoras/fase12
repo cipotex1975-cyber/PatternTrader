@@ -1,0 +1,161 @@
+FASE 12 — BACKTEST ECONÓMICO
+=============================
+
+Ahora quiero comprobar si las predicciones del modelo tienen valor económico.
+
+NO modificar el modelo.
+
+NO reentrenar para mejorar artificialmente el backtest.
+
+Utilizar el modelo previamente seleccionado y validado.
+
+===================================================
+1. SEÑAL
+
+Utilizar:
+
+P(label=1)
+
+y:
+
+classification_threshold
+
+Ejemplo:
+
+P(label=1) >= 0.60
+
+→ LONG
+
+===================================================
+2. EJECUCIÓN
+
+Definir explícitamente:
+
+entry
+stop loss
+take profit
+maximum holding period
+
+No asumir que el HIGH futuro equivale automáticamente a una ejecución perfecta.
+
+===================================================
+3. COSTES
+
+El backtest debe permitir:
+
+spread
+slippage
+commission si aplica
+
+Ejemplo:
+
+gross PnL
+- spread
+- slippage
+- commission
+=
+net PnL
+
+===================================================
+4. IMPORTANTE
+
+El label actual utiliza:
+
+future HIGH
+
+pero el backtest debe simular una ejecución realista.
+
+No considerar:
+
+HIGH >= TP
+
+como ejecución perfecta si el precio nunca estuvo realmente disponible según la lógica de entrada.
+
+===================================================
+5. MÉTRICAS
+
+Reportar:
+
+Total trades
+Win rate
+Average win
+Average loss
+Profit factor
+Expectancy
+Net return
+Max drawdown
+Sharpe ratio
+Average holding period
+
+===================================================
+6. EJEMPLO
+
+BACKTEST
+========
+
+Model: LSTM
+Symbol: USDCAD
+Timeframe: H1
+
+Period:
+2024-01-01 → 2026-01-01
+
+Trades:
+428
+
+Win rate:
+47.2%
+
+Profit factor:
+1.31
+
+Expectancy:
++0.08R
+
+Net return:
++12.4%
+
+Max drawdown:
+-7.8%
+
+Sharpe:
+1.12
+
+Spread:
+0.8 pips
+
+Slippage:
+0.2 pips
+
+IMPORTANTE:
+
+Los números anteriores son sólo un ejemplo de formato.
+No inventar resultados.
+
+===================================================
+7. COMPARACIÓN
+
+Comparar:
+
+Model prediction strategy
+vs
+simple baseline
+
+Por ejemplo:
+
+always-long
+random
+buy-and-hold si aplica
+
+La estrategia ML debe demostrar valor incremental.
+
+===================================================
+8. CONCLUSIÓN
+
+No basta con:
+
+AUC > 0.5
+
+El resultado final debe responder:
+
+"¿Las predicciones generan una ventaja económica después de costes?"
