@@ -1,0 +1,136 @@
+FASE 6 — EVALUACIÓN, THRESHOLDS Y PROBABILIDADES
+================================================
+
+Revisa la evaluación de todos los modelos.
+
+===================================================
+1. SCORES
+
+Para ROC-AUC y PR-AUC utilizar scores continuos.
+
+NO utilizar:
+
+predicted_class
+
+para calcular AUC.
+
+Correcto:
+
+probabilities = model.predict_proba(X)[:, 1]
+
+roc_auc_score(y, probabilities)
+
+===================================================
+2. PREDICT VS PREDICT_PROBA
+
+Verifica cada modelo:
+
+- CatBoost
+- LightGBM
+- XGBoost
+- Random Forest
+- LSTM
+- CNN
+- Transformer
+- Autoencoder
+- Isolation Forest
+
+Para cada uno documentar:
+
+predict()
+predict_proba()
+
+y qué significa el score.
+
+===================================================
+3. ISOLATION FOREST
+
+Revisar especialmente Isolation Forest.
+
+Determinar si:
+
+mayor score = mayor probabilidad de positivo
+
+o:
+
+mayor score = mayor anomalía
+
+Si está invertido, corregirlo antes de calcular AUC.
+
+===================================================
+4. THRESHOLD
+
+Añadir:
+
+--classification-threshold
+
+default:
+
+0.50
+
+Las métricas:
+
+accuracy
+precision
+recall
+F1
+
+deben utilizar ese threshold.
+
+ROC-AUC y PR-AUC NO deben depender de él.
+
+===================================================
+5. EJEMPLO
+
+Para LSTM:
+
+Threshold = 0.50
+
+Accuracy = 0.68
+Precision = 0.46
+Recall = 0.32
+F1 = 0.38
+ROC-AUC = 0.65
+PR-AUC = 0.42
+
+Threshold = 0.40
+
+Accuracy = 0.65
+Precision = 0.43
+Recall = 0.45
+F1 = 0.44
+ROC-AUC = 0.65
+PR-AUC = 0.42
+
+Observación importante:
+
+ROC-AUC permanece igual.
+
+===================================================
+6. THRESHOLD OPTIMIZATION
+
+Permite encontrar el mejor classification threshold utilizando VALIDATION.
+
+Ejemplo:
+
+threshold    precision    recall    F1
+----------------------------------------
+0.30         0.39         0.61      0.47
+0.40         0.43         0.45      0.44
+0.50         0.46         0.32      0.38
+0.60         0.51         0.20      0.29
+
+Seleccionar según la métrica configurada.
+
+NUNCA optimizar threshold usando TEST.
+
+===================================================
+7. TESTS
+
+Verificar:
+
+- AUC utiliza score continuo
+- F1 utiliza classification threshold
+- cambiar threshold no cambia ROC-AUC
+- threshold seleccionado en validation
+- test no participa
