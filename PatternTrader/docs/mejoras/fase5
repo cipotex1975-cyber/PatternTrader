@@ -1,0 +1,108 @@
+FASE 5 — ENTRENAMIENTO Y EARLY STOPPING
+========================================
+
+Ahora mejora el entrenamiento de:
+
+- LSTM
+- CNN
+- Transformer
+
+sin cambiar todavía su arquitectura.
+
+===================================================
+1. VALIDATION
+===================================================
+
+El entrenamiento debe tener acceso a:
+
+TRAIN
+VALIDATION
+
+pero NO TEST.
+
+===================================================
+2. EARLY STOPPING
+
+Implementa correctamente:
+
+--epochs
+--patience
+
+Ejemplo:
+
+epochs = 50
+patience = 5
+
+Si validation loss deja de mejorar durante 5 epochs:
+
+detener entrenamiento.
+
+===================================================
+3. BEST MODEL
+
+No guardar necesariamente el último epoch.
+
+Guardar:
+
+BEST VALIDATION MODEL
+
+Ejemplo:
+
+Epoch 1   val_loss=0.650
+Epoch 2   val_loss=0.620
+Epoch 3   val_loss=0.601
+Epoch 4   val_loss=0.603
+Epoch 5   val_loss=0.610
+Epoch 6   val_loss=0.615
+Epoch 7   val_loss=0.620
+Epoch 8   EARLY STOP
+
+Best epoch = 3
+
+El modelo guardado debe corresponder al epoch 3.
+
+===================================================
+4. SALIDA ESPERADA
+
+LSTM training:
+
+Epoch 01/50
+train_loss=...
+val_loss=...
+
+Epoch 02/50
+train_loss=...
+val_loss=...
+
+...
+
+Epoch 08/50
+train_loss=...
+val_loss=...
+
+Early stopping:
+  patience: 5
+  best_epoch: 3
+  best_val_loss: 0.601
+
+===================================================
+5. ÁRBOLES
+
+Implementa:
+
+--early-stop-rounds
+
+cuando el modelo lo soporte.
+
+Usar validation.
+
+Nunca test.
+
+===================================================
+6. TESTS
+
+Comprobar:
+
+- early stopping utiliza validation
+- test nunca participa
+- best checkpoint corresponde al mejor validation score
