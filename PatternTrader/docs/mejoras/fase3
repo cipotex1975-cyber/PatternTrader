@@ -1,0 +1,130 @@
+FASE 3 — PREPROCESSING Y SCALING CORRECTO
+==========================================
+
+Implementa preprocessing reproducible para los modelos neuronales.
+
+NO cambies todavía las features.
+
+===================================================
+1. OBJETIVO
+===================================================
+
+Actualmente las features tienen escalas muy diferentes:
+
+RSI             0..100
+close_position  0..1
+EMA             ~1.x
+ATR             ~0.x
+MACD            ~0.x
+volume_ratio    ~0.x..varios
+
+Esto puede dificultar el entrenamiento de redes neuronales.
+
+Implementa scaling configurable.
+
+===================================================
+2. CLI
+===================================================
+
+Añade:
+
+--feature-scaling
+
+Opciones:
+
+none
+standard
+
+Default recomendado:
+
+standard
+
+pero evalúa si mantener "none" para compatibilidad.
+
+===================================================
+3. REGLA DE LEAKAGE
+===================================================
+
+El scaler DEBE ajustarse únicamente con TRAIN.
+
+Correcto:
+
+scaler.fit(X_train)
+
+X_train_scaled = scaler.transform(X_train)
+X_validation_scaled = scaler.transform(X_validation)
+X_test_scaled = scaler.transform(X_test)
+
+Incorrecto:
+
+scaler.fit(concatenate(train, validation))
+
+o:
+
+scaler.fit(concatenate(train, validation, test))
+
+===================================================
+4. MODELOS
+===================================================
+
+Aplicar scaling a:
+
+LSTM
+CNN
+Transformer
+
+Los modelos basados en árboles pueden continuar utilizando features sin scaling si la implementación lo requiere.
+
+Documentar qué modelo recibe qué preprocessing.
+
+===================================================
+5. PERSISTENCIA
+===================================================
+
+El scaler utilizado durante entrenamiento debe guardarse junto al modelo.
+
+Al guardar:
+
+models/lstm_USDCAD.pt
+
+debe existir suficiente metadata para reconstruir:
+
+feature_names
+scaler
+sequence_length
+label_config
+
+===================================================
+6. EJEMPLO DE SALIDA
+===================================================
+
+Preprocessing:
+
+Feature scaling: standard
+
+Scaler:
+  type: StandardScaler
+  fitted_on: TRAIN ONLY
+  samples: 69556
+  features: 12
+
+Validation:
+  transformed: yes
+
+Test:
+  transformed: yes
+  used_for_fit: NO
+
+===================================================
+7. TESTS
+===================================================
+
+Añade tests que verifiquen que:
+
+scaler.fit() recibe exclusivamente TRAIN.
+
+Además:
+
+- guardar scaler
+- cargar scaler
+- obtener exactamente las mismas transformaciones
