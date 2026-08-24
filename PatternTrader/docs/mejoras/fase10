@@ -1,0 +1,119 @@
+FASE 10 — PROMOCIÓN DEL MODELO A PRODUCCIÓN
+============================================
+
+Modificar el flujo de promoción del modelo.
+
+Actualmente:
+
+train
+→ compare
+→ winner
+→ save
+→ DB active=True
+
+Esto es demasiado automático.
+
+===================================================
+1. NUEVO FLUJO
+
+TRAIN
+ ↓
+VALIDATION / WALK-FORWARD
+ ↓
+SELECT MODEL
+ ↓
+TRAIN FINAL
+ ↓
+FINAL TEST
+ ↓
+REPORT
+ ↓
+PROMOTION OPCIONAL
+
+===================================================
+2. DEFAULT
+
+Por defecto:
+
+NO activar automáticamente el modelo en DB.
+
+El entrenamiento debe generar:
+
+models/...
+comparison.json
+final_test.json
+
+pero:
+
+is_active = False
+
+===================================================
+3. OPCIÓN DE PROMOCIÓN
+
+Añadir explícitamente:
+
+--promote
+
+Si se especifica:
+
+--promote
+
+entonces:
+
+- validar que el modelo superó criterios mínimos
+- guardar
+- registrar
+- desactivar versión anterior
+- activar nueva versión
+
+===================================================
+4. CRITERIOS
+
+Preparar configuración:
+
+minimum_validation_auc
+minimum_validation_pr_auc
+
+Por ejemplo:
+
+minimum_validation_auc = 0.60
+
+No hardcodear arbitrariamente si la arquitectura actual tiene configuración central.
+
+===================================================
+5. EJEMPLO
+
+Entrenamiento normal:
+
+Model selected:
+  lstm
+
+Validation:
+  ROC-AUC = 0.642
+
+Final test:
+  ROC-AUC = 0.631
+
+Model saved:
+  models/lstm_USDCAD.pt
+
+Database promotion:
+  SKIPPED
+
+Reason:
+  --promote not specified
+
+===================================================
+6. CON --promote
+
+Database promotion:
+  SUCCESS
+
+Model:
+  lstm_USDCAD
+
+Version:
+  20260824_...
+
+is_active:
+  true
