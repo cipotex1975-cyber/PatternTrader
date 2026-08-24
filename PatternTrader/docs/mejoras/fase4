@@ -1,0 +1,178 @@
+FASE 4 — WALK-FORWARD VALIDATION REAL
+======================================
+
+Implementa walk-forward validation temporal.
+
+El parámetro existente:
+
+--walk-forward-splits
+
+debe convertirse en funcional.
+
+===================================================
+1. OBJETIVO
+===================================================
+
+Queremos pasar de:
+
+TRAIN → TEST
+
+a algo parecido a:
+
+Fold 1:
+TRAIN -------- VALIDATION
+
+Fold 2:
+TRAIN --------------- VALIDATION
+
+Fold 3:
+TRAIN ---------------------- VALIDATION
+
+...
+
+No utilizar shuffle.
+
+===================================================
+2. EJEMPLO
+===================================================
+
+Con 5 folds:
+
+Fold 1:
+TRAIN: 2010-2015
+VALID: 2015-2017
+
+Fold 2:
+TRAIN: 2010-2017
+VALID: 2017-2019
+
+Fold 3:
+TRAIN: 2010-2019
+VALID: 2019-2021
+
+Fold 4:
+TRAIN: 2010-2021
+VALID: 2021-2023
+
+Fold 5:
+TRAIN: 2010-2023
+VALID: 2023-2025
+
+Los períodos exactos dependerán del dataset.
+
+No inventes fechas artificiales.
+
+===================================================
+3. SCALER
+===================================================
+
+Para cada fold:
+
+FIT scaler únicamente sobre TRAIN del fold.
+
+Después:
+
+transform TRAIN
+transform VALIDATION
+
+Nunca utilizar datos posteriores.
+
+===================================================
+4. RESULTADOS
+===================================================
+
+Para cada modelo:
+
+LSTM
+
+Fold 1:
+AUC = 0.63
+PR-AUC = 0.40
+
+Fold 2:
+AUC = 0.67
+PR-AUC = 0.43
+
+Fold 3:
+AUC = 0.65
+PR-AUC = 0.42
+
+Fold 4:
+AUC = 0.61
+PR-AUC = 0.39
+
+Fold 5:
+AUC = 0.64
+PR-AUC = 0.41
+
+Resumen:
+
+LSTM
+Mean AUC = 0.640
+Std AUC  = 0.021
+Min AUC  = 0.610
+Max AUC  = 0.670
+
+Mean PR-AUC = 0.410
+
+===================================================
+5. COMPARACIÓN
+===================================================
+
+Generar:
+
+MODEL          MEAN_AUC   STD_AUC   MEAN_PR_AUC
+------------------------------------------------
+LSTM           0.640      0.021     0.410
+CNN            0.615      0.027     0.392
+CatBoost       0.603      0.019     0.381
+XGBoost        0.591      0.024     0.372
+
+===================================================
+6. SELECCIÓN
+===================================================
+
+El ganador debe basarse en:
+
+mean validation metric
+
+NO en un único fold.
+
+Además reporta std.
+
+Un modelo:
+
+AUC = 0.65 ± 0.02
+
+es preferible a:
+
+AUC = 0.69 ± 0.12
+
+si el objetivo es robustez.
+
+===================================================
+7. TEST FINAL
+===================================================
+
+Después de completar walk-forward:
+
+el TEST FINAL permanece intacto.
+
+El modelo/configuración se selecciona utilizando solamente TRAIN + VALIDATION.
+
+Después:
+
+entrenamiento final
+↓
+TEST FINAL
+
+===================================================
+8. TESTS
+
+Verificar:
+
+- cada fold es cronológico
+- train termina antes que validation
+- scaler sólo se ajusta sobre train
+- ningún fold utiliza información futura
+- test final no participa
