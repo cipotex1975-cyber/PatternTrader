@@ -1,0 +1,172 @@
+FASE 11 — EXPERIMENTO FINAL OUT-OF-SAMPLE
+==========================================
+
+No modificar el pipeline después de comenzar esta fase.
+
+El objetivo es producir una evaluación final reproducible.
+
+===================================================
+CONFIGURACIÓN
+===================================================
+
+Usar:
+
+symbol:
+USDCAD
+
+timeframe:
+H1
+
+forward_periods:
+5
+
+threshold:
+seleccionado previamente en VALIDATION
+
+min_up_moves:
+seleccionado previamente en VALIDATION
+
+sequence_length:
+30
+
+feature scaling:
+standard
+
+walk-forward:
+5 folds
+
+===================================================
+MODELOS
+===================================================
+
+Comparar:
+
+LSTM
+CNN
+CatBoost
+LightGBM
+XGBoost
+Random Forest
+
+No incluir Autoencoder / Isolation Forest / Transformer salvo que hayan sido validados correctamente en fases anteriores.
+
+===================================================
+SALIDA
+===================================================
+
+# WALK-FORWARD VALIDATION
+
+MODEL       MEAN AUC   STD AUC   MEAN PR-AUC
+---------------------------------------------
+LSTM        ...
+CNN         ...
+CatBoost    ...
+LightGBM    ...
+XGBoost     ...
+RF          ...
+
+Selected:
+LSTM
+
+Selection metric:
+ROC-AUC
+
+===================================================
+FINAL TEST
+===================================================
+
+Model:
+LSTM
+
+Dataset:
+USDCAD H1
+
+Period:
+...
+
+Samples:
+...
+
+ROC-AUC:
+...
+
+PR-AUC:
+...
+
+Accuracy:
+...
+
+Precision:
+...
+
+Recall:
+...
+
+F1:
+...
+
+Brier:
+...
+
+Classification threshold:
+...
+
+===================================================
+IMPORTANTE
+===================================================
+
+El reporte debe indicar explícitamente:
+
+"El TEST FINAL no fue utilizado para selección de modelo,
+selección de hiperparámetros ni selección de threshold."
+
+===================================================
+COMPARACIÓN CON EL EXPERIMENTO ORIGINAL
+===================================================
+
+Si originalmente teníamos:
+
+LSTM:
+ROC-AUC = 0.6513
+
+mostrar:
+
+Original single split:
+0.6513
+
+Walk-forward mean:
+...
+
+Final OOS test:
+...
+
+Pero NO interpretar automáticamente una caída como algo negativo.
+
+Explicar:
+
+"El resultado original utilizaba el mismo conjunto de test para
+comparar modelos. El nuevo protocolo utiliza validation para selección
+y reserva el test final para evaluación fuera de muestra."
+
+===================================================
+CONCLUSIÓN
+===================================================
+
+No declarar "modelo rentable".
+
+Solamente clasificar:
+
+ROBUST SIGNAL
+POSSIBLE SIGNAL
+WEAK SIGNAL
+NO EVIDENCE
+
+según:
+
+- estabilidad temporal
+- mean AUC
+- std AUC
+- PR-AUC
+- consistencia entre folds
+
+Todavía no hacer afirmaciones de rentabilidad.
