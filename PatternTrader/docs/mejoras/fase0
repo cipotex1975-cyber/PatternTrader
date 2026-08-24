@@ -1,0 +1,192 @@
+FASE 0 — AUDITORÍA DEL PIPELINE ML
+===================================
+
+Quiero que primero audites el pipeline actual de entrenamiento ML de este proyecto.
+
+NO MODIFIQUES NINGÚN ARCHIVO TODAVÍA.
+
+El objetivo es producir un diagnóstico preciso antes de comenzar la refactorización.
+
+Archivos que ya identificamos como relevantes:
+
+- train_and_compare.py
+- app/ml/training/data.py
+- app/ml/training/compare.py
+
+Pero debes localizar también cualquier archivo relacionado con:
+
+- modelos ML
+- clases base de modelos
+- preprocessing/scaling
+- save/load de modelos
+- evaluación
+- features
+- scoring/inferencia
+- repositorios de modelos
+- tests existentes
+
+## OBJETIVOS DE LA AUDITORÍA
+
+Determina exactamente:
+
+1. Cómo se cargan los datos.
+2. Cómo se ordenan temporalmente.
+3. Cómo se calculan las features.
+4. Cómo se calculan los labels.
+5. Cómo se hace el split train/test.
+6. Cómo se construyen las secuencias.
+7. Cómo se entrena cada modelo.
+8. Cómo se calcula predict().
+9. Cómo se calcula predict_proba().
+10. Cómo se calculan ROC-AUC y PR-AUC.
+11. Cómo se selecciona el ganador.
+12. Cómo se guarda el modelo.
+13. Cómo se registra en DB.
+14. Cómo se utiliza posteriormente el modelo para scoring/inferencia.
+15. Qué parámetros CLI existen pero no están realmente conectados.
+16. Dónde podría existir data leakage.
+17. Qué partes del pipeline no son reproducibles.
+18. Qué tests existen actualmente.
+
+## PROBLEMAS QUE YA SOSPECHAMOS
+
+Verifica específicamente estos puntos.
+
+### Problema 1
+
+En train_and_compare.py existe:
+
+--min-up-moves
+
+pero debemos comprobar si realmente llega a create_labels().
+
+### Problema 2
+
+En compare.py aparentemente train_accuracy puede recibir train_loss cuando el modelo no proporciona accuracy.
+
+Queremos confirmar exactamente dónde ocurre.
+
+### Problema 3
+
+Existe:
+
+--walk-forward-splits
+
+pero aparentemente no se está utilizando realmente.
+
+### Problema 4
+
+Existen:
+
+--early-stop-rounds
+--patience
+
+pero debemos verificar si realmente afectan al entrenamiento.
+
+### Problema 5
+
+El modelo ganador aparentemente se selecciona utilizando el TEST.
+
+### Problema 6
+
+El scaler/preprocessing debe revisarse para detectar si existe leakage o si simplemente no existe.
+
+### Problema 7
+
+Las primeras secuencias del TEST aparentemente utilizan contexto histórico del TRAIN.
+
+Verifica que esto sea correcto y que no exista leakage.
+
+### Problema 8
+
+El label mira hacia adelante:
+
+t+1 ... t+forward_periods
+
+Verifica si las últimas muestras del TRAIN pueden terminar utilizando observaciones del TEST para construir sus labels.
+
+## IMPORTANTE
+
+No corrijas nada todavía.
+
+No hagas refactor.
+
+No cambies nombres.
+
+No cambies modelos.
+
+No cambies hiperparámetros.
+
+## SALIDA ESPERADA
+
+Genera un informe con esta estructura:
+
+# AUDITORÍA ML
+
+## 1. Arquitectura actual
+
+Mostrar:
+
+data
+ ↓
+features
+ ↓
+labels
+ ↓
+split
+ ↓
+training
+ ↓
+evaluation
+ ↓
+selection
+ ↓
+save
+ ↓
+DB
+
+## 2. Problemas encontrados
+
+Tabla:
+
+| ID | Problema | Archivo | Severidad | Evidencia |
+|----|----------|---------|-----------|-----------|
+| P01 | ... | ... | ALTA | ... |
+| P02 | ... | ... | MEDIA | ... |
+
+## 3. Posibles data leakage
+
+Para cada uno:
+
+- existe/no existe
+- explicación
+- impacto potencial
+- cómo corregirlo
+
+## 4. Parámetros CLI no utilizados
+
+Ejemplo:
+
+--min-up-moves → declarado pero no utilizado
+
+## 5. Flujo de evaluación actual
+
+Explica exactamente:
+
+TRAIN = ...
+TEST = ...  
+
+y cómo se selecciona el modelo.
+
+## 6. Plan de modificación
+  
+Propón cambios divididos en:
+
+FASE 1
+FASE 2
+FASE 3
+...
+
+NO MODIFIQUES CÓDIGO EN ESTA FASE.
+
+Al final, espera mi confirmación antes de pasar a FASE 1.
