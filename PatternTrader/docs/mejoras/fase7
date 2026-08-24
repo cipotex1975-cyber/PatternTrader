@@ -1,0 +1,112 @@
+FASE 7 — EXPERIMENTO DE ROBUSTEZ DEL LABEL
+============================================
+
+Ahora quiero estudiar si la señal predictiva depende excesivamente de una única definición del label.
+
+NO optimices sobre TEST FINAL.
+
+Utiliza TRAIN/VALIDATION.
+
+===================================================
+1. VARIABLES
+
+forward_periods:
+
+5
+
+threshold:
+
+0.0005
+0.0010
+0.0015
+0.0020
+
+min_up_moves:
+
+1
+2
+3
+
+===================================================
+2. EXPERIMENTOS
+
+Ejecutar:
+
+0.0005 / 1
+0.0005 / 2
+0.0005 / 3
+
+0.0010 / 1
+0.0010 / 2
+0.0010 / 3
+
+0.0015 / 1
+0.0015 / 2
+0.0015 / 3
+
+0.0020 / 1
+0.0020 / 2
+0.0020 / 3
+
+===================================================
+3. RESULTADO
+
+Generar tabla:
+
+threshold   min_moves   positive_%   mean_AUC   std_AUC   PR_AUC
+------------------------------------------------------------------
+0.0005      1           58.2%         0.61       0.02      0.47
+0.0005      2           43.1%         0.63       0.02      0.43
+0.0005      3           29.7%         0.64       0.03      0.36
+
+0.0010      1           52.0%         0.62       0.02      0.45
+0.0010      2           39.7%         0.64       0.02      0.42
+0.0010      3           26.3%         0.65       0.03      0.34
+
+...
+
+Los números anteriores son solamente un ejemplo de formato.
+NO inventes resultados.
+
+===================================================
+4. INTERPRETACIÓN
+
+Queremos saber si:
+
+AUC ≈ 0.63-0.65
+
+aparece de manera consistente en varias definiciones razonables del label.
+
+Esto sería evidencia de robustez.
+
+Si únicamente:
+
+threshold=0.001
+min_up_moves=2
+
+produce un resultado alto y todo lo demás cae a ~0.50:
+
+reportarlo como posible overfitting.
+
+===================================================
+5. TEST FINAL
+
+NO utilizar el TEST FINAL para elegir:
+
+threshold
+min_up_moves
+
+===================================================
+6. SALIDA
+
+Generar también:
+
+BEST VALIDATION CONFIGURATION
+
+threshold = ...
+min_up_moves = ...
+mean validation AUC = ...
+std validation AUC = ...
+positive ratio = ...
+
+No llamar esto "best trading configuration" todavía.
