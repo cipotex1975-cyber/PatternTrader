@@ -1,0 +1,112 @@
+FASE 9 — REPRODUCIBILIDAD Y VERSIONADO DE MODELOS
+==================================================
+
+Haz que cada modelo guardado contenga suficiente información para reproducir exactamente el pipeline de inferencia.
+
+===================================================
+1. METADATA
+
+Guardar:
+
+symbol
+timeframe
+model_name
+model_version
+
+feature_names
+
+forward_periods
+threshold
+min_up_moves
+
+classification_threshold
+
+sequence_length
+
+feature_scaling
+
+scaler
+
+training_period
+validation_period
+test_period
+
+random_seed
+
+training_timestamp
+
+train_metrics
+validation_metrics
+test_metrics
+
+===================================================
+2. EJEMPLO
+
+models/lstm_USDCAD.pt
+
+Metadata:
+
+model:
+  name: lstm
+  version: 20260824_...
+
+dataset:
+  symbol: USDCAD
+  timeframe: H1
+  start: ...
+  end: ...
+
+features:
+  count: 12
+  names:
+    - rsi
+    - macd
+    ...
+
+label:
+  forward_periods: 5
+  threshold: 0.001
+  min_up_moves: 2
+
+preprocessing:
+  scaling: standard
+
+sequence:
+  length: 30
+
+metrics:
+  validation:
+    roc_auc: ...
+    pr_auc: ...
+
+  test:
+    roc_auc: ...
+    pr_auc: ...
+
+===================================================
+3. REPRODUCIBILIDAD
+
+Configurar seeds para:
+
+numpy
+torch
+sklearn
+
+cuando sea posible.
+
+Registrar:
+
+random_seed
+
+===================================================
+4. TEST
+
+Guardar modelo.
+
+Cargar modelo.
+
+Recrear preprocessing.
+
+Realizar predicción.
+
+Verificar que el resultado sea consistente.
