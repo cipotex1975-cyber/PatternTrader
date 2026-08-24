@@ -1,0 +1,223 @@
+FASE 2 — SEPARACIÓN TRAIN / VALIDATION / TEST
+===============================================
+
+Ahora que el pipeline fundamental está corregido, elimina la selección del modelo utilizando directamente el TEST.
+
+Actualmente tenemos aproximadamente:
+
+80% TRAIN
+20% TEST
+
+y el modelo ganador se selecciona por el AUC obtenido en TEST.
+
+Esto NO es aceptable para una evaluación final fuera de muestra.
+
+Implementa:
+
+TRAIN
+VALIDATION
+TEST FINAL
+
+===================================================
+1. NUEVOS PARÁMETROS
+===================================================
+
+Añade:
+
+--train-size
+--validation-size
+--test-size
+
+Defaults:
+
+train_size = 0.70
+validation_size = 0.15
+test_size = 0.15
+
+Validar:
+
+train_size > 0
+validation_size > 0
+test_size > 0
+
+y:
+
+train_size + validation_size + test_size == 1
+
+con tolerancia numérica razonable.
+
+===================================================
+2. SPLIT TEMPORAL
+===================================================
+
+Nunca usar shuffle.
+
+Ejemplo:
+
+Dataset total = 100000
+
+TRAIN:
+0 → 70000
+
+VALIDATION:
+70000 → 85000
+
+TEST:
+85000 → 100000
+
+Mostrar:
+
+Chronological split:
+
+TRAIN       : 0 - 69999
+VALIDATION  : 70000 - 84999
+TEST FINAL  : 85000 - 99999
+
+===================================================
+3. REGLA FUNDAMENTAL
+===================================================
+
+TRAIN puede utilizarse para:
+
+- fitting
+- scaler
+- entrenamiento
+- feature selection futura
+
+VALIDATION puede utilizarse para:
+
+- seleccionar modelo
+- seleccionar hiperparámetros
+- seleccionar classification threshold
+- early stopping
+
+TEST FINAL solamente puede utilizarse para:
+
+- evaluación final
+
+El TEST FINAL no puede participar en:
+
+- entrenamiento
+- scaler.fit()
+- selección de modelo
+- selección de threshold
+- early stopping
+- hyperparameter tuning
+
+===================================================
+4. CAMBIAR run_comparison()
+===================================================
+
+Actualmente recibe:
+
+X_train
+y_train
+X_test
+y_test
+
+Adapta la arquitectura para trabajar conceptualmente con:
+
+X_train
+y_train
+X_validation
+y_validation
+
+El resultado de run_comparison() debe seleccionar el ganador utilizando VALIDATION.
+
+El TEST debe evaluarse posteriormente.
+
+===================================================
+5. EJEMPLO
+===================================================
+
+La salida debe mostrar:
+
+Dataset
+-------
+Total samples: 99366
+
+TRAIN
+-----
+Samples: 69556
+Range: 2010-05-31 → ...
+
+VALIDATION
+----------
+Samples: 14904
+Range: ... → ...
+
+TEST FINAL
+----------
+Samples: 14906
+Range: ... → ...
+
+===================================================
+6. RESULTADO DE COMPARACIÓN
+===================================================
+
+Ejemplo esperado:
+
+MODEL           VAL_AUC     VAL_PR_AUC
+---------------------------------------
+catboost        0.6042      0.3910
+cnn             0.6187      0.3895
+lstm            0.6461      0.4188
+random_forest   0.5881      0.3780
+xgboost         0.5834      0.3691
+
+Selected model:
+lstm
+
+Selection metric:
+roc_auc
+
+Selection dataset:
+VALIDATION
+
+IMPORTANTE:
+
+No mostrar:
+
+"Ganador según TEST"
+
+sino:
+
+"Modelo seleccionado según VALIDATION".
+
+===================================================
+7. TEST FINAL
+===================================================
+
+Después de seleccionar el modelo:
+
+evaluarlo sobre TEST FINAL.
+
+Mostrar claramente:
+
+FINAL OUT-OF-SAMPLE TEST
+========================
+
+Model: lstm
+
+ROC-AUC: 0.xxxx
+PR-AUC : 0.xxxx
+Accuracy: 0.xxxx
+Precision: 0.xxxx
+Recall: 0.xxxx
+F1: 0.xxxx
+
+IMPORTANTE:
+
+Este resultado NO puede cambiar el modelo seleccionado.
+
+===================================================
+8. TESTS
+===================================================
+
+Crear tests que demuestren:
+
+- train < validation < test temporalmente
+- no existe shuffle
+- test no se utiliza para selección
+- test no se utiliza para scaler.fit
+- validation sí puede utilizarse para selección
