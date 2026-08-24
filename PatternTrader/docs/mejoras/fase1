@@ -1,0 +1,200 @@
+FASE 1 — CORRECCIONES FUNDAMENTALES Y DATA LEAKAGE
+===================================================
+
+Implementa únicamente las correcciones fundamentales del pipeline.
+
+NO implementes todavía:
+
+- walk-forward
+- nuevas features
+- calibración
+- backtesting
+- optimización de hiperparámetros
+
+El objetivo de esta fase es dejar el pipeline actual matemáticamente correcto sin cambiar todavía su arquitectura general.
+
+===================================================
+1. CORREGIR --min-up-moves
+===================================================
+
+En train_and_compare.py, asegúrate de que:
+
+--min-up-moves
+
+realmente se pase a:
+
+create_labels()
+
+Debe quedar conceptualmente:
+
+df["label"] = create_labels(
+    df,
+    forward_periods=args.forward_periods,
+    threshold=args.threshold,
+    min_up_moves=args.min_up_moves,
+)
+
+Mantén defaults:
+
+forward_periods=5
+threshold=0.001
+min_up_moves=2
+
+Añade validaciones:
+
+forward_periods >= 1
+threshold > 0
+min_up_moves >= 1
+min_up_moves <= forward_periods
+
+Ejemplo:
+
+$ python train_and_compare.py data.txt \
+    --forward-periods 5 \
+    --threshold 0.001 \
+    --min-up-moves 3
+
+La salida debe mostrar explícitamente:
+
+Label configuration:
+  forward_periods: 5
+  threshold: 0.001
+  min_up_moves: 3
+
+===================================================
+2. CORREGIR train_accuracy
+===================================================
+
+Nunca utilizar train_loss como fallback para train_accuracy.
+
+Incorrecto:
+
+train_accuracy = train_loss
+
+Correcto:
+
+train_accuracy = NaN
+
+cuando el modelo no proporcione accuracy.
+
+Añadir:
+
+train_loss
+
+como métrica independiente.
+
+La tabla debe pasar de algo como:
+
+MODEL       TRAIN
+lstm        6.5741
+
+a:
+
+MODEL       TRAIN_LOSS   TRAIN_ACC
+lstm        6.5741       0.68
+
+Si el accuracy no está disponible:
+
+MODEL       TRAIN_LOSS   TRAIN_ACC
+lstm        6.5741       N/A
+
+===================================================
+3. CORREGIR LABELS EN LA FRONTERA TRAIN/TEST
+===================================================
+
+El label utiliza datos futuros.
+
+Garantiza que ninguna muestra de TRAIN tenga un label calculado utilizando observaciones del TEST.
+
+Ejemplo:
+
+TRAIN:
+t-5
+t-4
+t-3
+t-2
+t-1
+t
+
+TEST:
+t+1
+t+2
+t+3
+t+4
+t+5
+
+Si forward_periods=5:
+
+el label de t NO debe pertenecer a TRAIN porque requiere:
+
+t+1 ... t+5
+
+Implementa la solución más clara y mantenible.
+
+Documenta el motivo.
+
+===================================================
+4. TESTS
+===================================================
+
+Añade tests automáticos para:
+
+A) --min-up-moves realmente cambia el label.
+
+B) min_up_moves inválido produce error.
+
+C) Las últimas muestras del TRAIN no dependen del TEST.
+
+D) train_accuracy nunca recibe train_loss.
+
+E) build_sequences mantiene causalidad.
+
+===================================================
+5. NO CAMBIAR
+===================================================
+
+No cambiar todavía:
+
+- definición del label
+- lista de features
+- sequence_length
+- modelos
+- hiperparámetros
+- selección del ganador
+- split 80/20
+
+===================================================
+SALIDA ESPERADA
+===================================================
+
+Después de ejecutar un entrenamiento:
+
+Label configuration:
+  forward_periods: 5
+  threshold: 0.001
+  min_up_moves: 2
+
+Dataset:
+  samples: 99366
+  positives: 39439 (39.69%)
+  negatives: 59927 (60.31%)
+
+Split:
+  train: ...
+  test: ...
+
+MODEL                 TRAIN_LOSS    TRAIN_ACC    AUC
+----------------------------------------------------
+catboost              0.6255        0.6255       ...
+lstm                   6.57         ...          ...
+...
+
+No debe aparecer:
+
+lstm TRAIN = 6.5741
+
+interpretado como accuracy.
+
+Ejecuta todos los tests existentes y los nuevos tests.
+
+No continúes con otra fase.
