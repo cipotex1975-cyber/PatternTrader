@@ -1,0 +1,55 @@
+FASE 8 — CALIBRACIÓN DE PROBABILIDADES
+========================================
+
+Quiero saber si la salida del modelo puede interpretarse como una probabilidad razonablemente calibrada.
+
+No modificar todavía el objetivo del label.
+
+===================================================
+1. MÉTRICAS
+
+Implementar:
+
+- Brier Score
+- calibration/reliability curve
+
+siempre utilizando VALIDATION para calibración.
+
+===================================================
+2. EJEMPLO
+
+Predicción:
+
+0.0 - 0.1
+0.1 - 0.2
+...
+0.9 - 1.0
+
+Mostrar:
+
+BIN       PREDICTED    ACTUAL
+-----------------------------
+0.0-0.1   0.05         0.04
+0.1-0.2   0.15         0.17
+0.2-0.3   0.25         0.27
+...
+
+===================================================
+3. IMPORTANTE
+
+No asumir:
+
+P=0.70
+
+significa automáticamente:
+
+70% de probabilidad.
+
+Verificarlo empíricamente.
+
+===================================================
+4. TEST
+
+La calibración debe determinarse usando validation.
+
+El TEST FINAL se utiliza solamente para evaluar la calibración final una vez.
