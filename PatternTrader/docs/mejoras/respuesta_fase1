@@ -1,0 +1,149 @@
+# FASE 1 — Cablear CLI y corregir reporting — Respuesta
+
+Fecha: 2026-08-24
+Estado: COMPLETADA (sin tocar modelos, hiperparámetros ni la lógica de split)
+Base: informe de auditoría en `docs/mejoras/respuesta_fase0`
+
+---
+
+## 1. Cambios realizados
+
+### 1.1 P01 — `--min-up-moves` ahora llega a `create_labels()` (train_and_compare.py)
+
+Antes:
+
+```python
+df["label"] = create_labels(df, forward_periods=args.forward_periods, threshold=args.threshold)
+```
+
+Ahora:
+
+```python
+df["label"] = create_labels(
+    df,
+    forward_periods=args.forward_periods,
+    threshold=args.threshold,
+    min_up_moves=args.min_up_moves,
+)
+```
+
+Validación empírica (dataset sintético, forward=5, threshold=0.001):
+
+```
+min_up_moves=2 → positivos 275/495 (55.56%)
+min_up_moves=3 → positivos 222/495 (44.85%)
+```
+
+El parámetro ya modifica realmente las etiquetas.
+
+### 1.2 P02 — `train_accuracy` y `train_loss` separados (app/ml/training/compare.py)
+
+Antes: si el modelo no devolvía `train_accuracy`, la columna recibía el valor de `loss`
+(los secuenciales mostraban su loss como si fuera accuracy).
+
+Ahora `run_comparison()` emite dos columnas independientes:
+
+```python
+"train_accuracy": float(train_acc) if train_acc is not None else float("nan"),
+"train_loss": float(train_loss) if train_loss is not None else float("nan"),
+```
+
+- Árboles (RF/XGB/LGBM/CatBoost): `train_accuracy` finita, `train_loss=NaN`.
+- Secuenciales (LSTM/Transformer/CNN) y autoencoder: `train_accuracy=NaN`, `train_loss` finita.
+- isolation_forest (no devuelve ninguna): ambas NaN.
+
+Cambios asociados:
+
+- `format_summary_table()`: nueva columna `LOSS`; cabecera ahora
+  `MODELO | T.ACC | LOSS | ACC | PREC | REC | F1 | AUC | PR_AUC | ESTADO`.
+- Log por modelo: muestra `train_acc=...` o `train_loss=...` según lo que el modelo
+  realmente reporta (`train=n/a` si nada).
+- El log del CLI deja de imprimir un loss disfrazado de accuracy.
+
+### 1.3 Métricas no finitas excluidas de la persistencia
+
+`select_winner` devuelve la fila completa del summary, que ahora puede contener NaN en
+`train_loss`. Para evitar propagar `NaN` al sidecar JSON y a la base de datos,
+tanto `save_winner()` (compare.py) como `register_in_db()` (train_and_compare.py)
+filtran con `math.isfinite(...)` además del filtro de tipo numérico.
+
+### 1.4 Parámetros muertos marcados explícitamente (P03/P04)
+
+Sin eliminar flags (compatibilidad hacia atrás preservada):
+
+- `--walk-forward-splits`, `--early-stop-rounds`, `--patience`: help actualizado con
+  `(RESERVADO: aún no afecta ...)`.
+- Si se invocan con un valor distinto al default, el CLI emite un warning indicando que
+  todavía no tienen efecto.
+- En `run_comparison()` los parámetros quedaron marcados con `TODO(fase 2+)`.
+
+### 1.5 Tests nuevos (tests/unit/test_ml_training.py)
+
+| Test | Cubre |
+|------|-------|
+| `test_tabular_models_report_train_accuracy_without_loss` | RF: acc finita + loss NaN |
+| `test_sequence_models_report_train_loss_without_accuracy` | CNN: acc NaN + loss finita > 0 |
+| `test_main_passes_min_up_moves_to_create_labels` | spy sobre `create_labels`: el CLI pasa `min_up_moves` |
+
+---
+
+## 2. Archivos modificados
+
+| Archivo | Cambio |
+|---------|--------|
+| `train_and_compare.py` | wiring `min_up_moves`, warnings params reservados, help texts, filtro isfinite en DB |
+| `app/ml/training/compare.py` | columnas separadas acc/loss, tabla con LOSS, log honesto, isfinite en sidecar, TODO fase 2+ |
+| `tests/unit/test_ml_training.py` | +3 tests |
+
+No se modificó ningún modelo, hiperparámetro, split ni lógica de labels.
+
+---
+
+## 3. Verificación (orden AGENTS.md)
+
+1. `black app/ tests/ && isort app/ tests/` → OK (2 ficheros reformateados: los editados).
+2. `mypy app/` → 0 errores nuevos; `app/ml/training/compare.py` sin errores
+   (los errores existentes en otros módulos son preexistentes y ajenos a esta fase).
+3. `flake8` sobre ficheros cambiados → OK (incluye fix de un E501 preexistente en la
+   ayuda de `--min-up-moves`).
+4. `pytest tests/unit/test_ml_training.py` → **21 passed**.
+5. Suite completa `pytest` → **331 passed, 17 skipped, 1 failed**.
+   El fallo (`test_pipeline_cap_and_throttle.py::test_pipeline_health_recalculation_is_throttled`)
+   es PREEXISTENTE: verificado con `git stash` (falla idéntico sin mis cambios) y es
+   ajeno al pipeline ML.
+
+### Validación end-to-end (datos sintéticos, 500 velas)
+
+```
+$ python train_and_compare.py data.txt --model random_forest,cnn \
+    --sequence-length 10 --epochs 2 --min-up-moves 3 --patience 7 --no-save
+
+WARNING  --patience todavía no tiene efecto (early-stopping secuencial pendiente)
+random_forest: train_acc=1.0000 roc_auc=0.5740
+cnn: train_loss=1.4158 roc_auc=0.4719
+
+MODELO          T.ACC    LOSS     ACC    PREC     REC      F1     AUC  PR_AUC  ESTADO
+random_forest  1.0000     nan  0.5876  0.5926  0.6400  0.6154  0.5740  0.5691  ok
+cnn               nan  1.4158  0.5361  0.6000  0.3000  0.4000  0.4719  0.5412  ok
+
+Ganador: random_forest | roc_auc=0.5740
+```
+
+Cada familia muestra su métrica real de entrenamiento en su columna.
+
+---
+
+## 4. Problemas cerrados y pendientes
+
+| ID | Estado tras FASE 1 |
+|----|--------------------|
+| P01 min-up-moves | CERRADO |
+| P02 acc/loss mezclados | CERRADO |
+| P03 walk-forward | MITIGADO (marcado/warning); implementación real → FASE 2 |
+| P04 early-stop/patience | MITIGADO (marcado/warning); implementación real → FASE 2 |
+| P05 selección sobre TEST | PENDIENTE → FASE 2 (split TRAIN/VAL/TEST + walk-forward) |
+| P06 scaler inexistente | PENDIENTE → FASE 3 |
+| P08 frontera labels train/test | PENDIENTE → FASE 2 |
+| P09/P11/P12/P10 | PENDIENTES → FASES 3-5 |
+
+Esperando confirmación para comenzar FASE 2.

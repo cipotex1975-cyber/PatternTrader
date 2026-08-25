@@ -103,7 +103,7 @@ class SignalRepository:
             risk_reward_ratio=orm.risk_reward_ratio or 0.0,
             score=orm.score or 0.0,
             health=orm.health or 0.0,
-            ml_probability=orm.ml_probability or 0.0,
+            ml_probability=orm.ml_probability,
             reasons=orm.reasons or [],
             created_at=orm.created_at,
             sent_at=orm.sent_at,

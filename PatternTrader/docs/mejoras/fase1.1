@@ -1,0 +1,258 @@
+FASE 1.1 — HACER EL REGISTRO EN DB ROBUSTO
+===========================================
+
+CONTEXTO
+--------
+
+La FASE 1 de entrenamiento terminó correctamente.
+
+El modelo ganador fue:
+
+lstm
+ROC-AUC = 0.6513202365
+
+El artefacto fue guardado correctamente:
+
+models/lstm_USDCAD.pt
+
+El summary también fue guardado:
+
+models/USDCAD_comparison.json
+
+Sin embargo, el proceso terminó con excepción al ejecutar:
+
+--db
+
+El traceback muestra:
+
+await repo.deactivate_by_symbol(symbol)
+
+y PostgreSQL rechaza la conexión:
+
+127.0.0.1:5432
+::1:5432
+
+Error:
+
+OSError: Multiple exceptions:
+[Errno 111] Connect call failed
+
+Esto es un problema de disponibilidad/configuración de PostgreSQL,
+NO un problema del entrenamiento.
+
+============================================================
+OBJETIVO
+============================================================
+
+Hacer que el pipeline trate el registro en DB como una etapa posterior
+e independiente del entrenamiento.
+
+Un fallo de DB NO debe borrar, invalidar ni ocultar el resultado exitoso
+del entrenamiento.
+
+============================================================
+1. NO CAMBIAR EL PIPELINE ML
+============================================================
+
+NO modificar:
+
+- create_features()
+- create_labels()
+- run_comparison()
+- métricas
+- modelos
+- split
+- selección del ganador
+
+Esta fase es exclusivamente para robustez del registro en DB.
+
+============================================================
+2. MANEJO DE EXCEPCIONES
+============================================================
+
+En:
+
+register_in_db()
+
+capturar explícitamente los errores de conexión/SQLAlchemy.
+
+No utilizar:
+
+except Exception:
+    pass
+
+Debe registrarse el error.
+
+Ejemplo:
+
+try:
+    await register_in_db(...)
+except Exception as exc:
+    logger.exception(...)
+    print(...)
+    
+pero el programa debe distinguir:
+
+TRAINING SUCCESS
+DB REGISTRATION FAILED
+
+============================================================
+3. SALIDA ESPERADA
+
+Si el entrenamiento funciona pero PostgreSQL está caído:
+
+Training:
+  SUCCESS
+
+Winner:
+  lstm
+  roc_auc=0.6513
+
+Artifact:
+  models/lstm_USDCAD.pt
+  SUCCESS
+
+Summary:
+  models/USDCAD_comparison.json
+  SUCCESS
+
+Database registration:
+  FAILED
+
+Reason:
+  PostgreSQL unavailable at localhost:5432
+
+IMPORTANTE:
+
+El proceso NO debe terminar con un traceback no controlado.
+
+============================================================
+4. EXIT CODE
+============================================================
+
+Decidir explícitamente el comportamiento.
+
+Recomiendo:
+
+- entrenamiento exitoso + DB fallida = exit code 0
+
+porque el objetivo principal del comando es entrenar.
+
+Sin embargo, registrar claramente:
+
+DB_REGISTRATION_STATUS=FAILED
+
+No ocultar el error.
+
+============================================================
+5. NO DESACTIVAR MODELO ANTERIOR SI LA NUEVA CONEXIÓN FALLA
+============================================================
+
+Actualmente:
+
+deactivate_by_symbol(symbol)
+
+ocurre antes de:
+
+upsert(...)
+
+Si la conexión funciona parcialmente pero el proceso falla posteriormente,
+podría dejarse el sistema sin modelo activo.
+
+Por ahora no implementar todavía una estrategia compleja de transacciones,
+pero documentar este riesgo para FASE 11.
+
+============================================================
+6. TEST
+
+Crear tests que simulen:
+
+A)
+Entrenamiento exitoso + DB disponible
+
+Resultado:
+
+training = SUCCESS
+db = SUCCESS
+
+B)
+Entrenamiento exitoso + DB unavailable
+
+Resultado:
+
+training = SUCCESS
+db = FAILED
+
+NO traceback.
+
+C)
+El artifact continúa existiendo.
+
+D)
+El summary continúa existiendo.
+
+============================================================
+7. LOG
+
+Usar algo parecido a:
+
+INFO:
+Training completed successfully.
+
+INFO:
+Winner: lstm | roc_auc=0.6513
+
+INFO:
+Artifact saved:
+models/lstm_USDCAD.pt
+
+WARNING:
+Database registration failed:
+PostgreSQL unavailable at localhost:5432
+
+INFO:
+Training artifacts remain valid.
+
+============================================================
+8. NO IMPLEMENTAR TODAVÍA
+
+NO implementar:
+
+--promote
+
+NO cambiar:
+
+deactivate_by_symbol()
+
+NO cambiar:
+
+upsert()
+
+NO cambiar el modelo activo.
+
+Eso se resolverá posteriormente en FASE 11.
+
+============================================================
+RESULTADO ESPERADO
+============================================================
+
+FASE 1.1 COMPLETED
+
+ML training:
+  PASS
+
+Artifact persistence:
+  PASS
+
+Summary persistence:
+  PASS
+
+DB failure handling:
+  PASS
+
+Unhandled traceback:
+  NONE
+
+============================================================
+
+Al finalizar, ejecutar los tests existentes y los nuevos tests.

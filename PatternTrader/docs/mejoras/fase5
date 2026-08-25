@@ -1,108 +1,151 @@
-FASE 5 — ENTRENAMIENTO Y EARLY STOPPING
-========================================
+FASE 5 — WALK-FORWARD VALIDATION
+================================
 
-Ahora mejora el entrenamiento de:
+Implementar realmente:
 
-- LSTM
-- CNN
-- Transformer
+--walk-forward-splits
 
-sin cambiar todavía su arquitectura.
+No modificar todavía la arquitectura de los modelos.
 
-===================================================
-1. VALIDATION
-===================================================
+============================================================
+1. OBJETIVO
 
-El entrenamiento debe tener acceso a:
+Queremos saber si el resultado del modelo es estable en diferentes
+períodos históricos.
 
-TRAIN
-VALIDATION
+Usar expanding window.
 
-pero NO TEST.
+Ejemplo conceptual:
 
-===================================================
-2. EARLY STOPPING
+Fold 1:
+TRAIN ======= VALID
 
-Implementa correctamente:
+Fold 2:
+TRAIN ============ VALID
 
---epochs
---patience
+Fold 3:
+TRAIN ================= VALID
 
-Ejemplo:
+Fold 4:
+TRAIN ===================== VALID
 
-epochs = 50
-patience = 5
+Fold 5:
+TRAIN ========================== VALID
 
-Si validation loss deja de mejorar durante 5 epochs:
+============================================================
+2. REGLAS
 
-detener entrenamiento.
+Cada validation fold debe ser posterior temporalmente a su train.
 
-===================================================
-3. BEST MODEL
+Nunca shuffle.
 
-No guardar necesariamente el último epoch.
+Nunca utilizar futuro.
 
-Guardar:
+============================================================
+3. PREPROCESSING
 
-BEST VALIDATION MODEL
+Para cada fold:
 
-Ejemplo:
+scaler.fit(train_fold)
 
-Epoch 1   val_loss=0.650
-Epoch 2   val_loss=0.620
-Epoch 3   val_loss=0.601
-Epoch 4   val_loss=0.603
-Epoch 5   val_loss=0.610
-Epoch 6   val_loss=0.615
-Epoch 7   val_loss=0.620
-Epoch 8   EARLY STOP
+scaler.transform(train_fold)
+scaler.transform(validation_fold)
 
-Best epoch = 3
+Nunca usar validation para fit.
 
-El modelo guardado debe corresponder al epoch 3.
+============================================================
+4. LABELS
 
-===================================================
-4. SALIDA ESPERADA
+Respetar forward_periods.
 
-LSTM training:
+Ningún label del train de un fold puede utilizar datos posteriores
+a la frontera de ese fold.
 
-Epoch 01/50
-train_loss=...
-val_loss=...
+============================================================
+5. MÉTRICAS
 
-Epoch 02/50
-train_loss=...
-val_loss=...
+Para cada modelo:
+
+fold_auc
+fold_pr_auc
+fold_accuracy
+fold_precision
+fold_recall
+fold_f1
+
+Después:
+
+mean_auc
+std_auc
+min_auc
+max_auc
+
+mean_pr_auc
+std_pr_auc
+
+============================================================
+6. EJEMPLO DE SALIDA
+
+LSTM
+
+Fold 1:
+  AUC = 0.63
+  PR-AUC = 0.40
+
+Fold 2:
+  AUC = 0.66
+  PR-AUC = 0.43
 
 ...
 
-Epoch 08/50
-train_loss=...
-val_loss=...
+Summary:
 
-Early stopping:
-  patience: 5
-  best_epoch: 3
-  best_val_loss: 0.601
+Model: LSTM
 
-===================================================
-5. ÁRBOLES
+Mean ROC-AUC: 0.642
+Std ROC-AUC : 0.021
+Min ROC-AUC : 0.610
+Max ROC-AUC : 0.670
 
-Implementa:
+Mean PR-AUC: 0.414
 
---early-stop-rounds
+Los números son sólo ejemplo.
 
-cuando el modelo lo soporte.
+============================================================
+7. SELECCIÓN
 
-Usar validation.
+El ganador debe seleccionarse utilizando:
 
-Nunca test.
+mean validation metric
 
-===================================================
-6. TESTS
+No utilizar:
 
-Comprobar:
+final test
 
-- early stopping utiliza validation
-- test nunca participa
-- best checkpoint corresponde al mejor validation score
+============================================================
+8. PERFORMANCE
+
+No ejecutar innecesariamente todos los modelos si eso hace el proceso
+demasiado lento.
+
+Mantener:
+
+--model lstm
+
+para pruebas rápidas.
+
+============================================================
+9. TEST FINAL
+
+Debe continuar completamente aislado.
+
+============================================================
+10. TESTS
+
+Verificar:
+
+- folds cronológicos
+- no overlap indebido
+- no futuro
+- scaler por fold
+- test final no usado

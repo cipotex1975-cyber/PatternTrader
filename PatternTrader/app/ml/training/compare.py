@@ -1,28 +1,27 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sklearn.metrics import (
-    accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    roc_auc_score,
-    average_precision_score,
-)
 import numpy as np
 import pandas as pd
-from app.ml.training.data import SEQUENCE_MODELS, format_for_model
-from imblearn.over_sampling import SMOTEN
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import TimeSeriesSplit
-from app.ml.factory import MLModelFactory
-from app.ml.base import BaseMLModel
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
+
 from app.core.config import Settings
 from app.core.logger import get_logger
+from app.ml.base import BaseMLModel
+from app.ml.factory import MLModelFactory
+from app.ml.training.data import SEQUENCE_MODELS, format_for_model
 
 logger = get_logger("TrainAndCompare")
 
@@ -137,28 +136,32 @@ def evaluate_model(model: BaseMLModel, X: np.ndarray, y: np.ndarray) -> dict[str
     return metrics
 
 
-def build_test_sequences(
-    X_train: np.ndarray,
-    X_test: np.ndarray,
-    y_test: np.ndarray,
+def build_eval_sequences(
+    context_X: np.ndarray,
+    target_X: np.ndarray,
+    y_target: np.ndarray,
     sequence_length: int = 30,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Construye las secuencias de test usando el contexto final del train.
+    """Construye ventanas secuenciales para evaluar ``target`` con contexto previo.
 
-    Las últimas `sequence_length - 1` muestras de train se utilizan como
-    contexto histórico para construir las primeras ventanas de test.
+    Las últimas ``sequence_length - 1`` filas de ``context_X`` (el segmento
+    cronológicamente anterior) se usan como contexto histórico para construir
+    las primeras ventanas de ``target_X``. Este contexto es anterior o
+    contemporáneo al instante de predicción, por lo que NO es leakage
+    (FASE 2, sección 9).
 
-    Las etiquetas devueltas pertenecen exclusivamente a X_test.
+    Las etiquetas devueltas pertenecen exclusivamente a ``y_target``.
     """
     context = sequence_length - 1
 
-    if len(X_train) < context:
+    if len(context_X) < context:
         raise ValueError(
-            f"Se necesitan al menos {context} muestras de train " f"para construir el contexto."
+            f"Se necesitan al menos {context} muestras de contexto "
+            f"para construir las secuencias."
         )
 
     X_context = np.concatenate(
-        [X_train[-context:], X_test],
+        [context_X[-context:], target_X],
         axis=0,
     )
 
@@ -169,14 +172,18 @@ def build_test_sequences(
         ]
     )
 
-    return windows, y_test
+    return windows, y_target
+
+
+# Alias de compatibilidad: el antiguo nombre describía solo el caso test.
+build_test_sequences = build_eval_sequences
 
 
 def run_comparison(
     X_train: np.ndarray,
     y_train: np.ndarray,
-    X_test: np.ndarray,
-    y_test: np.ndarray,
+    X_validation: np.ndarray,
+    y_validation: np.ndarray,
     model_names: list[str] | None = None,
     metric: str = "roc_auc",
     feature_names: list[str] | None = None,
@@ -184,16 +191,21 @@ def run_comparison(
     epochs: int = 10,
     settings: Settings | None = None,
     hyperparams: dict[str, dict[str, Any]] | None = None,
-    use_smoten: bool = False,
+    # TODO(fase 3+): cablear early_stop_rounds/patience en el entrenamiento real y
+    # implementar validación walk-forward con walk_forward_splits. Hoy son placeholders.
     early_stop_rounds: int = 20,
     patience: int = 5,
     walk_forward_splits: int = 5,
 ) -> tuple[pd.DataFrame, dict[str, BaseMLModel]]:
     """Entrena todos los modelos solicitados sobre el mismo split y compara métricas.
 
-    Para modelos secuenciales (LSTM, CNN, Transformer), las primeras
-    ventanas del test utilizan las últimas `sequence_length - 1` muestras
-    del train como contexto histórico.
+    FASE 2: la comparación/selección usa EXCLUSIVAMENTE VALIDATION. El TEST
+    FINAL no entra en esta función; se evalúa una sola vez después, con
+    ``evaluate_winner_on_test()``.
+
+    Para modelos secuenciales (LSTM, CNN, Transformer), las primeras ventanas
+    de la evaluación utilizan las últimas `sequence_length - 1` muestras del
+    train como contexto histórico (causal, no leakage).
 
     Retorna (summary, trained) donde ``summary`` es un DataFrame con una fila por
     modelo y ``trained`` mapea nombre → instancia entrenada.
@@ -232,29 +244,29 @@ def run_comparison(
             )
 
             # ---------------------------------------------------------
-            # TEST
+            # VALIDATION (dataset de comparación/selección)
             # ---------------------------------------------------------
             if name in SEQUENCE_MODELS:
                 # Para modelos secuenciales, utilizamos las últimas
                 # sequence_length - 1 muestras del train como contexto
-                # histórico para las primeras muestras del test.
-                X_te, y_te = build_test_sequences(
+                # histórico para las primeras muestras de la validación.
+                X_ev, y_ev = build_eval_sequences(
                     X_train,
-                    X_test,
-                    y_test,
+                    X_validation,
+                    y_validation,
                     sequence_length,
                 )
             else:
                 # Modelos tabulares/anomaly detection:
                 # mantienen el comportamiento original.
-                X_te, y_te = format_for_model(  # type: ignore[assignment]
+                X_ev, y_ev = format_for_model(  # type: ignore[assignment]
                     name,
-                    X_test,
-                    y_test,
+                    X_validation,
+                    y_validation,
                     sequence_length,
                 )
 
-            if y_tr is None or y_te is None:
+            if y_tr is None or y_ev is None:
                 raise ValueError(f"{name}: no se pudieron formatear las etiquetas")
 
             # ---------------------------------------------------------
@@ -281,12 +293,12 @@ def run_comparison(
             )
 
             # ---------------------------------------------------------
-            # EVALUACIÓN SOBRE TEST
+            # EVALUACIÓN SOBRE VALIDATION
             # ---------------------------------------------------------
             eval_metrics = evaluate_model(
                 model,
-                X_te,
-                y_te,
+                X_ev,
+                y_ev,
             )
 
             train_acc = train_metrics.get("train_accuracy")
@@ -295,24 +307,24 @@ def run_comparison(
             row: dict[str, Any] = {
                 "model": name,
                 "status": "ok",
-                "train_accuracy": (
-                    float(train_acc)
-                    if train_acc is not None
-                    else float(train_loss) if train_loss is not None else float("nan")
-                ),
+                "train_accuracy": float(train_acc) if train_acc is not None else float("nan"),
+                "train_loss": float(train_loss) if train_loss is not None else float("nan"),
                 "samples_train": int(X_tr.shape[0]),
-                "samples_test": int(X_te.shape[0]),
+                "samples_validation": int(X_ev.shape[0]),
             }
 
             row.update(eval_metrics)
             rows.append(row)
             trained[name] = model
 
-            logger.info(
-                f"{name}: "
-                f"train={row['train_accuracy']:.4f} "
-                f"{metric}={row.get(metric, 'n/a')}"
-            )
+            if not math.isnan(row["train_accuracy"]):
+                train_repr = f"train_acc={row['train_accuracy']:.4f}"
+            elif not math.isnan(row["train_loss"]):
+                train_repr = f"train_loss={row['train_loss']:.4f}"
+            else:
+                train_repr = "train=n/a"
+
+            logger.info(f"{name}: " f"{train_repr} " f"{metric}={row.get(metric, 'n/a')}")
 
         except Exception as e:  # noqa: BLE001
             logger.error(f"{name}: falló el entrenamiento: {e}")
@@ -323,7 +335,7 @@ def run_comparison(
                     "status": f"error: {e}",
                     "train_accuracy": float("nan"),
                     "samples_train": 0,
-                    "samples_test": 0,
+                    "samples_validation": 0,
                 }
             )
 
@@ -336,7 +348,11 @@ def run_comparison(
 
 
 def select_winner(summary: pd.DataFrame, metric: str = "roc_auc") -> dict[str, Any] | None:
-    """Elige la fila con mejor métrica objetivo entre los modelos exitosos."""
+    """Elige la fila con mejor métrica objetivo entre los modelos exitosos.
+
+    FASE 2: ``summary`` contiene métricas calculadas sobre VALIDATION, por lo
+    que la selección nunca usa el TEST FINAL.
+    """
     valid = summary[summary["status"] == "ok"].copy()
     if metric not in valid.columns:
         return None
@@ -345,6 +361,43 @@ def select_winner(summary: pd.DataFrame, metric: str = "roc_auc") -> dict[str, A
         return None
     best = valid.loc[valid[metric].idxmax()]
     return {"model": best["model"], "metrics": best.to_dict()}
+
+
+def evaluate_winner_on_test(
+    trained: dict[str, BaseMLModel],
+    winner_name: str,
+    X_validation: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    sequence_length: int = 30,
+) -> dict[str, float]:
+    """Evalúa al ganador UNA sola vez sobre el TEST FINAL (FASE 2, sección 8).
+
+    El resultado NO debe volver a entrar en ``select_winner()`` ni en ninguna
+    decisión de selección/threshold/tuning: es sólo reporte final.
+    """
+    model = trained.get(winner_name)
+    if model is None:
+        raise ValueError(f"No hay instancia entrenada para {winner_name}")
+
+    X_final: np.ndarray
+    y_final: np.ndarray | None
+    if winner_name in SEQUENCE_MODELS:
+        # Contexto causal: cola de validation para las primeras ventanas de test.
+        X_final, y_final = build_eval_sequences(
+            X_validation,
+            X_test,
+            y_test,
+            sequence_length,
+        )
+    else:
+        X_final, y_final = format_for_model(winner_name, X_test, y_test, sequence_length)
+
+    if y_final is None:
+        raise ValueError(f"{winner_name}: no se pudieron formatear las etiquetas de test")
+
+    logger.info(f"Evaluación final del ganador {winner_name} sobre TEST FINAL")
+    return evaluate_model(model, X_final, y_final)
 
 
 def _version() -> str:
@@ -357,11 +410,14 @@ def save_winner(
     save_dir: str,
     symbol: str,
     metric: str = "roc_auc",
+    final_test_metrics: dict[str, float] | None = None,
 ) -> tuple[str, str]:
     """Persiste el artefacto ganador con nomenclatura por par y su sidecar.
 
     Nombres: ``{modelo}_{symbol}{ext}`` + ``{modelo}_{symbol}.meta.json``
     (el sidecar permite al ScoringEngine rehidratar el modelo del par sin DB).
+    Si se pasan ``final_test_metrics`` (evaluación única sobre TEST FINAL,
+    FASE 2) quedan registrados en el sidecar con fines de trazabilidad.
     """
     model_name = winner["model"]
     model = trained.get(model_name)
@@ -376,7 +432,7 @@ def save_winner(
     metrics = {
         k: v
         for k, v in winner["metrics"].items()
-        if isinstance(v, (int, float)) and not isinstance(v, bool)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(float(v))
     }
     meta = {
         "model_name": model_name,
@@ -387,6 +443,12 @@ def save_winner(
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "metrics": metrics,
     }
+    if final_test_metrics is not None:
+        meta["final_test_metrics"] = {
+            k: float(v)
+            for k, v in final_test_metrics.items()
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(float(v))
+        }
     sidecar = Path(save_dir) / f"{model_name}_{symbol}.meta.json"
     sidecar.write_text(json.dumps(meta, indent=2, default=str))
     logger.info(f"Modelo ganador guardado: {artifact} (metric={metric})")
@@ -414,6 +476,7 @@ def format_summary_table(summary: pd.DataFrame, metric: str = "roc_auc") -> str:
     columns = [
         "model",
         "train_accuracy",
+        "train_loss",
         "accuracy",
         "precision",
         "recall",
@@ -422,7 +485,7 @@ def format_summary_table(summary: pd.DataFrame, metric: str = "roc_auc") -> str:
         "pr_auc",
     ]
     header = (
-        f"{'MODELO':<18} {'TRAIN':>7} {'ACC':>7} {'PREC':>7} {'REC':>7} "
+        f"{'MODELO':<18} {'T.ACC':>7} {'LOSS':>7} {'ACC':>7} {'PREC':>7} {'REC':>7} "
         f"{'F1':>7} {'AUC':>7} {'PR_AUC':>7}  ESTADO"
     )
     lines = [header, "-" * len(header)]

@@ -1,178 +1,149 @@
-FASE 4 — WALK-FORWARD VALIDATION REAL
-======================================
+FASE 4 — PREPROCESSING Y SCALING REPRODUCIBLE
+==============================================
 
-Implementa walk-forward validation temporal.
+Implementar preprocessing únicamente después de haber completado
+FASE 3.
 
-El parámetro existente:
+Actualmente no existe scaler.
 
---walk-forward-splits
+Las features tienen escalas heterogéneas, especialmente para modelos
+torch.
 
-debe convertirse en funcional.
+============================================================
+1. MODELOS
 
-===================================================
-1. OBJETIVO
-===================================================
+Aplicar scaling inicialmente a:
 
-Queremos pasar de:
+- LSTM
+- CNN
+- Transformer
+- Autoencoder
+- Isolation Forest si técnicamente corresponde
 
-TRAIN → TEST
+No forzar scaling a:
 
-a algo parecido a:
+- Random Forest
+- XGBoost
+- LightGBM
+- CatBoost
 
-Fold 1:
-TRAIN -------- VALIDATION
+salvo que exista una razón concreta.
 
-Fold 2:
-TRAIN --------------- VALIDATION
+============================================================
+2. SCALER
 
-Fold 3:
-TRAIN ---------------------- VALIDATION
+Implementar:
 
-...
+StandardScaler
 
-No utilizar shuffle.
+como primera opción.
 
-===================================================
-2. EJEMPLO
-===================================================
+Permitir:
 
-Con 5 folds:
+--feature-scaling none
+--feature-scaling standard
 
-Fold 1:
-TRAIN: 2010-2015
-VALID: 2015-2017
+Default:
 
-Fold 2:
-TRAIN: 2010-2017
-VALID: 2017-2019
+standard para modelos sensibles.
 
-Fold 3:
-TRAIN: 2010-2019
-VALID: 2019-2021
+============================================================
+3. LEAKAGE
 
-Fold 4:
-TRAIN: 2010-2021
-VALID: 2021-2023
+El scaler debe entrenarse:
 
-Fold 5:
-TRAIN: 2010-2023
-VALID: 2023-2025
+scaler.fit(X_train)
 
-Los períodos exactos dependerán del dataset.
+Nunca:
 
-No inventes fechas artificiales.
+scaler.fit(X_train + validation)
 
-===================================================
-3. SCALER
-===================================================
+Nunca:
 
-Para cada fold:
+scaler.fit(X_train + validation + test)
 
-FIT scaler únicamente sobre TRAIN del fold.
+============================================================
+4. SECUENCIAS
 
-Después:
+IMPORTANTE:
 
-transform TRAIN
-transform VALIDATION
+Decidir explícitamente si el scaling ocurre:
 
-Nunca utilizar datos posteriores.
+A) antes de construir las ventanas
 
-===================================================
-4. RESULTADOS
-===================================================
+o:
 
-Para cada modelo:
+B) después de construir las ventanas.
 
-LSTM
+Prefiero:
 
-Fold 1:
-AUC = 0.63
-PR-AUC = 0.40
+raw features
+→ scaler transform
+→ build sequences
 
-Fold 2:
-AUC = 0.67
-PR-AUC = 0.43
+porque simplifica la consistencia.
 
-Fold 3:
-AUC = 0.65
-PR-AUC = 0.42
+Documentar la decisión.
 
-Fold 4:
-AUC = 0.61
-PR-AUC = 0.39
+============================================================
+5. SERVING
 
-Fold 5:
-AUC = 0.64
-PR-AUC = 0.41
+El scaler utilizado durante training debe guardarse.
 
-Resumen:
+Durante producción:
 
-LSTM
-Mean AUC = 0.640
-Std AUC  = 0.021
-Min AUC  = 0.610
-Max AUC  = 0.670
+raw features
+→ cargar scaler
+→ transform
+→ sequence
+→ model
 
-Mean PR-AUC = 0.410
+No:
 
-===================================================
-5. COMPARACIÓN
-===================================================
+raw features
+→ model
 
-Generar:
+============================================================
+6. ARTEFACTO
 
-MODEL          MEAN_AUC   STD_AUC   MEAN_PR_AUC
-------------------------------------------------
-LSTM           0.640      0.021     0.410
-CNN            0.615      0.027     0.392
-CatBoost       0.603      0.019     0.381
-XGBoost        0.591      0.024     0.372
+El sidecar debe registrar:
 
-===================================================
-6. SELECCIÓN
-===================================================
+preprocessing:
+  type: StandardScaler
+  features: [...]
+  fitted_on: TRAIN_ONLY
 
-El ganador debe basarse en:
-
-mean validation metric
-
-NO en un único fold.
-
-Además reporta std.
-
-Un modelo:
-
-AUC = 0.65 ± 0.02
-
-es preferible a:
-
-AUC = 0.69 ± 0.12
-
-si el objetivo es robustez.
-
-===================================================
-7. TEST FINAL
-===================================================
-
-Después de completar walk-forward:
-
-el TEST FINAL permanece intacto.
-
-El modelo/configuración se selecciona utilizando solamente TRAIN + VALIDATION.
-
-Después:
-
-entrenamiento final
-↓
-TEST FINAL
-
-===================================================
-8. TESTS
+============================================================
+7. TESTS
 
 Verificar:
 
-- cada fold es cronológico
-- train termina antes que validation
-- scaler sólo se ajusta sobre train
-- ningún fold utiliza información futura
-- test final no participa
+- scaler.fit recibe sólo TRAIN
+- validation usa transform
+- test usa transform
+- serving usa el mismo scaler
+- feature order coincide
+
+============================================================
+8. OUTPUT
+
+Preprocessing
+=============
+
+Scaler:
+  StandardScaler
+
+Fit dataset:
+  TRAIN ONLY
+
+Features:
+  12
+
+Validation transformed:
+  YES
+
+Test transformed:
+  YES
+
+Test used for scaler fitting:
+  NO

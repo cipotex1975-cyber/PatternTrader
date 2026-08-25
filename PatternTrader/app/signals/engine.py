@@ -34,7 +34,7 @@ class SignalEngine:
         self,
         pattern: PatternResult,
         score: ScoreResult,
-        ml_probability: float = 0.0,
+        ml_probability: Optional[float] = None,
         strategy_signal: Optional[StrategySignalModel] = None,
     ) -> Optional[Signal]:
         signal_key = f"{pattern.symbol}:{pattern.pattern_name}:{pattern.timeframe}"
@@ -142,14 +142,14 @@ class SignalEngine:
         self,
         pattern: PatternResult,
         score: ScoreResult,
-        ml_probability: float,
+        ml_probability: Optional[float],
     ) -> list[str]:
         reasons = []
 
         reasons.append(f"Pattern: {pattern.pattern_name} detected")
         reasons.append(f"Score: {score.total_score:.1f}/100 ({score.grade})")
 
-        if ml_probability >= 0.7:
+        if ml_probability is not None and ml_probability >= 0.7:
             reasons.append(f"ML probability: {ml_probability:.0%}")
 
         for component in score.components:

@@ -1,161 +1,106 @@
 FASE 12 — BACKTEST ECONÓMICO
 =============================
 
-Ahora quiero comprobar si las predicciones del modelo tienen valor económico.
+No modificar el modelo.
 
-NO modificar el modelo.
+No reoptimizar después de mirar el backtest.
 
-NO reentrenar para mejorar artificialmente el backtest.
+Utilizar exclusivamente el modelo/configuración final seleccionada
+en FASE 10.
 
-Utilizar el modelo previamente seleccionado y validado.
+============================================================
+1. PREDICCIÓN
 
-===================================================
-1. SEÑAL
-
-Utilizar:
+Usar:
 
 P(label=1)
 
-y:
+y classification threshold definido previamente.
 
-classification_threshold
-
-Ejemplo:
-
-P(label=1) >= 0.60
-
-→ LONG
-
-===================================================
-2. EJECUCIÓN
+============================================================
+2. ENTRADA
 
 Definir explícitamente:
 
-entry
-stop loss
-take profit
-maximum holding period
-
-No asumir que el HIGH futuro equivale automáticamente a una ejecución perfecta.
-
-===================================================
-3. COSTES
-
-El backtest debe permitir:
-
+entry price
 spread
 slippage
-commission si aplica
+execution delay
 
-Ejemplo:
+No utilizar directamente el HIGH futuro del label como si fuera
+una ejecución garantizada.
+
+============================================================
+3. SALIDA
+
+Definir:
+
+take profit
+stop loss
+maximum holding period
+
+============================================================
+4. COSTOS
+
+Calcular:
 
 gross PnL
-- spread
-- slippage
-- commission
-=
+spread
+slippage
+commission
 net PnL
 
-===================================================
-4. IMPORTANTE
-
-El label actual utiliza:
-
-future HIGH
-
-pero el backtest debe simular una ejecución realista.
-
-No considerar:
-
-HIGH >= TP
-
-como ejecución perfecta si el precio nunca estuvo realmente disponible según la lógica de entrada.
-
-===================================================
+============================================================
 5. MÉTRICAS
 
 Reportar:
 
-Total trades
-Win rate
-Average win
-Average loss
-Profit factor
-Expectancy
-Net return
-Max drawdown
-Sharpe ratio
-Average holding period
+trades
+win_rate
+average_win
+average_loss
+profit_factor
+expectancy
+net_return
+max_drawdown
+Sharpe
+average_holding_period
 
-===================================================
-6. EJEMPLO
+============================================================
+6. BASELINE
 
-BACKTEST
-========
+Comparar contra:
 
-Model: LSTM
-Symbol: USDCAD
-Timeframe: H1
+always long
 
-Period:
-2024-01-01 → 2026-01-01
+y/o:
 
-Trades:
-428
+random baseline
 
-Win rate:
-47.2%
+según corresponda.
 
-Profit factor:
-1.31
+============================================================
+7. CONCLUSIÓN
 
-Expectancy:
-+0.08R
+No basta:
 
-Net return:
-+12.4%
+ROC-AUC > 0.50
 
-Max drawdown:
--7.8%
+Necesitamos comprobar:
 
-Sharpe:
-1.12
+¿las predicciones generan expectancy positiva después de costes?
 
-Spread:
-0.8 pips
+============================================================
+IMPORTANTE
 
-Slippage:
-0.2 pips
+No afirmar:
 
-IMPORTANTE:
+"modelo rentable"
 
-Los números anteriores son sólo un ejemplo de formato.
-No inventar resultados.
+hasta que:
 
-===================================================
-7. COMPARACIÓN
-
-Comparar:
-
-Model prediction strategy
-vs
-simple baseline
-
-Por ejemplo:
-
-always-long
-random
-buy-and-hold si aplica
-
-La estrategia ML debe demostrar valor incremental.
-
-===================================================
-8. CONCLUSIÓN
-
-No basta con:
-
-AUC > 0.5
-
-El resultado final debe responder:
-
-"¿Las predicciones generan una ventaja económica después de costes?"
+- exista backtest
+- exista control de costes
+- exista período OOS
+- exista drawdown
+- exista comparación baseline

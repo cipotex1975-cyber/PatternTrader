@@ -1,0 +1,177 @@
+# AUDITORÍA ML — Respuesta a FASE 0
+
+Fecha: 2026-08-24
+Alcance: pipeline de entrenamiento/comparación/selección/scoring de `train_and_compare.py`
+y módulos relacionados. NO se modificó ningún archivo de código.
+
+Archivos revisados:
+
+- `train_and_compare.py` (CLI orquestador)
+- `app/ml/training/data.py` (datos, features, labels, secuencias)
+- `app/ml/training/compare.py` (comparación, evaluación, selección, guardado)
+- `app/ml/base.py`, `app/ml/factory.py`, `app/ml/features.py`
+- `app/ml/models/*` (random_forest, xgboost, lightgbm, catboost, lstm, transformer,
+  cnn, sequence_base, isolation_forest, autoencoder)
+- `app/scoring/engine.py` (inferencia en vivo)
+- `app/database/repositories/mlmodel.py` (registro DB)
+- `tests/unit/test_ml_training.py`, `tests/unit/test_ml_models.py`
+
+---
+
+## 1. Arquitectura actual
+
+```
+data          load_data()                        data.py:27   (CSV tab, sort por datetime ↑)
+   ↓
+features      create_features()                  data.py:93   (12 indicadores causales)
+   ↓
+labels        create_labels()                    data.py:116  (look-ahead t+1..t+N, high vs close*(1+thr))
+   ↓
+split         train_test_split(shuffle=False)    train_and_compare.py:174  (cronológico 80/20)
+   ↓
+training      run_comparison()                   compare.py:173
+              ├─ format_for_model()/build_sequences (2D→3D)     data.py:171
+              └─ build_test_sequences()          compare.py:138  (contexto final del train)
+   ↓
+evaluation    evaluate_model() sobre TEST        compare.py:120  (accuracy/precision/recall/f1/roc_auc/pr_auc)
+   ↓
+selection     select_winner() idxmax(métrica)    compare.py:335  ← sobre métricas de TEST
+   ↓
+save          save_winner()                      compare.py:351  → models/{modelo}_{symbol}{ext} + .meta.json
+   ↓
+DB            register_in_db() (solo --db)       train_and_compare.py:47  → MLModelRepository.upsert
+                                                                   (+ deactivate_by_symbol)
+
+Inferencia posterior:
+ScoringEngine._load_ml_model_for_symbol (engine.py:94) → lee sidecar .meta.json →
+MLModelFactory.create_new(name).load(artifact) → extract_technical_features (features.py:67)
+→ model.get_prediction (base.py:90 / sequence_base.py:181).
+```
+
+Respuestas puntuales a los 18 objetivos:
+
+1. **Carga**: `load_data` (data.py:27). Tab-delimited MT4/MT5, coerción numérica, dropna OHLC, orden por `datetime`.
+2. **Orden temporal**: `sort_values("datetime")` en carga + `train_test_split(..., shuffle=False)` → split cronológico sin barajar.
+3. **Features**: `create_features` (data.py:93): rsi(14), macd/signal/hist(12/26/9), ema_21, ema_50, atr(14), volume_ratio(20), price_change, high_low_range, close_position, trend_strength. Todas causales (rolling/ewm hacia atrás).
+4. **Labels**: `create_labels` (data.py:116): positiva si ≥ `min_up_moves` de las siguientes `forward_periods` velas tienen `high > close*(1+threshold)`; últimas N filas = NaN y luego se descartan con `dropna`.
+5. **Split**: sklearn `train_test_split(test_size=0.2, random_state=42, shuffle=False)` (train_and_compare.py:174). Nota: `random_state` es irrelevante con `shuffle=False`.
+6. **Secuencias**: train → `build_sequences` dentro de train (data.py:171); test → `build_test_sequences` antepone las últimas `seq_len-1` filas del train como contexto (compare.py:138).
+7. **Entrenamiento por modelo**: `run_comparison` crea instancia nueva vía `MLModelFactory.create_new` y llama `model.train(X_tr, y_tr, feature_names=...)`. Árboles: fit directo; secuenciales: Adam + CrossEntropy, DataLoader shuffle=True; anomalía: fit no supervisado ignorando `y`.
+8. **predict()**: árboles → `model.predict`; torch → softmax().argmax; anomalía → sigmoid(decisión) > 0.5.
+9. **predict_proba()**: árboles nativo; torch → softmax 2 clases; anomalía → columna [1-p, p] con `p=sigmoid`.
+10. **ROC-AUC / PR-AUC**: `evaluate_model` (compare.py:126-135) con `roc_auc_score` y `average_precision_score` sobre `predict_proba[:,1]`, solo si hay 2 clases presentes.
+11. **Selección ganador**: `select_winner` = fila con máximo de la métrica objetivo entre status "ok" — usando las métricas calculadas EN TEST (compare.py:283-287 → 335-344; train_and_compare.py:198).
+12. **Guardado**: `save_winner` (compare.py:351): artefacto nativo (.pkl/.json/.cbm/.pt) + sidecar JSON con modelo, símbolo, extensión, métrica, versión, trained_at y métricas numéricas.
+13. **DB**: solo con `--db`: desactiva modelos previos del símbolo y upsert `{modelo}_{symbol}` activo con métricas y metadata (train_and_compare.py:47-80; mlmodel.py).
+14. **Scoring/inferencia**: ScoringEngine rehidrata por símbolo desde sidecar priorizando `trained_at` más reciente (engine.py:94-131); features vivas las calcula `extract_technical_features` (features.py:67); para modelos secuenciales construye una ventana de `seq_len` velas recalculando features por sub-ventana (engine.py:409-441).
+15. **CLI no conectados**: ver sección 4 (`--min-up-moves`, `--walk-forward-splits`, `--early-stop-rounds`, `--patience`).
+
+---
+
+## 2. Problemas encontrados
+
+| ID | Problema | Archivo | Severidad | Evidencia |
+|----|----------|---------|-----------|-----------|
+| P01 | `--min-up-moves` declarado pero nunca llega a `create_labels()` (usa default 2) | train_and_compare.py:121-126 vs :164 | MEDIA | `create_labels(df, forward_periods=args.forward_periods, threshold=args.threshold)` omite `min_up_moves=args.min_up_moves` |
+| P02 | Columna `train_accuracy` recibe el LOSS cuando el modelo no devuelve accuracy (secuenciales/anomalía) | compare.py:289-299 | MEDIA | `train_acc=None → float(train_loss)`: LSTM/Transformer/CNN devuelven `{"epochs","loss"}` (sequence_base.py:138), autoencoder también (autoencoder.py:114); isolation_forest devuelve `{"samples","outliers"}` → NaN |
+| P03 | `--walk-forward-splits` muerto en ambos extremos: no se pasa al runner y `run_comparison` lo declara pero jamás lo usa | train_and_compare.py:127-132; compare.py:187 | ALTA | grep: única aparición en compare.py es la firma; no existe validación walk-forward en el flujo |
+| P04 | `--early-stop-rounds` y `--patience` sin efecto: no se pasan y ningún modelo implementa early-stopping real | train_and_compare.py:133-144; sequence_base.py:46,57,127-133 | MEDIA | `SequenceModel._patience` se almacena y nunca se consulta; bucle de entrenamiento recorre siempre todas las épocas; árboles hacen `fit(X,y)` sin eval_set |
+| P05 | El ganador se selecciona con métricas calculadas sobre TEST (selección sesgada / leakage de selección) | compare.py:283-287,335-344; train_and_compare.py:198 | ALTA | No existe conjunto de validación; TEST cumple doble rol (selección + informe) |
+| P06 | No existe scaler/preprocessing: los features se usan crudos y heterogéneos (rsi≈0-100 vs ema/atr≈precios ~1.x) | sequence_base.py:59 (`self._scaler = None` nunca usado); data.py:93 | ALTA para torch/anomalía, BAJA para árboles | Ningún fit de scaler en todo el repo; tampoco se persiste transformación junto al artefacto |
+| P07 | Primeras ventanas del test usan contexto histórico del train | compare.py:138-170 | SIN LEAKAGE (correcto) | El contexto es estrictamente pasado respecto de cada muestra de test; labels pertenecen solo a y_test; alineación exacta (len(windows)==len(X_test)) |
+| P08 | Labels del tramo final del TRAIN miran hacia adelante y consumen observaciones que caerán en TEST | train_and_compare.py:163-176; data.py:146-155 | MEDIA | Labelado global antes del split: hasta `forward_periods` muestras del fin de train usan highs del periodo de test |
+| P09 | Modelos de anomalía compiten con métricas de clasificación y con semántica inconsistente entre sí | isolation_forest.py:57-66 vs autoencoder.py:128-137 | MEDIA | IF: `p=sigmoid(+decision_function)` → clase "positiva" = punto NORMAL (invertido); AE: `p=sigmoid(error-thr)` → positiva = ANÓMALO. Ambos ignoran `y` al entrenar |
+| P10 | Reproducibilidad parcial: seeds solo parciales y sidecar sin trazabilidad de datos/config/hyperparámetros | sequence_base.py:70; compare.py:378-388 | MEDIA | `torch.manual_seed` fija red pero DataLoader shuffle usa RNG global; numpy/global seed sin fijar; meta.json no guarda dataset, umbral de label, seq_len ni git sha (los .pt guardan config interna, los .pkl/.json/.cbm no) |
+| P11 | Skew entrenamiento/serving en MACD: en vivo `signal = EMA([macd_line], 9)` sobre un array de UN elemento → signal == macd_line e histogram ≡ 0 siempre; nombres además difieren (macd vs macd_line/macd_signal/macd_histogram) aunque el orden coincide | features.py:50-56 vs data.py:76-82 | ALTA | El modelo se entrena con histograma informativo pero en producción recibe histograma constante 0 y señal degenerada |
+| P12 | Inconsistencia de defaults de threshold: `create_labels(threshold=0.003)` vs `prepare_dataset(threshold=0.001)` | data.py:119 vs :160 | BAJA | Riesgo de etiquetados distintos según ruta de código |
+
+---
+
+## 3. Posibles data leakage
+
+### L1 — Selección del ganador sobre TEST — EXISTE (leakage de selección)
+- **Explicación**: las métricas del summary son de TEST y `select_winner` maximiza sobre ellas. El TEST participa en la decisión del modelo y su métrica final deja de ser un estimador insesgado.
+- **Impacto**: sobreoptimismo sistemático; el ganador publicado puede ser el más afortunado en TEST, no el mejor general.
+- **Corrección**: reservar VALIDACIÓN (tercer bloque o walk-forward dentro del train) para seleccionar; TEST solo para el informe final, una sola vez.
+
+### L2 — Frontera train/test en labels — EXISTE (leve)
+- **Explicación**: labels usan `high.shift(-k)` k=1..forward_periods. Al partir el df ya etiquetado, las últimas ≤5 muestras del train construyen su label con precios del futuro que cronológicamente es TEST.
+- **Impacto**: pequeño en volumen (≤ forward_periods muestras) pero contamina la frontera exactamente donde se mide la generalización inmediata.
+- **Corrección**: tras el split, recortar del train las últimas `forward_periods` filas (o reetiquetar respetando el corte).
+
+### L3 — Scaler fit sobre todo el dataset — NO EXISTE (porque no hay scaler)
+- **Explicación**: P06: no hay ninguna normalización. No puede haber leakage de scaler porque no existe.
+- **Impacto**: no de leakage, sino de conditioning: torch y métodos basados en distancia sufren; árboles apenas.
+- **Corrección**: si se introduce scaler, fit SOLO con train y persistirlo dentro del artefacto/sidecar para aplicar idéntico en inferencia.
+
+### L4 — Look-ahead en features — NO EXISTE
+- **Explicación**: todos los indicadores son retrospectivos (rolling/ewm hacia atrás, pct_change, shift(+)).
+- **Impacto**: ninguno.
+- **Corrección**: no aplica; añadir test de causalidad (feature(t) invariante ante perturbaciones futuras) como salvaguarda.
+
+### L5 — Contexto de train en ventanas de test — NO EXISTE (P07 correcto tal como está)
+- **Explicación**: `build_test_sequences` antepone histórico anterior a test; es información pasada legítima para predecir el futuro de las primeras muestras de test. Las labels corresponden exclusivamente a y_test.
+- **Impacto**: ninguno en términos de leakage. Ojo: si en el futuro se añade validación intermedia, este patrón debe replicarse con el contexto adecuado por fold.
+- **Corrección**: documentarlo como comportamiento intencional.
+
+### L6 — Walk-forward — NO EXISTE (ausente)
+- **Explicación**: el parámetro está declarado pero no implementado (P03).
+- **Impacto**: se pierde estimación robusta fuera-de-muestra; no leakage.
+- **Corrección**: implementar TimeSeriesSplit-like con expansión de ventana.
+
+---
+
+## 4. Parámetros CLI no utilizados
+
+```
+--min-up-moves         → declarado (train_and_compare.py:121) pero NO llega a create_labels()
+--walk-forward-splits  → declarado (:127) pero no se pasa a run_comparison ni se usa allí
+--early-stop-rounds    → declarado (:133) pero no se pasa ni ningún árbol lo consume
+--patience             → declarado (:139) pero no se pasa; SequenceModel lo acepta y nunca lo aplica
+```
+
+Sí están conectados: `--metric`, `--test-size`, `--forward-periods`, `--threshold`,
+`--sequence-length`, `--epochs`, `--symbol/--timeframe/--save-dir/--db/--no-save`.
+
+---
+
+## 5. Flujo de evaluación actual
+
+```
+TRAIN = primeras (1 - test_size) ≈ 80% cronológicas de las muestras limpias
+TEST  = último 20% cronológico (contiguo, sin shuffle)
+```
+
+- Entrenamiento: solo TRAIN.
+- Métricas del summary (accuracy/precision/recall/f1/roc_auc/pr_auc): ÚNICAMENTE sobre TEST.
+- Selección: `select_winner(summary, metric)` = argmax de esa métrica → **el ganador se elige con TEST**.
+- Consecuencia: TEST actúa como validación de facto; no existe conjunto de validación independiente ni walk-forward, por lo que la cifra reportada del ganador está optimistamente sesgada (L1/P05).
+
+---
+
+## 6. Plan de modificación (propuesta, SIN ejecutar)
+
+### FASE 1 — Cablear CLI y corregir reporting (bajo riesgo)
+- Pasar `min_up_moves=args.min_up_moves` a `create_labels` en el CLI.
+- En `run_comparison`: separar `train_accuracy` vs `train_loss` en columnas distintas; NaN donde no aplique (arregla P02 sin tocar modelos).
+- Eliminar o marcar explícitamente como TODO los params muertos (`walk_forward_splits`) hasta FASE 2.
+
+### FASE 2 — Validación honesta y frontera de labels
+- Split en tres bloques: TRAIN / VALIDACIÓN / TEST (p.ej. 70/15/15 cronológicos).
+- Implementar walk-forward opcional con `walk_forward_splits` dentro del TRAIN para selección robusta.
+- Seleccionar ganador con VALIDACIÓN; TEST solo informe final.
+- Recortar las últimas `forward_periods` filas del TRAIN tras el split (arregla L2/P08).
+
+### FASE 3 — Preprocessing reproducible
+- Introducir scaler (Standard/Robust) ajustado SOLO con TRAIN para familias sensibles (torch, anomalía).
+- Persistir el scaler junto al artefacto (dentro del .pt / sidecar) y aplicarlo en inferencia.
+
+### FASE 4 — Paridad entrenamiento/serving de features
+- Corregir `_macd` de `app/ml/features.py` (calcular EMA9 de la serie completa de macd, como en training) y unificar nombres FEATURE_NAMES ↔ TECHNICAL_FEATURE_NAMES.
+- Añadir tests de paridad: mismo df → mismas features por ambas rutas (data.py vs features.py).
+
+### FASE 5 — Métricas por familia y trazabilidad
+- Tratamiento específico para anomalía: excluir de la comparativa por defecto o reinterpretar semántica de probabilidad (IF invertido, P09).
+- Trazabilidad completa en sidecar/meta: hash del dataset, threshold/forward/min_up_moves efectivos, hyperparámetros finales, versión de librerías, git sha; fijar seeds globales (numpy/torch/random) al inicio del run.
+
+NO SE MODIFICÓ CÓDIGO EN ESTA FASE. Esperando confirmación para comenzar FASE 1.

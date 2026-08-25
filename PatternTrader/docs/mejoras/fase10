@@ -1,119 +1,143 @@
-FASE 10 — PROMOCIÓN DEL MODELO A PRODUCCIÓN
-============================================
+FASE 10 — EVALUACIÓN FINAL OUT-OF-SAMPLE
+=========================================
 
-Modificar el flujo de promoción del modelo.
+NO modificar el pipeline después de iniciar esta fase.
 
-Actualmente:
+NO optimizar después de mirar TEST.
 
-train
-→ compare
-→ winner
-→ save
-→ DB active=True
+============================================================
+CONFIGURACIÓN
 
-Esto es demasiado automático.
+USDCAD
+H1
 
-===================================================
-1. NUEVO FLUJO
+forward_periods:
+  seleccionado previamente
 
-TRAIN
- ↓
-VALIDATION / WALK-FORWARD
- ↓
-SELECT MODEL
- ↓
-TRAIN FINAL
- ↓
+threshold:
+  seleccionado previamente
+
+min_up_moves:
+  seleccionado previamente
+
+sequence_length:
+  30
+
+scaling:
+  configuración seleccionada previamente
+
+walk-forward:
+  5 folds
+
+============================================================
+MODELOS
+
+Comparar:
+
+LSTM
+CNN
+CatBoost
+LightGBM
+XGBoost
+Random Forest
+
+Anomaly models fuera del ranking principal.
+
+============================================================
+VALIDATION
+
+Mostrar:
+
+MODEL       MEAN_AUC   STD_AUC   MEAN_PR_AUC
+--------------------------------------------
+
+LSTM        ...
+CNN         ...
+CatBoost    ...
+LightGBM    ...
+XGBoost     ...
+RF          ...
+
+============================================================
+SELECCIÓN
+
+Seleccionar exclusivamente mediante:
+
+mean validation ROC-AUC
+
+o la métrica CLI elegida.
+
+============================================================
+TEST FINAL
+
+Una vez seleccionado:
+
+entrenar modelo final según protocolo definido
+
+y evaluar una única vez:
+
 FINAL TEST
- ↓
-REPORT
- ↓
-PROMOTION OPCIONAL
 
-===================================================
-2. DEFAULT
-
-Por defecto:
-
-NO activar automáticamente el modelo en DB.
-
-El entrenamiento debe generar:
-
-models/...
-comparison.json
-final_test.json
-
-pero:
-
-is_active = False
-
-===================================================
-3. OPCIÓN DE PROMOCIÓN
-
-Añadir explícitamente:
-
---promote
-
-Si se especifica:
-
---promote
-
-entonces:
-
-- validar que el modelo superó criterios mínimos
-- guardar
-- registrar
-- desactivar versión anterior
-- activar nueva versión
-
-===================================================
-4. CRITERIOS
-
-Preparar configuración:
-
-minimum_validation_auc
-minimum_validation_pr_auc
-
-Por ejemplo:
-
-minimum_validation_auc = 0.60
-
-No hardcodear arbitrariamente si la arquitectura actual tiene configuración central.
-
-===================================================
-5. EJEMPLO
-
-Entrenamiento normal:
-
-Model selected:
-  lstm
-
-Validation:
-  ROC-AUC = 0.642
-
-Final test:
-  ROC-AUC = 0.631
-
-Model saved:
-  models/lstm_USDCAD.pt
-
-Database promotion:
-  SKIPPED
-
-Reason:
-  --promote not specified
-
-===================================================
-6. CON --promote
-
-Database promotion:
-  SUCCESS
+Mostrar:
 
 Model:
-  lstm_USDCAD
+LSTM
 
-Version:
-  20260824_...
+ROC-AUC:
+...
 
-is_active:
-  true
+PR-AUC:
+...
+
+Accuracy:
+...
+
+Precision:
+...
+
+Recall:
+...
+
+F1:
+...
+
+============================================================
+COMPARACIÓN HISTÓRICA
+
+Mostrar:
+
+Original experiment:
+LSTM TEST ROC-AUC = 0.6513
+
+Nuevo validation:
+LSTM mean ROC-AUC = ...
+
+Nuevo final OOS:
+LSTM ROC-AUC = ...
+
+IMPORTANTE:
+
+Explicar que 0.6513 no era una evaluación OOS pura porque el TEST
+también se utilizó para seleccionar el ganador.
+
+NO intentar maximizar el nuevo resultado para que coincida con 0.6513.
+
+============================================================
+CONCLUSIÓN
+
+Clasificar:
+
+ROBUST SIGNAL
+POSSIBLE SIGNAL
+WEAK SIGNAL
+NO EVIDENCE
+
+basándose en:
+
+- estabilidad entre folds
+- mean AUC
+- std AUC
+- PR-AUC
+- final OOS
+
+NO afirmar rentabilidad todavía.

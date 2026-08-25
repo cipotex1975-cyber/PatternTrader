@@ -1,130 +1,240 @@
-FASE 3 — PREPROCESSING Y SCALING CORRECTO
-==========================================
+FASE 3 — PARIDAD TRAINING ↔ SERVING
+====================================
 
-Implementa preprocessing reproducible para los modelos neuronales.
+Esta fase es CRÍTICA.
 
-NO cambies todavía las features.
+NO continuar con optimización de modelos hasta garantizar que las
+features utilizadas durante entrenamiento sean equivalentes a las
+features utilizadas en producción.
 
-===================================================
-1. OBJETIVO
-===================================================
+Problema identificado en FASE 0:
 
-Actualmente las features tienen escalas muy diferentes:
+data.py calcula:
 
-RSI             0..100
-close_position  0..1
-EMA             ~1.x
-ATR             ~0.x
-MACD            ~0.x
-volume_ratio    ~0.x..varios
+macd
+macd_signal
+macd_hist
 
-Esto puede dificultar el entrenamiento de redes neuronales.
+utilizando:
 
-Implementa scaling configurable.
+EMA12
+EMA26
+MACD
+EMA9 sobre la serie completa de MACD
 
-===================================================
-2. CLI
-===================================================
+Pero features.py tiene una implementación de MACD que en inferencia
+calcula la signal sobre un array de un único elemento.
 
-Añade:
+Esto provoca:
 
---feature-scaling
+signal ≈ macd
+histogram ≈ 0
 
-Opciones:
+El modelo entrenado recibe una distribución de features diferente
+al modelo usado en producción.
 
-none
-standard
+============================================================
+1. ARCHIVOS
+============================================================
 
-Default recomendado:
+Revisar:
 
-standard
+app/ml/training/data.py
+app/ml/features.py
+app/scoring/engine.py
 
-pero evalúa si mantener "none" para compatibilidad.
+============================================================
+2. CREAR UNA ÚNICA IMPLEMENTACIÓN CANÓNICA
+============================================================
 
-===================================================
-3. REGLA DE LEAKAGE
-===================================================
+No mantener dos implementaciones independientes de indicadores.
 
-El scaler DEBE ajustarse únicamente con TRAIN.
+Crear una función o módulo canónico para calcular las features.
 
-Correcto:
+Ambos:
 
-scaler.fit(X_train)
+training
 
-X_train_scaled = scaler.transform(X_train)
-X_validation_scaled = scaler.transform(X_validation)
-X_test_scaled = scaler.transform(X_test)
+y:
 
-Incorrecto:
+serving
 
-scaler.fit(concatenate(train, validation))
+deben utilizar exactamente la misma lógica.
 
-o:
+============================================================
+3. FEATURE NAMES
+============================================================
 
-scaler.fit(concatenate(train, validation, test))
+Unificar:
 
-===================================================
-4. MODELOS
-===================================================
+FEATURE_NAMES
 
-Aplicar scaling a:
+con:
 
-LSTM
-CNN
-Transformer
+TECHNICAL_FEATURE_NAMES
 
-Los modelos basados en árboles pueden continuar utilizando features sin scaling si la implementación lo requiere.
+Actualmente existen diferencias de nomenclatura como:
 
-Documentar qué modelo recibe qué preprocessing.
+macd
+macd_line
 
-===================================================
-5. PERSISTENCIA
-===================================================
+macd_signal
+macd_signal
 
-El scaler utilizado durante entrenamiento debe guardarse junto al modelo.
+macd_hist
+macd_histogram
 
-Al guardar:
+Elegir una única nomenclatura canónica.
 
-models/lstm_USDCAD.pt
+Actualizar todos los consumidores.
 
-debe existir suficiente metadata para reconstruir:
+IMPORTANTE:
 
-feature_names
-scaler
-sequence_length
-label_config
+No cambiar silenciosamente el orden de features.
 
-===================================================
-6. EJEMPLO DE SALIDA
-===================================================
+El orden debe quedar explícito y testeado.
 
-Preprocessing:
+============================================================
+4. PARIDAD MACD
+============================================================
 
-Feature scaling: standard
+Para un mismo DataFrame OHLCV:
 
-Scaler:
-  type: StandardScaler
-  fitted_on: TRAIN ONLY
-  samples: 69556
-  features: 12
+features_training(df)
 
-Validation:
-  transformed: yes
+y:
 
-Test:
-  transformed: yes
-  used_for_fit: NO
+features_serving(df)
 
-===================================================
-7. TESTS
-===================================================
+deben producir valores equivalentes dentro de tolerancia numérica.
 
-Añade tests que verifiquen que:
+Especialmente:
 
-scaler.fit() recibe exclusivamente TRAIN.
+macd
+macd_signal
+macd_hist
 
-Además:
+============================================================
+5. TEST DE PARIDAD
+============================================================
 
-- guardar scaler
-- cargar scaler
-- obtener exactamente las mismas transformaciones
+Crear un test:
+
+df = dataset de prueba
+
+training_features = ...
+serving_features = ...
+
+assert_allclose(
+    training_features,
+    serving_features,
+    rtol=1e-6,
+    atol=1e-8
+)
+
+o una tolerancia apropiada según el indicador.
+
+============================================================
+6. TEST ESPECÍFICO MACD
+============================================================
+
+Crear un dataset sintético donde el MACD cambie varias veces.
+
+Verificar que:
+
+macd_hist
+
+NO sea siempre cero.
+
+Verificar además:
+
+macd_hist ≈ macd - macd_signal
+
+============================================================
+7. SCORING ENGINE
+
+Revisar:
+
+app/scoring/engine.py
+
+Especialmente el camino para modelos secuenciales.
+
+Garantizar:
+
+features
+→ mismo orden
+→ mismo cálculo
+→ misma transformación
+
+que durante training.
+
+============================================================
+8. REGRESIÓN
+
+Crear un test que:
+
+1. cargue un modelo entrenado
+2. genere features
+3. produzca prediction
+4. vuelva a generar las mismas features
+5. compruebe consistencia
+
+============================================================
+9. OUTPUT
+
+Mostrar:
+
+Feature parity check
+====================
+
+rsi              OK
+macd             OK
+macd_signal      OK
+macd_hist        OK
+ema_21           OK
+ema_50           OK
+atr              OK
+volume_ratio     OK
+price_change     OK
+high_low_range   OK
+close_position   OK
+trend_strength   OK
+
+MACD histogram:
+  training mean = ...
+  serving mean  = ...
+  max abs diff  = ...
+
+No debe aparecer:
+
+macd_hist serving = 0.0 para todas las muestras
+
+============================================================
+10. IMPORTANTE
+
+No cambiar:
+
+- label
+- modelo
+- hiperparámetros
+- threshold
+- selección
+
+en esta fase.
+
+============================================================
+RESULTADO
+
+FASE 3 COMPLETED
+
+Training/serving feature parity:
+  PASS
+
+MACD parity:
+  PASS
+
+Feature order:
+  PASS
+
+Scoring pipeline:
+  PASS

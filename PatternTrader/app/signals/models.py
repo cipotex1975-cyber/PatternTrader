@@ -37,7 +37,7 @@ class Signal(BaseModel):
     risk_reward_ratio: float
     score: float
     health: float
-    ml_probability: float
+    ml_probability: Optional[float] = None
     reasons: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     sent_at: Optional[datetime] = None

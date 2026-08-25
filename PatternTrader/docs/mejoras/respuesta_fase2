@@ -1,0 +1,189 @@
+# FASE 2 — Validación honesta y frontera temporal — Respuesta
+
+Fecha: 2026-08-25
+Estado: COMPLETADA (selección sobre VALIDATION; TEST FINAL sólo reporte final)
+Base: especificación en `docs/mejoras/fase2`
+
+---
+
+## 1. Decisiones documentadas
+
+### 1.1 Leakage de labels — OPCIÓN B explícita
+
+Las features se calculan UNA sola vez sobre la serie completa (todos los
+indicadores son causales: rolling/ewm/shift(1), nunca miran el futuro) y los
+labels también se calculan globalmente. Después del corte cronológico **por
+posición** (nunca shuffle), se RECORTAN explícitamente las últimas
+`forward_periods` filas de TRAIN y de VALIDATION.
+
+- Resultado idéntico a la Opción A (labels por segmento), verificado con un test
+  de equivalencia, pero auditable sin depender de la propagación implícita de NaN.
+- El recorte se aplica en AMBAS fronteras (train|validation y validation|test):
+  ninguna muestra consume `high` de un segmento posterior.
+
+### 1.2 `--test-size` reemplazado
+
+El antiguo `--test-size 0.2` (fracción de test sobre train/test) desaparece y es
+sustituido por el trío:
+
+```
+--train-size 0.70 --validation-size 0.15 --test-size 0.15
+```
+
+Validación de `train + validation + test = 1` con tolerancia 1e-6; combo inválido
+→ `parser.error` (exit code 2, sin traceback). Nota: el script legacy
+`train_model.py` conserva su propio flag (fuera de alcance).
+
+### 1.3 Métricas del TEST FINAL persistidas
+
+`save_winner(..., final_test_metrics=...)` escribe `"final_test_metrics"` en el
+sidecar `{model}_{symbol}.meta.json` (sólo trazabilidad; no reentra en selección).
+
+### 1.4 Contexto secuencial causal (sección 9)
+
+Documentado en `build_eval_sequences()`: las primeras ventanas de validation/test
+usan las últimas `sequence_length - 1` filas del segmento anterior como contexto
+histórico. Todo el contexto es anterior o contemporáneo al instante de predicción
+→ NO es leakage. Las labels devueltas pertenecen exclusivamente al segmento evaluado.
+
+---
+
+## 2. Cambios realizados
+
+### 2.1 Nuevo split cronológico (app/ml/training/data.py)
+
+- `SplitResult` (dataclass): arrays X/y de los tres segmentos + `ranges` con
+  samples/start/end reales (columna `datetime`) por segmento.
+- `split_chronological(df_features, train_size=0.70, validation_size=0.15,
+  test_size=None, forward_periods=5)`:
+  - valida tamaños en (0,1); si `test_size` se pasa, valida la suma = 1 ±1e-6;
+  - corta por posición; recorta `forward_periods` colas (Opción B);
+  - errores tempranos para datasets demasiado pequeños o segmentos vacíos;
+  - robusto ante columnas `datetime` duplicadas (`load_data` + `create_features`
+    generan dos; usa la primera posición).
+
+### 2.2 `run_comparison()` sobre VALIDATION (app/ml/training/compare.py)
+
+- Firma: `run_comparison(X_train, y_train, X_validation, y_validation, ...)`
+  (compatibilidad posicional preservada; `test_scoring.py` no requiere cambios).
+- Columna del summary: `samples_test` → `samples_validation`.
+- `select_winner()` ahora selecciona con métricas de VALIDATION por construcción;
+  el docstring lo deja explícito.
+- `build_test_sequences()` → generalizado a `build_eval_sequences(contexto,
+  target, y_target)` con alias de compatibilidad.
+- NUEVA `evaluate_winner_on_test(trained, winner_name, X_validation, X_test,
+  y_test, sequence_length)`: evalúa al ganador UNA sola vez sobre TEST FINAL;
+  secuenciales usan cola de validation como contexto; lanza ValueError claro si
+  no hay instancia entrenada.
+- TODOs internos actualizados a fase 3+ (walk-forward / early-stopping siguen
+  reservados).
+
+### 2.3 CLI (train_and_compare.py)
+
+- Flags nuevos + `validate_split_sizes()` (tolerancia 1e-6).
+- Se eliminó `sklearn.train_test_split`; todo el split pasa por
+  `split_chronological()`.
+- Salida nueva según especificación:
+  - `Chronological split` (samples/start/end de TRAIN/VALIDATION/TEST FINAL);
+  - `Model selection` (`Selection dataset : VALIDATION`, métrica legible vía
+    `METRIC_LABELS`, winner con su métrica de validation);
+  - `FINAL OUT-OF-SAMPLE TEST` (ROC-AUC/PR-AUC/Accuracy/Precision/Recall/F1);
+    si el dataset de test es insuficiente para el ganador secuencial, imprime
+    SKIPPED con motivo (WARNING) en vez de traceback;
+  - bloque `RESULTADO` ampliado con `Selection:`/`Final evaluation:`; nunca
+    aparece "Winner according to TEST".
+- Bloque FASE 1.1 (`DB_REGISTRATION_STATUS`) intacto.
+
+---
+
+## 3. Tests nuevos (tests/unit/test_ml_training.py)
+
+| Clase/Test | Demuestra |
+|------------|-----------|
+| `TestChronologicalSplit::test_temporal_order_and_sizes` | TRAIN < VALIDATION < TEST FINAL temporalmente (timestamps estrictos); tamaños esperados tras recorte |
+| `::test_no_shuffle_segments_match_original_order` | cada segmento coincide posición-a-posición con el dataframe original (sin shuffle) |
+| `::test_label_leakage_removed_option_b_equivalence` | y_train/y_validation == labels recalculados de forma AISLADA sobre cada segmento crudo → las últimas muestras no consumen futuro (Opción B ≡ Opción A) |
+| `::test_custom_sizes_respected` | 0.50/0.25/0.25 respeta proporciones |
+| `::test_invalid_sum_rejected` / `::test_too_small_dataset_rejected` | suma ≠ 1 y datasets pequeños → ValueError |
+| `TestValidationSemantics::test_summary_metrics_come_from_validation` | roc_auc del summary == evaluate_model sobre VALIDATION; columna `samples_validation`, sin `samples_test` |
+| `::test_winner_selected_on_validation_not_test` | el ganador se elige con métrica de validation; la de test es otra data |
+| `TestFinalEvaluation::test_tabular_matches_manual_evaluation` | evaluate_winner_on_test == evaluación manual sobre TEST FINAL; 6 métricas completas |
+| `::test_sequence_context_is_causal` | primera ventana == concat(cola contexto, fila 0 target); labels pertenecen sólo al target |
+| `::test_unknown_winner_raises` | error claro sin instancia entrenada |
+| `TestTrainAndCompareCLIFase2::test_cli_prints_fase2_blocks` | bloques impresos; "Winner according to TEST" ausente; `DB_REGISTRATION_STATUS=SKIPPED` |
+| `::test_cli_invalid_split_sum_exits_cleanly` | SystemExit(2) sin traceback |
+| `::test_sidecar_contains_final_test_metrics` | meta.json incluye final_test_metrics con las 6 métricas |
+
+Resultado: `pytest tests/unit/test_ml_training.py` → **39 passed**.
+
+---
+
+## 4. Archivos modificados
+
+| Archivo | Cambio |
+|---------|--------|
+| `app/ml/training/data.py` | `SplitResult` + `split_chronological()` (Opción B documentada) |
+| `app/ml/training/compare.py` | semántica validation en `run_comparison`, `build_eval_sequences` (+alias), `evaluate_winner_on_test`, `final_test_metrics` en sidecar |
+| `app/ml/training/__init__.py` | exports nuevos |
+| `train_and_compare.py` | flags trío, split cronológico, bloques Chronological/Model selection/Final test, RESULTADO ampliado |
+| `tests/unit/test_ml_training.py` | +13 tests en 3 clases nuevas + clase CLI FASE 2 |
+
+No se modificaron: modelos, hiperparámetros, `create_labels`, ScoringEngine,
+repositorios ni el flujo DB de FASE 1.1.
+
+---
+
+## 5. Verificación (orden AGENTS.md)
+
+1. `black app/ tests/ && isort ...` → OK.
+2. `mypy app/ml/training/{compare,data,__init__}.py` → **0 errores** en ficheros de
+   esta fase (el baseline global de app/ mantiene sus ~112 errores preexistentes,
+   medidos con stash en fases anteriores).
+3. `flake8 app/ tests/ train_and_compare.py` → OK (incluye fix F541 propio).
+4. Suite completa `pytest` → **366 passed, 1 failed**. El fallo
+   (`test_pipeline_health_recalculation_is_throttled`) es PREEXISTENTE y ajeno
+   (verificado con `git stash` en FASE 1.1).
+
+## 6. Validación end-to-end (USDCAD H1 real, random_forest)
+
+```
+Chronological split
+==================
+TRAIN      samples: 69551   2010-05-31 → 2021-08-12
+VALIDATION samples: 14899   2021-08-13 → 2024-01-03
+TEST FINAL samples: 14906   2024-01-04 → 2026-05-29
+
+Model selection
+Selection dataset : VALIDATION
+Winner: random_forest | validation ROC-AUC = 0.6022
+
+FINAL OUT-OF-SAMPLE TEST
+ROC-AUC: 0.5838 | PR-AUC: 0.3665 | Accuracy: 0.5633
+Precision: 0.3379 | Recall: 0.5187 | F1: 0.4093
+DB_REGISTRATION_STATUS=SKIPPED
+```
+
+La brecha validation 0.6022 vs test 0.5838 confirma que ahora el número de
+selección ya NO proviene del dataset de reporte final: el TEST FINAL es
+genuinamente out-of-sample.
+
+## 7. Garantías (salida esperada del doc)
+
+```
+FASE 2 COMPLETED
+
+Selection:
+  dataset = VALIDATION
+  metric = ROC-AUC
+
+Final evaluation:
+  dataset = TEST FINAL
+
+Guarantees:
+  [x] no test-based model selection
+  [x] no label leakage across train/test boundary
+  [x] chronological split
+```
+
+Pendiente (fases siguientes): walk-forward real y early-stopping (FASE 3+),
+scaler global (P06).

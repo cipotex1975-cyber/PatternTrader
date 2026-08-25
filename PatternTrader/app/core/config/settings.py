@@ -58,6 +58,7 @@ class TelegramSettings(BaseSettings):
     dedup_store_path: str = "./data/state/telegram_dedup.json"
     send_image: bool = True
     min_priority: str = "CRITICAL"
+    chart_save_dir: str = ""
 
 
 class BinanceSettings(BaseSettings):

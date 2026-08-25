@@ -1,172 +1,93 @@
-FASE 11 — EXPERIMENTO FINAL OUT-OF-SAMPLE
-==========================================
+FASE 11 — PROMOCIÓN SEGURA A PRODUCCIÓN
+========================================
 
-No modificar el pipeline después de comenzar esta fase.
+Modificar la lógica de --db.
 
-El objetivo es producir una evaluación final reproducible.
+============================================================
+PROBLEMA ACTUAL
 
-===================================================
-CONFIGURACIÓN
-===================================================
+--db
 
-Usar:
+hace:
 
-symbol:
-USDCAD
+deactivate_by_symbol()
++
+upsert(is_active=True)
 
-timeframe:
-H1
+Esto significa que un entrenamiento experimental puede reemplazar
+automáticamente el modelo activo.
 
-forward_periods:
-5
+============================================================
+NUEVO COMPORTAMIENTO
 
-threshold:
-seleccionado previamente en VALIDATION
+Por defecto:
 
-min_up_moves:
-seleccionado previamente en VALIDATION
+entrenar
+→ guardar
+→ generar reportes
 
-sequence_length:
-30
+pero:
 
-feature scaling:
-standard
+NO activar automáticamente.
 
-walk-forward:
-5 folds
+============================================================
+NUEVA OPCIÓN
 
-===================================================
-MODELOS
-===================================================
+Añadir:
 
-Comparar:
+--promote
 
-LSTM
-CNN
-CatBoost
-LightGBM
-XGBoost
-Random Forest
+Sólo si:
 
-No incluir Autoencoder / Isolation Forest / Transformer salvo que hayan sido validados correctamente en fases anteriores.
+--promote
 
-===================================================
-SALIDA
-===================================================
+entonces activar el modelo.
 
-# WALK-FORWARD VALIDATION
+============================================================
+EJEMPLO
 
-MODEL       MEAN AUC   STD AUC   MEAN PR-AUC
----------------------------------------------
-LSTM        ...
-CNN         ...
-CatBoost    ...
-LightGBM    ...
-XGBoost     ...
-RF          ...
-
-Selected:
-LSTM
-
-Selection metric:
-ROC-AUC
-
-===================================================
-FINAL TEST
-===================================================
+Sin --promote:
 
 Model:
-LSTM
+  lstm
 
-Dataset:
-USDCAD H1
+Validation ROC-AUC:
+  ...
 
-Period:
-...
+Final Test ROC-AUC:
+  ...
 
-Samples:
-...
+Saved:
+  models/lstm_USDCAD.pt
 
-ROC-AUC:
-...
+DB promotion:
+  SKIPPED
 
-PR-AUC:
-...
+============================================================
 
-Accuracy:
-...
+Con:
 
-Precision:
-...
+--db --promote
 
-Recall:
-...
+DB promotion:
+  SUCCESS
 
-F1:
-...
+Previous active model:
+  deactivated
 
-Brier:
-...
+New model:
+  active
 
-Classification threshold:
-...
+============================================================
+NOTA DE RIESGO (registrada por FASE 1.1)
+============================================================
 
-===================================================
-IMPORTANTE
-===================================================
+Actualmente deactivate_by_symbol(symbol) se ejecuta ANTES de
+upsert(is_active=True). Si la conexión funciona parcialmente pero el
+proceso falla después de desactivar (p.ej. timeout o crash durante el
+upsert), la tabla ml_models puede quedar SIN modelo activo para ese
+símbolo.
 
-El reporte debe indicar explícitamente:
-
-"El TEST FINAL no fue utilizado para selección de modelo,
-selección de hiperparámetros ni selección de threshold."
-
-===================================================
-COMPARACIÓN CON EL EXPERIMENTO ORIGINAL
-===================================================
-
-Si originalmente teníamos:
-
-LSTM:
-ROC-AUC = 0.6513
-
-mostrar:
-
-Original single split:
-0.6513
-
-Walk-forward mean:
-...
-
-Final OOS test:
-...
-
-Pero NO interpretar automáticamente una caída como algo negativo.
-
-Explicar:
-
-"El resultado original utilizaba el mismo conjunto de test para
-comparar modelos. El nuevo protocolo utiliza validation para selección
-y reserva el test final para evaluación fuera de muestra."
-
-===================================================
-CONCLUSIÓN
-===================================================
-
-No declarar "modelo rentable".
-
-Solamente clasificar:
-
-ROBUST SIGNAL
-POSSIBLE SIGNAL
-WEAK SIGNAL
-NO EVIDENCE
-
-según:
-
-- estabilidad temporal
-- mean AUC
-- std AUC
-- PR-AUC
-- consistencia entre folds
-
-Todavía no hacer afirmaciones de rentabilidad.
+FASE 1.1 no cambia este comportamiento (decisión documentada); la
+mitigación se resuelve aquí: promoción explícita vía --promote y/o
+transacción única que agrupe deactivate + upsert.

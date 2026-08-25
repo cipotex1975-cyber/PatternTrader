@@ -1,136 +1,116 @@
-FASE 6 — EVALUACIÓN, THRESHOLDS Y PROBABILIDADES
-================================================
+FASE 6 — EARLY STOPPING REAL
+=============================
 
-Revisa la evaluación de todos los modelos.
+Implementar correctamente:
 
-===================================================
-1. SCORES
+--epochs
+--patience
+--early-stop-rounds
 
-Para ROC-AUC y PR-AUC utilizar scores continuos.
+============================================================
+1. SEQUENCE MODELS
 
-NO utilizar:
+Para:
 
-predicted_class
+LSTM
+CNN
+Transformer
 
-para calcular AUC.
+usar validation durante entrenamiento.
 
-Correcto:
+No utilizar TEST.
 
-probabilities = model.predict_proba(X)[:, 1]
-
-roc_auc_score(y, probabilities)
-
-===================================================
-2. PREDICT VS PREDICT_PROBA
-
-Verifica cada modelo:
-
-- CatBoost
-- LightGBM
-- XGBoost
-- Random Forest
-- LSTM
-- CNN
-- Transformer
-- Autoencoder
-- Isolation Forest
-
-Para cada uno documentar:
-
-predict()
-predict_proba()
-
-y qué significa el score.
-
-===================================================
-3. ISOLATION FOREST
-
-Revisar especialmente Isolation Forest.
-
-Determinar si:
-
-mayor score = mayor probabilidad de positivo
-
-o:
-
-mayor score = mayor anomalía
-
-Si está invertido, corregirlo antes de calcular AUC.
-
-===================================================
-4. THRESHOLD
-
-Añadir:
-
---classification-threshold
-
-default:
-
-0.50
-
-Las métricas:
-
-accuracy
-precision
-recall
-F1
-
-deben utilizar ese threshold.
-
-ROC-AUC y PR-AUC NO deben depender de él.
-
-===================================================
-5. EJEMPLO
-
-Para LSTM:
-
-Threshold = 0.50
-
-Accuracy = 0.68
-Precision = 0.46
-Recall = 0.32
-F1 = 0.38
-ROC-AUC = 0.65
-PR-AUC = 0.42
-
-Threshold = 0.40
-
-Accuracy = 0.65
-Precision = 0.43
-Recall = 0.45
-F1 = 0.44
-ROC-AUC = 0.65
-PR-AUC = 0.42
-
-Observación importante:
-
-ROC-AUC permanece igual.
-
-===================================================
-6. THRESHOLD OPTIMIZATION
-
-Permite encontrar el mejor classification threshold utilizando VALIDATION.
+============================================================
+2. EARLY STOPPING
 
 Ejemplo:
 
-threshold    precision    recall    F1
-----------------------------------------
-0.30         0.39         0.61      0.47
-0.40         0.43         0.45      0.44
-0.50         0.46         0.32      0.38
-0.60         0.51         0.20      0.29
+epochs = 50
+patience = 5
 
-Seleccionar según la métrica configurada.
+Epoch 1:
+train_loss = ...
+val_loss = ...
 
-NUNCA optimizar threshold usando TEST.
+...
 
-===================================================
+Epoch 12:
+val_loss = 0.601
+
+Epoch 13:
+val_loss = 0.603
+
+...
+
+Epoch 17:
+Early stopping
+
+Best epoch = 12
+
+============================================================
+3. CHECKPOINT
+
+Guardar el mejor estado:
+
+best_validation_loss
+
+No guardar simplemente el último epoch.
+
+============================================================
+4. TRAIN METRICS
+
+No confundir:
+
+loss
+
+con:
+
+accuracy
+
+Reportar:
+
+train_loss
+validation_loss
+train_accuracy
+validation_accuracy
+
+cuando estén disponibles.
+
+============================================================
+5. ÁRBOLES
+
+Para:
+
+XGBoost
+LightGBM
+CatBoost
+
+implementar eval_set / validation set y early stopping cuando
+la API concreta lo permita.
+
+No inventar parámetros incompatibles con la versión instalada.
+
+============================================================
+6. OUTPUT
+
+LSTM:
+
+Epoch 01/50 ...
+Epoch 02/50 ...
+...
+
+Early stopping:
+  enabled: true
+  patience: 5
+  best_epoch: 12
+  best_val_loss: ...
+
+============================================================
 7. TESTS
 
 Verificar:
 
-- AUC utiliza score continuo
-- F1 utiliza classification threshold
-- cambiar threshold no cambia ROC-AUC
-- threshold seleccionado en validation
-- test no participa
+- early stopping utiliza validation
+- test nunca participa
+- checkpoint = mejor validation
+- patience realmente detiene entrenamiento

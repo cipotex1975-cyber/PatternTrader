@@ -1,28 +1,103 @@
-FASE 2 — SEPARACIÓN TRAIN / VALIDATION / TEST
-===============================================
+FASE 2 — VALIDACIÓN HONESTA Y FRONTERA TEMPORAL
+================================================
 
-Ahora que el pipeline fundamental está corregido, elimina la selección del modelo utilizando directamente el TEST.
+Objetivo:
 
-Actualmente tenemos aproximadamente:
+Eliminar el leakage de selección identificado en FASE 0.
 
-80% TRAIN
-20% TEST
+Actualmente:
 
-y el modelo ganador se selecciona por el AUC obtenido en TEST.
+TRAIN = 80%
+TEST  = 20%
 
-Esto NO es aceptable para una evaluación final fuera de muestra.
+y select_winner() selecciona el modelo usando métricas calculadas
+sobre TEST.
 
-Implementa:
+Esto debe cambiar.
+
+============================================================
+1. NUEVA ESTRUCTURA
+============================================================
+
+Implementar:
 
 TRAIN
 VALIDATION
 TEST FINAL
 
-===================================================
-1. NUEVOS PARÁMETROS
-===================================================
+Default:
 
-Añade:
+train = 70%
+validation = 15%
+test = 15%
+
+Todo cronológico.
+
+NUNCA shuffle.
+
+============================================================
+2. IMPORTANTE SOBRE EL LABEL
+============================================================
+
+Actualmente los labels se calculan ANTES del split.
+
+create_labels() mira:
+
+t+1 ... t+forward_periods
+
+Por tanto, las últimas muestras de TRAIN pueden usar highs que pertenecen
+cronológicamente al TEST.
+
+Esto debe corregirse.
+
+Hay dos opciones válidas:
+
+OPCIÓN A:
+realizar el split temporal antes de construir labels y construir
+labels respetando cada frontera.
+
+OPCIÓN B:
+después del split, eliminar del TRAIN las últimas forward_periods
+muestras.
+
+Prefiero la solución más explícita y menos propensa a errores.
+
+Documentar exactamente la decisión.
+
+============================================================
+3. REGLA FUNDAMENTAL
+============================================================
+
+TRAIN puede utilizarse para:
+
+- entrenamiento
+- fitting de preprocessing
+- selección de parámetros internos del entrenamiento
+
+VALIDATION puede utilizarse para:
+
+- seleccionar modelo
+- early stopping
+- seleccionar threshold
+- comparar configuraciones
+
+TEST FINAL:
+
+NO puede utilizarse para:
+
+- seleccionar modelo
+- seleccionar threshold
+- early stopping
+- hyperparameter tuning
+- scaler.fit()
+
+El TEST FINAL sólo se evalúa al final.
+
+============================================================
+4. train_and_compare.py
+============================================================
+
+Añadir:
 
 --train-size
 --validation-size
@@ -30,194 +105,177 @@ Añade:
 
 Defaults:
 
-train_size = 0.70
-validation_size = 0.15
-test_size = 0.15
+0.70
+0.15
+0.15
 
 Validar:
 
-train_size > 0
-validation_size > 0
-test_size > 0
+train + validation + test = 1
 
-y:
+con tolerancia de punto flotante.
 
-train_size + validation_size + test_size == 1
-
-con tolerancia numérica razonable.
-
-===================================================
-2. SPLIT TEMPORAL
-===================================================
-
-Nunca usar shuffle.
-
-Ejemplo:
-
-Dataset total = 100000
-
-TRAIN:
-0 → 70000
-
-VALIDATION:
-70000 → 85000
-
-TEST:
-85000 → 100000
+============================================================
+5. OUTPUT
 
 Mostrar:
 
-Chronological split:
-
-TRAIN       : 0 - 69999
-VALIDATION  : 70000 - 84999
-TEST FINAL  : 85000 - 99999
-
-===================================================
-3. REGLA FUNDAMENTAL
-===================================================
-
-TRAIN puede utilizarse para:
-
-- fitting
-- scaler
-- entrenamiento
-- feature selection futura
-
-VALIDATION puede utilizarse para:
-
-- seleccionar modelo
-- seleccionar hiperparámetros
-- seleccionar classification threshold
-- early stopping
-
-TEST FINAL solamente puede utilizarse para:
-
-- evaluación final
-
-El TEST FINAL no puede participar en:
-
-- entrenamiento
-- scaler.fit()
-- selección de modelo
-- selección de threshold
-- early stopping
-- hyperparameter tuning
-
-===================================================
-4. CAMBIAR run_comparison()
-===================================================
-
-Actualmente recibe:
-
-X_train
-y_train
-X_test
-y_test
-
-Adapta la arquitectura para trabajar conceptualmente con:
-
-X_train
-y_train
-X_validation
-y_validation
-
-El resultado de run_comparison() debe seleccionar el ganador utilizando VALIDATION.
-
-El TEST debe evaluarse posteriormente.
-
-===================================================
-5. EJEMPLO
-===================================================
-
-La salida debe mostrar:
-
-Dataset
--------
-Total samples: 99366
+Chronological split
+===================
 
 TRAIN
------
-Samples: 69556
-Range: 2010-05-31 → ...
+  samples: ...
+  start: ...
+  end: ...
 
 VALIDATION
-----------
-Samples: 14904
-Range: ... → ...
+  samples: ...
+  start: ...
+  end: ...
 
 TEST FINAL
-----------
-Samples: 14906
-Range: ... → ...
+  samples: ...
+  start: ...
+  end: ...
 
-===================================================
-6. RESULTADO DE COMPARACIÓN
-===================================================
+============================================================
+6. CAMBIAR run_comparison()
+============================================================
 
-Ejemplo esperado:
+Actualmente:
 
-MODEL           VAL_AUC     VAL_PR_AUC
----------------------------------------
-catboost        0.6042      0.3910
-cnn             0.6187      0.3895
-lstm            0.6461      0.4188
-random_forest   0.5881      0.3780
-xgboost         0.5834      0.3691
+run_comparison(
+    X_train,
+    y_train,
+    X_test,
+    y_test,
+    ...
+)
 
-Selected model:
-lstm
+Debe evolucionar a:
 
-Selection metric:
-roc_auc
+run_comparison(
+    X_train,
+    y_train,
+    X_validation,
+    y_validation,
+    ...
+)
 
-Selection dataset:
-VALIDATION
+El comparison debe utilizar VALIDATION para comparar modelos.
 
-IMPORTANTE:
+El TEST FINAL no debe entrar aquí.
 
-No mostrar:
+============================================================
+7. SELECCIÓN DEL GANADOR
+============================================================
 
-"Ganador según TEST"
+Actualmente:
 
-sino:
+select_winner(summary, metric)
 
-"Modelo seleccionado según VALIDATION".
+usa métricas del TEST.
 
-===================================================
-7. TEST FINAL
-===================================================
+Después de esta fase:
 
-Después de seleccionar el modelo:
+select_winner(summary, metric)
 
-evaluarlo sobre TEST FINAL.
+debe utilizar métricas de VALIDATION.
 
-Mostrar claramente:
+Mostrar:
+
+Model selection
+==============
+
+Selection dataset : VALIDATION
+Selection metric  : ROC-AUC
+
+Winner:
+  lstm
+  validation ROC-AUC = ...
+
+Nunca mostrar:
+
+Winner according to TEST
+
+============================================================
+8. TEST FINAL
+============================================================
+
+Después de seleccionar el ganador:
+
+evaluar el modelo ganador UNA VEZ sobre TEST FINAL.
+
+Mostrar:
 
 FINAL OUT-OF-SAMPLE TEST
 ========================
 
 Model: lstm
 
-ROC-AUC: 0.xxxx
-PR-AUC : 0.xxxx
-Accuracy: 0.xxxx
-Precision: 0.xxxx
-Recall: 0.xxxx
-F1: 0.xxxx
+ROC-AUC : ...
+PR-AUC  : ...
+Accuracy: ...
+Precision: ...
+Recall: ...
+F1: ...
 
 IMPORTANTE:
 
-Este resultado NO puede cambiar el modelo seleccionado.
+Estos resultados NO deben volver a entrar en select_winner().
 
-===================================================
-8. TESTS
-===================================================
+============================================================
+9. SECUENCIAS
 
-Crear tests que demuestren:
+Mantener el comportamiento correcto ya existente:
 
-- train < validation < test temporalmente
-- no existe shuffle
-- test no se utiliza para selección
-- test no se utiliza para scaler.fit
-- validation sí puede utilizarse para selección
+Las primeras ventanas de validation/test pueden utilizar contexto
+histórico anterior.
+
+Eso NO es leakage.
+
+Por ejemplo:
+
+TRAIN:
+[t-29 ... t]
+
+VALIDATION:
+[t+1 ...]
+
+La primera ventana de validation puede utilizar:
+
+[t-28 ... t, t+1]
+
+porque todo ese contexto es anterior o contemporáneo al instante
+de predicción.
+
+Documentar esto.
+
+============================================================
+10. TESTS
+
+Crear tests para demostrar:
+
+- TRAIN < VALIDATION < TEST temporalmente
+- no shuffle
+- test no participa en selección
+- validation sí participa
+- las últimas forward_periods muestras del train no consumen futuro
+- sequence context es causal
+
+============================================================
+SALIDA FINAL
+
+FASE 2 COMPLETED
+
+Selection:
+  dataset = VALIDATION
+  metric = ROC-AUC
+
+Final evaluation:
+  dataset = TEST FINAL
+
+Guarantees:
+  [x] no test-based model selection
+  [x] no label leakage across train/test boundary
+  [x] chronological split

@@ -1,31 +1,71 @@
-FASE 1 — CORRECCIONES FUNDAMENTALES Y DATA LEAKAGE
-===================================================
+FASE 1 — CORRECCIONES DE BUGS Y REPORTING
+==========================================
 
-Implementa únicamente las correcciones fundamentales del pipeline.
+IMPORTANTE:
+Esta fase debe modificar únicamente problemas de corrección evidenciados
+por la auditoría FASE 0.
 
-NO implementes todavía:
+NO implementar todavía:
 
+- TRAIN/VALIDATION/TEST
 - walk-forward
+- scaler
 - nuevas features
+- optimización de hiperparámetros
 - calibración
 - backtesting
-- optimización de hiperparámetros
+- cambios de arquitectura de modelos
 
-El objetivo de esta fase es dejar el pipeline actual matemáticamente correcto sin cambiar todavía su arquitectura general.
+Objetivo:
 
-===================================================
+Dejar el pipeline actual funcionando correctamente sin cambiar todavía
+su metodología de evaluación.
+
+============================================================
+CONTEXTO REAL DEL CÓDIGO
+============================================================
+
+Archivos relevantes:
+
+- train_and_compare.py
+- app/ml/training/data.py
+- app/ml/training/compare.py
+
+La auditoría encontró:
+
+P01:
+--min-up-moves está declarado pero no se pasa a create_labels().
+
+P02:
+run_comparison() usa train_loss como fallback de train_accuracy.
+
+P03:
+--walk-forward-splits está declarado pero no está conectado.
+
+P04:
+--early-stop-rounds y --patience están declarados pero no tienen efecto.
+
+En esta fase solamente corregiremos P01 y P02.
+
+NO implementar P03/P04 todavía.
+
+============================================================
 1. CORREGIR --min-up-moves
-===================================================
+============================================================
 
-En train_and_compare.py, asegúrate de que:
+Actualmente train_and_compare.py llama conceptualmente:
 
---min-up-moves
+create_labels(
+    df,
+    forward_periods=args.forward_periods,
+    threshold=args.threshold,
+)
 
-realmente se pase a:
+Debe pasar también:
 
-create_labels()
+min_up_moves=args.min_up_moves
 
-Debe quedar conceptualmente:
+Debe quedar:
 
 df["label"] = create_labels(
     df,
@@ -34,167 +74,172 @@ df["label"] = create_labels(
     min_up_moves=args.min_up_moves,
 )
 
-Mantén defaults:
+============================================================
+2. VALIDAR PARÁMETROS
+============================================================
 
-forward_periods=5
-threshold=0.001
-min_up_moves=2
-
-Añade validaciones:
+Agregar validación:
 
 forward_periods >= 1
 threshold > 0
 min_up_moves >= 1
 min_up_moves <= forward_periods
 
+Si no se cumple:
+
+terminar con un mensaje claro.
+
 Ejemplo:
 
-$ python train_and_compare.py data.txt \
-    --forward-periods 5 \
-    --threshold 0.001 \
-    --min-up-moves 3
+ERROR:
+min_up_moves=6 no puede ser mayor que forward_periods=5
 
-La salida debe mostrar explícitamente:
+============================================================
+3. MOSTRAR CONFIGURACIÓN EFECTIVA DEL LABEL
+============================================================
 
-Label configuration:
-  forward_periods: 5
-  threshold: 0.001
-  min_up_moves: 3
+Antes de entrenar mostrar:
 
-===================================================
-2. CORREGIR train_accuracy
-===================================================
+Label configuration
+-------------------
+forward_periods : 5
+threshold       : 0.001
+min_up_moves    : 2
 
-Nunca utilizar train_loss como fallback para train_accuracy.
+Esto es importante porque la configuración real debe quedar visible
+en los logs.
 
-Incorrecto:
+============================================================
+4. CORREGIR train_accuracy
+============================================================
 
-train_accuracy = train_loss
+En compare.py actualmente:
 
-Correcto:
+train_acc = train_metrics.get("train_accuracy")
+train_loss = train_metrics.get("loss")
+
+y luego:
+
+train_accuracy =
+    train_acc
+    else train_loss
+    else NaN
+
+Esto es incorrecto.
+
+NUNCA usar loss como accuracy.
+
+Cambiar la estructura para guardar:
+
+train_accuracy
+train_loss
+
+por separado.
+
+Si un modelo no devuelve accuracy:
 
 train_accuracy = NaN
 
-cuando el modelo no proporcione accuracy.
+Si devuelve loss:
 
-Añadir:
+train_loss = valor
 
-train_loss
+Si no devuelve loss:
 
-como métrica independiente.
+train_loss = NaN
 
-La tabla debe pasar de algo como:
+============================================================
+5. MODIFICAR TABLA
+============================================================
 
-MODEL       TRAIN
-lstm        6.5741
+Actualmente:
 
-a:
+MODELO TRAIN ACC PREC REC F1 AUC PR_AUC
 
-MODEL       TRAIN_LOSS   TRAIN_ACC
-lstm        6.5741       0.68
+Cambiar a:
 
-Si el accuracy no está disponible:
-
-MODEL       TRAIN_LOSS   TRAIN_ACC
-lstm        6.5741       N/A
-
-===================================================
-3. CORREGIR LABELS EN LA FRONTERA TRAIN/TEST
-===================================================
-
-El label utiliza datos futuros.
-
-Garantiza que ninguna muestra de TRAIN tenga un label calculado utilizando observaciones del TEST.
+MODELO TRAIN_LOSS TRAIN_ACC ACC PREC REC F1 AUC PR_AUC ESTADO
 
 Ejemplo:
 
-TRAIN:
-t-5
-t-4
-t-3
-t-2
-t-1
-t
+MODELO             TRAIN_LOSS TRAIN_ACC     ACC    PREC     REC      F1     AUC  PR_AUC
+------------------------------------------------------------------------------------------------
+catboost               0.6255    0.6255  0.6623  0.4199  0.2990  0.3493  0.6059  0.3929
+lstm                    6.5741       N/A  0.6796  0.4594  0.3225  0.3790  0.6513  0.4211
 
-TEST:
-t+1
-t+2
-t+3
-t+4
-t+5
+Los valores son sólo ejemplo de formato.
 
-Si forward_periods=5:
+============================================================
+6. LOGGING
+============================================================
 
-el label de t NO debe pertenecer a TRAIN porque requiere:
+Cambiar:
 
-t+1 ... t+5
+lstm: train=6.5741 roc_auc=0.6513
 
-Implementa la solución más clara y mantenible.
+por algo como:
 
-Documenta el motivo.
+lstm:
+  train_loss=6.5741
+  train_accuracy=N/A
+  roc_auc=0.6513
 
-===================================================
-4. TESTS
-===================================================
+============================================================
+7. NO TOCAR
+============================================================
 
-Añade tests automáticos para:
-
-A) --min-up-moves realmente cambia el label.
-
-B) min_up_moves inválido produce error.
-
-C) Las últimas muestras del TRAIN no dependen del TEST.
-
-D) train_accuracy nunca recibe train_loss.
-
-E) build_sequences mantiene causalidad.
-
-===================================================
-5. NO CAMBIAR
-===================================================
-
-No cambiar todavía:
+No cambiar:
 
 - definición del label
-- lista de features
-- sequence_length
+- features
+- split 80/20
+- selección del ganador
 - modelos
 - hiperparámetros
-- selección del ganador
-- split 80/20
+- sequence_length
 
-===================================================
-SALIDA ESPERADA
-===================================================
+============================================================
+8. TESTS
+============================================================
 
-Después de ejecutar un entrenamiento:
+Agregar tests para:
 
-Label configuration:
-  forward_periods: 5
-  threshold: 0.001
-  min_up_moves: 2
+A)
+min_up_moves realmente llega a create_labels.
 
-Dataset:
-  samples: 99366
-  positives: 39439 (39.69%)
-  negatives: 59927 (60.31%)
+B)
+cambiar min_up_moves cambia las etiquetas cuando corresponde.
 
-Split:
-  train: ...
-  test: ...
+C)
+min_up_moves > forward_periods genera error.
 
-MODEL                 TRAIN_LOSS    TRAIN_ACC    AUC
-----------------------------------------------------
-catboost              0.6255        0.6255       ...
-lstm                   6.57         ...          ...
-...
+D)
+train_loss nunca aparece como train_accuracy.
 
-No debe aparecer:
+E)
+modelos secuenciales pueden tener:
+train_accuracy = NaN
+train_loss = valor
 
-lstm TRAIN = 6.5741
+============================================================
+SALIDA FINAL ESPERADA
+============================================================
 
-interpretado como accuracy.
+Mostrar al terminar:
 
-Ejecuta todos los tests existentes y los nuevos tests.
+FASE 1 COMPLETED
 
-No continúes con otra fase.
+Fixed:
+  [x] min_up_moves connected
+  [x] train_loss separated from train_accuracy
+
+Not implemented yet:
+  [ ] validation split
+  [ ] walk-forward
+  [ ] scaling
+  [ ] early stopping
+  [ ] feature parity
+
+Ejecutar todos los tests existentes y los nuevos tests.
+
+NO continuar con otra fase.

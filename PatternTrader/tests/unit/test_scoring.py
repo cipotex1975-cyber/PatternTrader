@@ -78,6 +78,55 @@ def test_scoring_components():
     assert all(c.weight > 0 for c in result.components)
 
 
+class TestMLScoreDegradation:
+    def test_no_model_marks_component_degraded(self, tmp_path):
+        engine = ScoringEngine(model_path=str(tmp_path))
+        pattern = create_test_pattern()
+
+        result = engine.calculate_score(pattern, {"rsi": 50}, create_test_candles())
+
+        ml = next(c for c in result.components if c.name == "ml_history")
+        assert ml.degraded is True
+        assert ml.reason == "ML no disponible: no_model"
+        assert ml.score == 50.0
+
+    def test_no_features_marks_component_degraded(self, tmp_path):
+        engine = ScoringEngine(model_path=str(tmp_path))
+        pattern = create_test_pattern()
+
+        result = engine.calculate_score(pattern, {"rsi": 50}, candles=None)
+
+        ml = next(c for c in result.components if c.name == "ml_history")
+        assert ml.degraded is True
+        assert ml.reason == "ML no disponible: no_features"
+
+    def test_get_ml_score_with_status_returns_reason(self, tmp_path):
+        engine = ScoringEngine(model_path=str(tmp_path))
+
+        score, reason = engine._get_ml_score_with_status(None)
+
+        assert score == 50.0
+        assert reason == "no_features"
+
+    def test_real_prediction_not_degraded(self, tmp_path):
+        _train_and_save_winner(tmp_path, "USDCAD")
+        engine = ScoringEngine(model_path=str(tmp_path))
+        pattern = PatternResult(
+            pattern_name="double_top",
+            pattern_type=PatternType.REVERSAL,
+            symbol="USDCAD",
+            timeframe="1h",
+            confidence=0.85,
+            key_levels={"neckline": 1.05},
+        )
+
+        result = engine.calculate_score(pattern, {"rsi": 50}, create_test_candles())
+
+        ml = next(c for c in result.components if c.name == "ml_history")
+        assert ml.degraded is False
+        assert ml.reason.startswith("ML prediction:")
+
+
 @pytest.mark.asyncio
 async def test_scoring_uses_knowledge_model_when_attached():
     from app.learning.models import LearningMode

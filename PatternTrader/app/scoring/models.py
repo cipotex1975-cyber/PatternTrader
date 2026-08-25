@@ -11,6 +11,7 @@ class ScoreComponent(BaseModel):
     value: float
     score: float
     reason: str = ""
+    degraded: bool = False
 
 
 class ScoreResult(BaseModel):

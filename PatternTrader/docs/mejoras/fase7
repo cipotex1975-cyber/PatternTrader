@@ -1,112 +1,119 @@
-FASE 7 — EXPERIMENTO DE ROBUSTEZ DEL LABEL
-============================================
+FASE 7 — EVALUACIÓN Y SEMÁNTICA DE SCORES
+==========================================
 
-Ahora quiero estudiar si la señal predictiva depende excesivamente de una única definición del label.
+Revisar cuidadosamente la evaluación de todos los modelos.
 
-NO optimices sobre TEST FINAL.
+============================================================
+1. ROC-AUC
 
-Utiliza TRAIN/VALIDATION.
+ROC-AUC debe calcularse con score continuo:
 
-===================================================
-1. VARIABLES
+predict_proba[:, 1]
 
-forward_periods:
+No utilizar:
 
-5
+predict()
 
-threshold:
+para ROC-AUC.
 
-0.0005
-0.0010
-0.0015
-0.0020
+============================================================
+2. PR-AUC
 
-min_up_moves:
+También utilizar score continuo.
 
-1
-2
-3
+============================================================
+3. CLASSIFICATION THRESHOLD
 
-===================================================
-2. EXPERIMENTOS
+Separar:
 
-Ejecutar:
+ranking score
 
-0.0005 / 1
-0.0005 / 2
-0.0005 / 3
+de:
 
-0.0010 / 1
-0.0010 / 2
-0.0010 / 3
+classification threshold.
 
-0.0015 / 1
-0.0015 / 2
-0.0015 / 3
+Añadir:
 
-0.0020 / 1
-0.0020 / 2
-0.0020 / 3
+--classification-threshold
 
-===================================================
-3. RESULTADO
+default:
 
-Generar tabla:
+0.50
 
-threshold   min_moves   positive_%   mean_AUC   std_AUC   PR_AUC
-------------------------------------------------------------------
-0.0005      1           58.2%         0.61       0.02      0.47
-0.0005      2           43.1%         0.63       0.02      0.43
-0.0005      3           29.7%         0.64       0.03      0.36
+Accuracy/precision/recall/F1 dependen del threshold.
 
-0.0010      1           52.0%         0.62       0.02      0.45
-0.0010      2           39.7%         0.64       0.02      0.42
-0.0010      3           26.3%         0.65       0.03      0.34
+ROC-AUC/PR-AUC no.
 
-...
+============================================================
+4. ANOMALY MODELS
 
-Los números anteriores son solamente un ejemplo de formato.
-NO inventes resultados.
+Revisar:
 
-===================================================
-4. INTERPRETACIÓN
+Isolation Forest
+Autoencoder
 
-Queremos saber si:
+Determinar exactamente qué significa:
 
-AUC ≈ 0.63-0.65
+predict_proba[:,1]
 
-aparece de manera consistente en varias definiciones razonables del label.
+para cada uno.
 
-Esto sería evidencia de robustez.
+Debe existir una convención:
 
-Si únicamente:
+1 = label positivo
 
-threshold=0.001
-min_up_moves=2
+No aceptar simplemente una transformación matemática si cambia la semántica.
 
-produce un resultado alto y todo lo demás cae a ~0.50:
+============================================================
+5. DECISIÓN
 
-reportarlo como posible overfitting.
+Por defecto recomiendo:
 
-===================================================
-5. TEST FINAL
+NO comparar anomaly detectors con modelos supervisados en el mismo
+ranking de "mejor modelo".
 
-NO utilizar el TEST FINAL para elegir:
+Permitir:
 
-threshold
-min_up_moves
+--include-anomaly-models
 
-===================================================
-6. SALIDA
+si el usuario explícitamente quiere incluirlos.
 
-Generar también:
+============================================================
+6. OUTPUT
 
-BEST VALIDATION CONFIGURATION
+Mostrar:
 
-threshold = ...
-min_up_moves = ...
-mean validation AUC = ...
-std validation AUC = ...
-positive ratio = ...
+Model family:
+  supervised classification
 
-No llamar esto "best trading configuration" todavía.
+o:
+
+Model family:
+  anomaly detection
+
+============================================================
+7. THRESHOLD OPTIMIZATION
+
+Permitir seleccionar threshold usando VALIDATION.
+
+Ejemplo:
+
+threshold    precision    recall    F1
+0.30         ...
+0.40         ...
+0.50         ...
+0.60         ...
+
+Seleccionar según métrica configurada.
+
+Nunca utilizar TEST para escoger threshold.
+
+============================================================
+8. TEST
+
+Verificar:
+
+- AUC usa score continuo
+- F1 usa threshold
+- threshold no afecta AUC
+- anomaly score tiene orientación correcta

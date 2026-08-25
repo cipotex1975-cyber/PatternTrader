@@ -1,0 +1,19 @@
+{
+  "model_name": "catboost",
+  "symbol": "USDCAD",
+  "extension": ".cbm",
+  "metric": "roc_auc",
+  "version": "20260823_020739",
+  "trained_at": "2026-08-23T02:07:39.597791+00:00",
+  "metrics": {
+    "train_accuracy": 0.6254717455844613,
+    "samples_train": 79492,
+    "samples_test": 19874,
+    "accuracy": 0.6623226325852873,
+    "precision": 0.41991140125903476,
+    "recall": 0.29897078353253653,
+    "f1": 0.34926791428294385,
+    "roc_auc": 0.6059320599671111,
+    "pr_auc": 0.3928992969862255
+  }
+}

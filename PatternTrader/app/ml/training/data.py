@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -166,6 +169,106 @@ def prepare_dataset(
     X = df[FEATURE_NAMES].values
     y = df["label"].values.astype(int)
     return X, y, df
+
+
+@dataclass
+class SplitResult:
+    """Split cronológico TRAIN/VALIDATION/TEST sin leakage de labels (FASE 2).
+
+    ``ranges`` contiene las fechas reales (columna ``datetime``) de inicio y
+    fin de cada segmento tras el recorte anti-leakage.
+    """
+
+    X_train: np.ndarray
+    y_train: np.ndarray
+    X_validation: np.ndarray
+    y_validation: np.ndarray
+    X_test: np.ndarray
+    y_test: np.ndarray
+    ranges: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+def split_chronological(
+    df_features: pd.DataFrame,
+    train_size: float = 0.70,
+    validation_size: float = 0.15,
+    test_size: float | None = None,
+    forward_periods: int = 5,
+) -> SplitResult:
+    """Divide cronológicamente en TRAIN/VALIDATION/TEST evitando leakage de labels.
+
+    Decisión documentada (FASE 2, sección 2): **OPCIÓN B** — las features se
+    calculan una sola vez sobre la serie completa (todos los indicadores son
+    causales: rolling/ewm/shift(1), nunca miran el futuro); los labels se
+    calculan también globalmente y después del corte posicional se RECORTAN
+    explícitamente las últimas ``forward_periods`` filas de TRAIN y de
+    VALIDATION. Así ninguna muestra consume ``high`` de un segmento posterior.
+    El resultado es idéntico a la Opción A (labels por segmento) pero auditable.
+
+    Si se pasa ``test_size`` se valida que train+validation+test sea 1 con
+    tolerancia de punto flotante (1e-6); si no, test es el resto.
+    Nunca se hace shuffle; los tres segmentos son contiguos en el tiempo.
+    """
+    if not 0 < train_size < 1 or not 0 < validation_size < 1:
+        raise ValueError("train_size y validation_size deben estar en (0, 1)")
+    if test_size is not None:
+        total = train_size + validation_size + test_size
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(
+                f"train + validation + test debe ser 1 (tolerancia 1e-6); recibido {total}"
+            )
+    test_fraction = 1.0 - train_size - validation_size
+    if test_fraction <= 0:
+        raise ValueError(f"La fracción de test resultante debe ser positiva: {test_fraction}")
+
+    n = len(df_features)
+    n_train = int(n * train_size)
+    n_validation = int(n * validation_size)
+    if n_train == 0 or n_validation == 0 or n_train + n_validation >= n:
+        raise ValueError(
+            f"Dataset demasiado pequeño ({n} muestras) para el split "
+            f"{train_size}/{validation_size}/{test_fraction:.2f}"
+        )
+
+    # Corte por posición sobre el dataframe ya limpio (features+labels).
+    train_df = df_features.iloc[:n_train]
+    validation_df = df_features.iloc[n_train : n_train + n_validation]
+    test_df = df_features.iloc[n_train + n_validation :]
+
+    # OPCIÓN B: recorte explícito para que ningún label consuma futuro del
+    # segmento siguiente (create_labels mira t+1..t+forward_periods).
+    train_df = train_df.iloc[: len(train_df) - forward_periods]
+    validation_df = validation_df.iloc[: len(validation_df) - forward_periods]
+
+    if train_df.empty or validation_df.empty or test_df.empty:
+        raise ValueError("Algún segmento quedó vacío tras el split/recorte")
+
+    def _range(segment: pd.DataFrame) -> dict[str, Any]:
+        positions = [i for i, c in enumerate(segment.columns) if c == "datetime"]
+        if not positions or segment.empty:
+            return {"samples": int(len(segment)), "start": None, "end": None}
+        dt = segment.iloc[:, positions[0]]
+        return {
+            "samples": int(len(segment)),
+            "start": pd.to_datetime(dt.iloc[0]).isoformat(),
+            "end": pd.to_datetime(dt.iloc[-1]).isoformat(),
+        }
+
+    ranges = {
+        "train": _range(train_df),
+        "validation": _range(validation_df),
+        "test": _range(test_df),
+    }
+
+    return SplitResult(
+        X_train=train_df[FEATURE_NAMES].values,
+        y_train=train_df["label"].values.astype(int),
+        X_validation=validation_df[FEATURE_NAMES].values,
+        y_validation=validation_df["label"].values.astype(int),
+        X_test=test_df[FEATURE_NAMES].values,
+        y_test=test_df["label"].values.astype(int),
+        ranges=ranges,
+    )
 
 
 def build_sequences(

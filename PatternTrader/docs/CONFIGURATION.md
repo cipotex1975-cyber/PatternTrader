@@ -151,7 +151,13 @@ TELEGRAM_CHAT_ID=-1001234567890                               # ID del chat
 # TELEGRAM_MAX_RETRIES=3                                      # Reintentos con backoff
 # TELEGRAM_SEND_IMAGE=true                                    # Enviar gráfico (sendPhoto)
 # TELEGRAM_MIN_PRIORITY=CRITICAL                              # Gate de envío por prioridad
+# TELEGRAM_CHART_SAVE_DIR=./charts                            # Persistir PNG de señales enviadas
 ```
+
+> **Nota:** si `TELEGRAM_CHART_SAVE_DIR` se define, cada señal enviada con
+> gráfico guarda una copia del PNG en `{dir}/{SIMBOLO}/` con el nombre
+> `{SIMBOLO}_{timeframe}_{patrón}_{fecha}_{uuid}.png`. Déjalo vacío para no
+> guardar archivos.
 
 Al igual que la base de datos, NO se configura en el YAML (los valores del
 YAML pisarían el `.env`).

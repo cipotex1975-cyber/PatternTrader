@@ -1,112 +1,124 @@
-FASE 9 — REPRODUCIBILIDAD Y VERSIONADO DE MODELOS
-==================================================
+FASE 9 — REPRODUCIBILIDAD Y MODEL METADATA
+===========================================
 
-Haz que cada modelo guardado contenga suficiente información para reproducir exactamente el pipeline de inferencia.
+Objetivo:
 
-===================================================
-1. METADATA
+Poder tomar un modelo guardado dentro de seis meses y saber
+exactamente cómo fue entrenado.
 
-Guardar:
+============================================================
+1. SEEDS
 
-symbol
-timeframe
-model_name
-model_version
+Fijar cuando corresponda:
 
-feature_names
-
-forward_periods
-threshold
-min_up_moves
-
-classification_threshold
-
-sequence_length
-
-feature_scaling
-
-scaler
-
-training_period
-validation_period
-test_period
-
-random_seed
-
-training_timestamp
-
-train_metrics
-validation_metrics
-test_metrics
-
-===================================================
-2. EJEMPLO
-
-models/lstm_USDCAD.pt
-
-Metadata:
-
-model:
-  name: lstm
-  version: 20260824_...
-
-dataset:
-  symbol: USDCAD
-  timeframe: H1
-  start: ...
-  end: ...
-
-features:
-  count: 12
-  names:
-    - rsi
-    - macd
-    ...
-
-label:
-  forward_periods: 5
-  threshold: 0.001
-  min_up_moves: 2
-
-preprocessing:
-  scaling: standard
-
-sequence:
-  length: 30
-
-metrics:
-  validation:
-    roc_auc: ...
-    pr_auc: ...
-
-  test:
-    roc_auc: ...
-    pr_auc: ...
-
-===================================================
-3. REPRODUCIBILIDAD
-
-Configurar seeds para:
-
-numpy
-torch
-sklearn
-
-cuando sea posible.
+Python random
+NumPy
+PyTorch
 
 Registrar:
 
 random_seed
 
-===================================================
-4. TEST
+============================================================
+2. METADATA
 
-Guardar modelo.
+El sidecar .meta.json debe incluir:
 
-Cargar modelo.
+model_name
+symbol
+timeframe
 
-Recrear preprocessing.
+dataset:
+  path
+  hash
+  start_datetime
+  end_datetime
+  samples
 
-Realizar predicción.
+features:
+  names
+  count
+  version
 
-Verificar que el resultado sea consistente.
+label:
+  forward_periods
+  threshold
+  min_up_moves
+
+preprocessing:
+  type
+
+sequence:
+  length
+
+training:
+  epochs
+  batch_size
+  learning_rate
+  hyperparameters
+
+validation:
+  metrics
+
+test:
+  metrics
+
+selection:
+  metric
+  dataset
+
+software:
+  Python version
+  sklearn version
+  torch version
+  etc.
+
+git:
+  commit_sha
+
+random_seed
+
+============================================================
+3. DATASET HASH
+
+Calcular hash del archivo de datos utilizado.
+
+Esto permite detectar:
+
+"mismo nombre de archivo pero contenido diferente".
+
+============================================================
+4. OUTPUT
+
+Ejemplo:
+
+{
+  "model_name": "lstm",
+  "symbol": "USDCAD",
+  "timeframe": "H1",
+
+  "label": {
+    "forward_periods": 5,
+    "threshold": 0.001,
+    "min_up_moves": 2
+  },
+
+  "sequence": {
+    "length": 30
+  },
+
+  "preprocessing": {
+    "type": "standard"
+  },
+
+  "selection": {
+    "dataset": "validation",
+    "metric": "roc_auc"
+  },
+
+  "git_sha": "...",
+  "dataset_hash": "...",
+  "random_seed": 42
+}
+
+No es necesario que el JSON tenga exactamente este orden.

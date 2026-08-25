@@ -383,9 +383,14 @@ class PatternPipeline:
         score_result = self._scoring.calculate_score(result, latest_indicators, candles)
         result.score = score_result.total_score
 
-        ml_probability = next(
-            (c.score / 100.0 for c in score_result.components if c.name == "ml_history"),
-            0.0,
+        ml_component = next(
+            (c for c in score_result.components if c.name == "ml_history"),
+            None,
+        )
+        ml_probability: float | None = (
+            ml_component.score / 100.0
+            if ml_component is not None and not ml_component.degraded
+            else None
         )
 
         confirmation = result.metadata.get("confirmation") or {}
@@ -393,7 +398,7 @@ class PatternPipeline:
             pattern=result,
             indicators=latest_indicators,
             score=score_result,
-            ml_probability=ml_probability,
+            ml_probability=ml_probability or 0.0,
             confirmation_score=confirmation.get("score"),
             candles=candles[-50:],
             market_structure=result.metadata.get("market_structure", {}) or {},

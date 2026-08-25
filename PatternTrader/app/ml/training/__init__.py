@@ -1,7 +1,9 @@
 from app.ml.training.compare import (  # noqa: F401
     AVAILABLE_METRICS,
     MODEL_EXTENSIONS,
+    build_eval_sequences,
     evaluate_model,
+    evaluate_winner_on_test,
     format_summary_table,
     run_comparison,
     save_summary,
@@ -10,21 +12,26 @@ from app.ml.training.compare import (  # noqa: F401
 )
 from app.ml.training.data import (  # noqa: F401
     FEATURE_NAMES,
+    SplitResult,
     build_sequences,
     create_features,
     create_labels,
     format_for_model,
     load_data,
+    split_chronological,
 )
 
 __all__ = [
     "AVAILABLE_METRICS",
     "MODEL_EXTENSIONS",
     "FEATURE_NAMES",
+    "SplitResult",
+    "build_eval_sequences",
     "build_sequences",
     "create_features",
     "create_labels",
     "evaluate_model",
+    "evaluate_winner_on_test",
     "format_for_model",
     "format_summary_table",
     "load_data",
@@ -32,4 +39,5 @@ __all__ = [
     "save_summary",
     "save_winner",
     "select_winner",
+    "split_chronological",
 ]

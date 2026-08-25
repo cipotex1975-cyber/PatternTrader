@@ -120,7 +120,7 @@ class SequenceModel(BaseMLModel):
         optimizer = torch.optim.Adam(model.parameters(), lr=self._learning_rate)
         criterion = nn.CrossEntropyLoss()
 
-        dataset = TensorDataset(torch.tensor(X), torch.tensor(y, dtype=np.int64))
+        dataset = TensorDataset(torch.tensor(X), torch.tensor(y, dtype=torch.int64))
         loader = DataLoader(dataset, batch_size=self._batch_size, shuffle=True)
 
         total_loss = 0.0

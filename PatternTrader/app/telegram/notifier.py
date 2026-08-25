@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from io import BytesIO
+from pathlib import Path
 from typing import Any, Optional
 
 from app.core.config.settings import get_settings
@@ -25,6 +26,7 @@ class TelegramNotifier:
         self._retry_backoff = self._config.retry_backoff_seconds
         self._timeout = self._config.timeout_seconds
         self._send_image = self._config.send_image
+        self._chart_save_dir = self._config.chart_save_dir
         self._chart_generator = ChartGenerator()
 
     async def initialize(self) -> None:
@@ -86,6 +88,9 @@ class TelegramNotifier:
         symbol = self._escape_html(signal.symbol)
         timeframe = self._escape_html(signal.timeframe)
         pattern_name = self._escape_html(signal.pattern_name)
+        ml_probability = (
+            f"{signal.ml_probability:.0%}" if signal.ml_probability is not None else "N/D"
+        )
 
         message = f"""
 🚨 <b>Nueva Señal</b>
@@ -97,7 +102,7 @@ class TelegramNotifier:
 <b>Patrón:</b> {pattern_name}
 <b>Score:</b> {signal.score:.1f}
 <b>Health:</b> {signal.health:.1f}%
-<b>Probabilidad IA:</b> {signal.ml_probability:.0%}
+<b>Probabilidad IA:</b> {ml_probability}
 <b>Fecha:</b> {timestamp}
 
 <b>Entrada:</b> {signal.entry_price:,.2f}
@@ -144,6 +149,28 @@ class TelegramNotifier:
             data={"chat_id": self._chat_id, "caption": message},
             files={"photo": ("chart.png", BytesIO(png), "image/png")},
         )
+        self._save_chart_png(signal, png)
+
+    def _save_chart_png(self, signal: Signal, png: bytes) -> None:
+        """Persiste el PNG de la señal bajo ``chart_save_dir`` (si está configurado).
+
+        Se invoca tras un envío exitoso a Telegram; un fallo de escritura se
+        registra como warning sin afectar al resultado del envío.
+        """
+        if not self._chart_save_dir:
+            return
+        try:
+            directory = Path(self._chart_save_dir) / signal.symbol.upper()
+            directory.mkdir(parents=True, exist_ok=True)
+            filename = (
+                f"{signal.symbol}_{signal.timeframe}_{signal.pattern_name}_"
+                f"{signal.created_at:%Y%m%d_%H%M%S}_{signal.id.hex[:8]}.png"
+            )
+            path = directory / filename
+            path.write_bytes(png)
+            logger.info(f"Chart guardado: {path}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"No se pudo guardar el chart de la señal: {e}")
 
     async def _post_with_retries(self, url: str, **kwargs: Any) -> None:
         import httpx

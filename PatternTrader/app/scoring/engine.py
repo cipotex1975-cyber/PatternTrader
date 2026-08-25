@@ -225,14 +225,21 @@ class ScoringEngine:
 
         model = self._resolve_model(pattern)
         ml_features = self._extract_ml_features(candles, model=model)
-        ml_score = self._get_ml_score(ml_features, pattern, model=model)
+        ml_score, ml_degraded_reason = self._get_ml_score_with_status(
+            ml_features, pattern, model=model
+        )
         components.append(
             ScoreComponent(
                 name="ml_history",
                 weight=self._weights.ml_history,
                 value=ml_score,
                 score=ml_score,
-                reason=f"ML prediction: {ml_score:.1f}%",
+                reason=(
+                    f"ML prediction: {ml_score:.1f}%"
+                    if ml_degraded_reason is None
+                    else f"ML no disponible: {ml_degraded_reason}"
+                ),
+                degraded=ml_degraded_reason is not None,
             )
         )
 
@@ -439,7 +446,22 @@ class ScoringEngine:
         pattern: PatternResult | None = None,
         model: BaseMLModel | None = None,
     ) -> float:
-        """Get ML model prediction score.
+        """Get ML model prediction score (compatibilidad: solo el valor)."""
+        score, _ = self._get_ml_score_with_status(features, pattern, model=model)
+        return score
+
+    def _get_ml_score_with_status(
+        self,
+        features: np.ndarray | None,
+        pattern: PatternResult | None = None,
+        model: BaseMLModel | None = None,
+    ) -> tuple[float, str | None]:
+        """Get ML model prediction score y su estado de disponibilidad.
+
+        Devuelve ``(score, degraded_reason)``: ``degraded_reason`` es ``None``
+        cuando la predicción es real; en caso contrario explica por qué se
+        usó el valor neutro de 50 (``no_features``, ``no_model``,
+        ``prediction_error``).
 
         Prefiere el modelo de aprendizaje continuo (alimentado con operaciones
         reales cerradas) cuando está entrenado; si no, usa el modelo específico
@@ -461,16 +483,16 @@ class ScoringEngine:
                 timeframe=pattern.timeframe if pattern else "",
                 pattern=pattern.pattern_name if pattern else "",
             )
-            return float(max(0.0, min(100.0, prediction.probability * 100)))
+            return float(max(0.0, min(100.0, prediction.probability * 100))), None
 
         if features is None:
-            return 50.0
+            return 50.0, "no_features"
 
         if model is None:
             model = self._resolve_model(pattern)
 
         if model is None or not model.is_trained:
-            return 50.0
+            return 50.0, "no_model"
 
         try:
             prediction = model.get_prediction(
@@ -479,7 +501,7 @@ class ScoringEngine:
                 timeframe=pattern.timeframe if pattern else "",
                 pattern_name=pattern.pattern_name if pattern else "",
             )
-            return float(max(0.0, min(100.0, prediction.probability * 100)))
+            return float(max(0.0, min(100.0, prediction.probability * 100))), None
         except Exception as e:
             logger.error(f"ML prediction failed: {e}")
-            return 50.0
+            return 50.0, "prediction_error"

@@ -1,0 +1,156 @@
+# FASE 1.1 — Hacer el registro en DB robusto — Respuesta
+
+Fecha: 2026-08-25
+Estado: COMPLETADA (sin tocar el pipeline ML ni deactivate_by_symbol/upsert)
+Base: especificación en `docs/mejoras/fase1.1`
+
+---
+
+## 1. Cambios realizados
+
+### 1.1 `register_in_db()` captura errores de conexión/SQLAlchemy (train_and_compare.py)
+
+Antes:
+
+```python
+repo = MLModelRepository()
+await repo.deactivate_by_symbol(symbol)
+await repo.upsert(...)
+logger.info(f"Modelo registrado en DB: {model_name}_{symbol} (activo)")
+```
+
+Ahora:
+
+```python
+repo = MLModelRepository()
+try:
+    await repo.deactivate_by_symbol(symbol)
+    await repo.upsert(...)
+except (SQLAlchemyError, ConnectionError, OSError) as exc:
+    logger.opt(exception=True).warning(f"Database registration failed: {exc}")
+    print("\nDatabase registration:\n  FAILED\n")
+    print(f"Reason:\n  {exc}\n")
+    print("INFO: Training artifacts remain valid.")
+    return False
+logger.info(f"Modelo registrado en DB: {model_name}_{symbol} (activo)")
+return True
+```
+
+- La firma ahora devuelve `bool` (True=registrado, False=fallido).
+- Se capturan explícitamente los errores de SQLAlchemy (`SQLAlchemyError`, que incluye
+  `OperationalError` de asyncpg) y de conexión a nivel OS (`OSError`/`ConnectionError`,
+  p.ej. `[Errno 111] Connect call failed`).
+- NO se usa `except Exception: pass`. El error se registra con traceback
+  (`logger.opt(exception=True)` → nivel WARNING con backtrace completo).
+- Un fallo de DB nunca propaga la excepción ni invalida el entrenamiento.
+
+### 1.2 Salida estructurada y exit code en `main()` (train_and_compare.py)
+
+Al finalizar, el CLI imprime el bloque de resultado esperado por la especificación:
+
+```
+========== RESULTADO ==========
+Training:
+  SUCCESS
+Winner:
+  lstm
+  roc_auc=0.6513
+Artifact:
+  models/lstm_USDCAD.pt
+  SUCCESS
+Summary:
+  models/USDCAD_comparison.json
+  SUCCESS
+Database registration:
+  FAILED
+DB_REGISTRATION_STATUS=FAILED
+```
+
+- `DB_REGISTRATION_STATUS` ∈ `SUCCESS | FAILED | SKIPPED` (SKIPPED si no se pasa `--db`).
+- Exit code decidido explícitamente según la recomendación del doc:
+  entrenamiento exitoso + DB fallida = **exit code 0** (no hay `sys.exit(1)` ni
+  excepción sin controlar; el fallo queda reflejado solo en el estado impreso/logueado).
+
+### 1.3 Logs (sección 7 del doc)
+
+| Nivel | Mensaje |
+|-------|---------|
+| INFO | `Winner: <model> \| <metric>=<valor>` |
+| INFO | `Training completed successfully.` |
+| WARNING | `Database registration failed: PostgreSQL unavailable at localhost:5432` (+traceback) |
+| INFO | `Training artifacts remain valid.` |
+
+Nota técnica: el proyecto usa loguru; para registrar en WARNING **con** traceback se usa
+`logger.opt(exception=True).warning(...)` (el clásico `logger.exception()` de stdlib
+siempre emite a ERROR).
+
+### 1.4 Riesgo deactivate-before-upsert documentado para FASE 11
+
+Añadida nota en `docs/mejoras/fase11`: hoy `deactivate_by_symbol(symbol)` corre ANTES de
+`upsert(is_active=True)`; si la conexión falla a medias (timeout/crash tras desactivar),
+`ml_models` puede quedar sin modelo activo para el símbolo. FASE 1.1 NO cambia este
+comportamiento (decisión documentada); la mitigación (promoción explícita vía `--promote`
+y/o transacción única) corresponde a FASE 11.
+
+No se implementó `--promote`. No se modificó `deactivate_by_symbol()`, `upsert()` ni el
+modelo activo.
+
+---
+
+## 2. Tests nuevos (tests/unit/test_ml_training.py — clase `TestDBRegistration`)
+
+Estrategia: monkeypatch sobre `MLModelRepository.deactivate_by_symbol` que lanza
+`SQLAlchemyError("PostgreSQL unavailable at localhost:5432")` (rápido y determinista,
+sin depender de red ni timeouts de TCP).
+
+| Test | Cubre |
+|------|-------|
+| `test_training_success_and_db_available` (caso A) | fixture `sync_db` (SQLite): training=SUCCESS, db=SUCCESS, fila activa `random_forest_USDCAD` en `ml_models` |
+| `test_training_success_db_unavailable_no_traceback` (caso B) | DB caída: `main()` completa sin excepción (exit code 0 implícito), stdout con `FAILED`+`Reason`, `DB_REGISTRATION_STATUS=FAILED`, WARNING capturado vía sink de loguru |
+| `test_artifact_survives_db_failure` (caso C) | `{model}_{symbol}.pkl` + `.meta.json` siguen existiendo tras el fallo |
+| `test_summary_survives_db_failure` (caso D) | `{symbol}_comparison.json` sigue existiendo y contiene al ganador |
+
+Detalle de captura de logs: los sinks de loguru tipo función reciben el mensaje
+formateado (str), no el dict del record; el test usa `format="{level} | {message}"`
+y aserta sobre strings.
+
+---
+
+## 3. Archivos modificados
+
+| Archivo | Cambio |
+|---------|--------|
+| `train_and_compare.py` | `register_in_db()` robusto (devuelve bool), bloque RESULTADO + `DB_REGISTRATION_STATUS` en `main()`, logs sección 7 |
+| `tests/unit/test_ml_training.py` | +4 tests (clase `TestDBRegistration`) |
+| `docs/mejoras/fase11` | nota de riesgo deactivate-before-upsert |
+
+No se modificó: pipeline ML (`create_features`, `create_labels`, `run_comparison`),
+métricas, split, selección del ganador, repositorio ni modelos ORM.
+
+---
+
+## 4. Verificación (orden AGENTS.md)
+
+1. `black app/ tests/ && isort app/ tests/` → OK.
+2. `mypy app/` → 112 errores PREEXISTENTES en 36 ficheros (línea base medida con
+   `git stash`: 114 en 37). Ninguno en ficheros tocados por esta fase.
+3. `flake8 app/ tests/ train_and_compare.py` → OK.
+4. `pytest tests/unit/test_ml_training.py` → **25 passed**.
+5. Suite completa `pytest` → **352 passed, 1 failed**. El fallo
+   (`test_pipeline_cap_and_throttle.py::test_pipeline_health_recalculation_is_throttled`)
+   es PREEXISTENTE: verificado con `git stash` (falla idéntico sin mis cambios) y ajeno
+   al registro en DB.
+
+## 5. Resultado esperado alcanzado
+
+```
+FASE 1.1 COMPLETED
+
+ML training:            PASS
+Artifact persistence:   PASS
+Summary persistence:    PASS
+DB failure handling:    PASS
+Unhandled traceback:    NONE
+```
+
+Pendiente para FASE 11: `--promote` y transacción única deactivate+upsert.

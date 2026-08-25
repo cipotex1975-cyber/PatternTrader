@@ -44,6 +44,17 @@ def test_format_signal_message_includes_timeframe_and_date():
     assert "SHORT" in message
 
 
+def test_format_signal_message_shows_nd_when_ml_unavailable():
+    message = _enabled_notifier()._format_signal_message(make_signal(ml_probability=None))
+    assert "Probabilidad IA:</b> N/D" in message
+    assert "50%" not in message
+
+
+def test_format_signal_message_shows_percentage_when_ml_available():
+    message = _enabled_notifier()._format_signal_message(make_signal(ml_probability=0.85))
+    assert "Probabilidad IA:</b> 85%" in message
+
+
 @pytest.mark.asyncio
 async def test_send_signal_disabled_returns_false():
     notifier = TelegramNotifier()
@@ -118,6 +129,65 @@ async def test_send_photo_posts_chart(monkeypatch):
     assert await notifier.send_signal(signal, candles=[None]) is True
     assert "sendPhoto" in posted["url"]
     assert posted["kwargs"]["files"]["photo"][0] == "chart.png"
+
+
+@pytest.mark.asyncio
+async def test_send_photo_saves_chart_file(monkeypatch, tmp_path):
+    notifier = _enabled_notifier()
+    notifier._chart_save_dir = str(tmp_path)
+
+    async def fake_post_with_retries(url: str, **kwargs) -> None:
+        pass
+
+    class FakeFigure:
+        def to_image(self, format: str) -> bytes:
+            return b"PNGDATA"
+
+    class FakeChartGenerator:
+        def create_candlestick_chart(self, candles, title="", patterns=None):
+            return FakeFigure()
+
+    monkeypatch.setattr(notifier, "_post_with_retries", fake_post_with_retries)
+    monkeypatch.setattr(notifier, "_chart_generator", FakeChartGenerator())
+
+    assert await notifier.send_signal(make_signal(), candles=[None]) is True
+
+    files = list((tmp_path / "BTCUSDT").glob("*.png"))
+    assert len(files) == 1
+    name = files[0].name
+    assert name.startswith("BTCUSDT_1h_double_top_20260810_120000_")
+    assert files[0].read_bytes() == b"PNGDATA"
+
+
+@pytest.mark.asyncio
+async def test_send_photo_does_not_save_when_disabled(monkeypatch, tmp_path):
+    notifier = _enabled_notifier()
+    notifier._chart_save_dir = ""
+
+    async def fake_post_with_retries(url: str, **kwargs) -> None:
+        pass
+
+    class FakeFigure:
+        def to_image(self, format: str) -> bytes:
+            return b"PNGDATA"
+
+    class FakeChartGenerator:
+        def create_candlestick_chart(self, candles, title="", patterns=None):
+            return FakeFigure()
+
+    monkeypatch.setattr(notifier, "_post_with_retries", fake_post_with_retries)
+    monkeypatch.setattr(notifier, "_chart_generator", FakeChartGenerator())
+
+    assert await notifier.send_signal(make_signal(), candles=[None]) is True
+    assert not tmp_path.exists() or not any(tmp_path.rglob("*.png"))
+
+
+def test_save_chart_png_failure_is_swallowed(tmp_path):
+    notifier = _enabled_notifier()
+    notifier._chart_save_dir = str(tmp_path / "blocked")
+    (tmp_path / "blocked").write_text("not a directory")
+
+    notifier._save_chart_png(make_signal(), b"PNGDATA")
 
 
 @pytest.mark.asyncio
