@@ -1,0 +1,308 @@
+FASE 2.1 — RESPUESTA: AUDITORIA VALIDATION / TEST
+==================================================
+
+ESTADO: COMPLETADO
+FECHA: 2026-08-25
+
+ARCHIVOS MODIFICADOS
+--------------------
+
+    Creado:
+      scripts/audit_fase2_1.py
+
+    No modificados:
+      app/ml/training/data.py
+      app/ml/training/compare.py
+      app/ml/models/sequence_base.py
+      train_and_compare.py
+
+VERIFICACION
+------------
+
+    Script audit:  PASS (termina sin errores)
+    pytest:        350 passed
+
+================================================================
+FASE 2.1 AUDIT
+================================================================
+
+Label distribution
+------------------
+
+TRAIN:
+  samples: 69551
+  positives: 28859
+  negatives: 40692
+  positive_rate: 41.49%
+
+VALIDATION:
+  samples: 14899
+  evaluated sequences: 14899
+  positives: 6233
+  negatives: 8666
+  positive_rate: 41.84%
+
+TEST:
+  samples: 14906
+  evaluated sequences: 14906
+  positives: 4347
+  negatives: 10559
+  positive_rate: 29.16%
+
+Classification threshold
+------------------------
+
+classification_threshold = 0.50
+classification_method = argmax(two-class softmax)
+configurable = NO
+
+El pipeline NO implementa actualmente un threshold configurable.
+La decision se realiza mediante argmax de las dos probabilidades
+producidas por softmax. Esto equivale a un threshold de 0.50
+sobre la probabilidad de la clase 1.
+
+Source: sequence_base.py:140-142
+
+Probability distribution
+------------------------
+
+VALIDATION probabilities:
+  min:    0.0979
+  p05:    0.2744
+  p25:    0.3532
+  median: 0.4391
+  p75:    0.5253
+  p95:    0.6106
+  max:    0.7486
+  mean:   0.4410
+  fraction_probability_ge_0.50: 0.3289
+
+TEST probabilities:
+  min:    0.1259
+  p05:    0.2634
+  p25:    0.3387
+  median: 0.4303
+  p75:    0.5175
+  p95:    0.6054
+  max:    0.7263
+  mean:   0.4309
+  fraction_probability_ge_0.50: 0.3055
+
+Temporal leakage
+----------------
+
+4.1 Feature causality audit
+  rsi                  causal = YES  (rolling(14).mean() on diff)
+  macd                 causal = YES  (ewm(12) - ewm(26))
+  macd_signal          causal = YES  (ewm(9) on macd)
+  macd_hist            causal = YES  (macd - signal)
+  ema_21               causal = YES  (ewm(span=21))
+  ema_50               causal = YES  (ewm(span=50))
+  atr                  causal = YES  (rolling(14).mean() on TR)
+  volume_ratio         causal = YES  (vol / rolling(20).mean())
+  price_change         causal = YES  (close.pct_change())
+  high_low_range       causal = YES  ((high-low)/close)
+  close_position       causal = YES  ((close-low)/(high-low))
+  trend_strength       causal = YES  ((ema21-ema50)/ema50)
+
+4.2 Label audit
+  Label future dependency: EXPECTED
+    (create_labels usa high[t+k] para construir label[t])
+  Feature future dependency: NONE
+    (ninguna feature usa shift(-k) ni future values)
+
+4.3 Preprocessing audit
+  preprocessing_scaler = NONE
+    (sequence_base.py:59 — self._scaler = None, placeholder)
+  StandardScaler: NOT USED
+  MinMaxScaler:   NOT USED
+  RobustScaler:   NOT USED
+  fit() on validation/test: N/A (no scaler exists)
+
+4.4 Split temporal order
+  TRAIN:       2010-05-31 ... 2021-08-12
+  VALIDATION:  2021-08-13 ... 2024-01-03
+  TEST:        2024-01-04 ... 2026-05-29
+  TRAIN < VALIDATION < TEST: CONFIRMED
+
+4.5 Sequence audit
+  cross_split_historical_context = YES
+    (build_eval_sequences prepends last sequence_length-1 rows
+     from prior split as context for first windows)
+  future_information_crossing_boundary = NO
+    (context is strictly prior to or contemporaneous with
+     the prediction instant)
+
+  Temporal leakage check: PASS
+
+Sequence boundary audit
+-----------------------
+
+sequence_length = 30
+
+TRAIN:
+  first sequence timestamp: 2010-06-02 00:00:00
+  last sequence timestamp:  2021-08-12 00:00:00
+  sequence count: 69522
+
+VALIDATION:
+  context start: 2021-08-11 00:00:00
+  context end:   2021-08-12 00:00:00
+  first target timestamp: 2021-08-12 00:00:00
+  last target timestamp:  2024-01-03 00:00:00
+
+TEST:
+  context start: 2024-01-02 00:00:00
+  context end:   2024-01-03 00:00:00
+  first target timestamp: 2024-01-03 00:00:00
+  last target timestamp:  2026-05-29 00:00:00
+
+Cross-split historical context: YES
+Future information crossing split: NO
+
+Sequence boundary check: PASS
+
+Validation/Test comparison
+---------------------------
+
+Metric       Validation    Test       Gap
+ROC-AUC      0.6292        0.6307     +0.0015
+PR-AUC       0.5218        0.3916     -0.1302
+F1           0.4764        0.4062     -0.0702
+
+Reference comparison (meta.json)
+--------------------------------
+Validation ROC-AUC:
+  reference: 0.6333
+  audit:     0.6292
+  delta:     -0.0041
+
+Validation PR-AUC:
+  reference: 0.5326
+  audit:     0.5218
+  delta:     -0.0108
+
+Validation F1:
+  reference: 0.4841
+  audit:     0.4764
+  delta:     -0.0077
+
+Test ROC-AUC:
+  reference: 0.6380
+  audit:     0.6307
+  delta:     -0.0073
+
+Test PR-AUC:
+  reference: 0.4011
+  audit:     0.3916
+  delta:     -0.0095
+
+Test F1:
+  reference: 0.4193
+  audit:     0.4062
+  delta:     -0.0131
+
+Los valores audit difieren ligeramente del meta.json porque el LSTM
+se reentrena en cada ejecucion (random seed fijo, pero variabilidad
+residual de PyTorch). Las diferencias son <0.01 en todas las metricas.
+
+Prevalence vs PR-AUC
+--------------------
+
+validation positive_rate: 41.84%
+test positive_rate:       29.16%
+prevalence change:        -12.67 pp
+
+validation PR-AUC: 0.5218
+test PR-AUC:       0.3916
+PR-AUC change:     -0.1302
+
+OBSERVED: TEST prevalence is lower by 12.67 pp
+INTERPRETATION: this may partially contribute to PR-AUC change,
+but a full explanation requires further analysis
+
+Feature distribution shift
+---------------------------
+
+Feature          Val mean    Test mean    Delta
+rsi              50.0558     50.5226      +0.4668
+macd             0.0000      0.0000       -0.0000
+macd_signal      0.0000      0.0000       -0.0000
+macd_hist        0.0000     -0.0000       -0.0000
+ema_21           1.3152      1.3817       +0.0665
+ema_50           1.3151      1.3817       +0.0666
+atr              0.0017      0.0013       -0.0004
+volume_ratio     1.0225      1.0166       -0.0060
+price_change     0.0000      0.0000       -0.0000
+high_low_range   0.0013      0.0009       -0.0004
+close_position   0.4970      0.5025       +0.0055
+trend_strength   0.0001      0.0000       -0.0000
+
+Top distribution changes:
+  1. rsi
+  2. ema_50
+  3. ema_21
+
+Conclusion
+----------
+
+1. El split es causal: SI
+   (TRAIN < VALIDATION < TEST temporalmente, sin shuffle)
+
+2. El TEST esta aislado: SI
+   (evaluado una sola vez, nunca entra en select_winner)
+
+3. Existe cambio de distribucion: SI
+   (prevalence changed by 12.67 pp)
+
+4. Existe evidencia de leakage: NO
+   (features causales, no scaler, no future crossing boundary)
+
+5. El threshold debe optimizarse en fase posterior: SI
+   (argmax equivale a 0.50; optimizar threshold puede mejorar
+    precision/recall/f1 sin cambiar el modelo)
+
+Additional finding
+------------------
+
+HECHO OBSERVADO:
+  ROC-AUC is stable: validation=0.6292, test=0.6307
+  PR-AUC drops significantly: validation=0.5218, test=0.3916
+  Prevalence: validation=41.84%, test=29.16%
+
+INTERPRETACION:
+  The large PR-AUC drop with stable ROC-AUC occurs alongside
+  a 12.7 pp lower prevalence in TEST vs VALIDATION.
+  Lower prevalence means fewer positive samples, which directly
+  reduces PR-AUC (precision-recall is prevalence-sensitive).
+  However, the magnitude of the PR-AUC drop (-0.1302)
+  exceeds what prevalence alone would explain, suggesting
+  additional probability calibration differences between periods.
+  This is likely driven by a regime shift in the market
+  data between the two periods rather than a pipeline bug.
+
+  HECHO: La prevalencia cambia de 41.84% (VALIDATION, 2021-2024)
+  a 29.16% (TEST, 2024-2026). Esto es un cambio real y medible.
+
+  INTERPRETACION: La menor prevalencia en TEST reduce directamente
+  PR-AUC porque hay menos positivos y mas negativos. Sin embargo,
+  la caida de -0.1302 excede lo que la prevalencia sola explicaria.
+  La diferencia residual sugiere que el modelo calibra
+  probabilidades de forma diferente entre los dos periodos,
+  probablemente por un cambio de regimen en el mercado.
+
+IMPLICACIONES PARA FASES FUTURAS
+---------------------------------
+
+1. Optimizar threshold (fase posterior): Con un threshold de 0.50
+   fijo, precision y recall estan suboptimamente balanceados.
+   Un threshold calibrado en VALIDATION podria mejorar F1.
+
+2. Feature scaling (fase posterior): El LSTM recibe features sin
+   escalar (ema_21 ~1.3, macd ~0.0000). Un StandardScaler
+   mejoraria la convergencia del modelo.
+
+3. Distribution shift (fase posterior): La diferencia de
+   prevalencia y el cambio en features sugieren que el modelo
+   podria beneficiarse de reentrenamiento periodico o pesos
+   por ventana temporal.

@@ -1,0 +1,660 @@
+# FASE 3.1 — PLAN DE IMPLEMENTACIÓN
+
+## Optimización del threshold de clasificación
+
+==================================================
+
+## CONTEXTO
+
+---
+
+Las fases 2, 2.1 y 2.2 confirmaron que el pipeline temporal es correcto y que no existe evidencia de leakage.
+
+Resultados de referencia del LSTM USDCAD:
+
+```
+VALIDATION:
+  ROC-AUC = 0.6333
+  PR-AUC  = 0.5326
+  F1      = 0.4841
+  Precision = 0.5455
+  Recall    = 0.4351
+
+TEST FINAL:
+  ROC-AUC = 0.6380
+  PR-AUC  = 0.4011
+  F1      = 0.4193
+  Precision = 0.4057
+  Recall    = 0.4339
+```
+
+La Fase 2.1 confirmó además:
+
+```
+classification_threshold = 0.50
+classification_method = argmax(two-class softmax)
+configurable = NO
+```
+
+El modelo actualmente convierte las probabilidades en clases mediante:
+
+```
+argmax([P(class_0), P(class_1)])
+```
+
+Esto equivale a:
+
+```
+P(class_1) >= 0.50 → class 1
+P(class_1) <  0.50 → class 0
+```
+
+La auditoría también mostró que:
+
+```
+VALIDATION:
+  fraction probability >= 0.50 = 32.89%
+
+TEST:
+  fraction probability >= 0.50 = 30.55%
+```
+
+Por lo tanto, existe una oportunidad de mejorar el balance
+precision/recall mediante un threshold configurable.
+
+---
+
+## OBJETIVO
+
+---
+
+Implementar un mecanismo de selección de threshold basado
+EXCLUSIVAMENTE en VALIDATION.
+
+El TEST FINAL debe permanecer completamente aislado.
+
+El threshold seleccionado en VALIDATION será posteriormente
+aplicado una sola vez sobre TEST para medir generalización.
+
+Esta fase NO debe:
+
+* cambiar features
+* cambiar arquitectura LSTM
+* cambiar epochs
+* cambiar sequence_length
+* cambiar optimizer
+* cambiar learning rate
+* cambiar labels
+* cambiar forward_periods
+* cambiar threshold durante entrenamiento
+* utilizar TEST para seleccionar threshold
+* realizar backtesting
+* modificar Transformer
+* implementar ensemble
+* realizar recalibración de probabilidades
+* cambiar el split temporal
+
+==================================================
+
+## REGLA FUNDAMENTAL
+
+---
+
+El threshold es un hiperparámetro de decisión.
+
+Por lo tanto:
+
+```
+TRAIN
+  ↓
+entrenar modelo
+  ↓
+VALIDATION
+  ↓
+seleccionar threshold
+  ↓
+TEST FINAL
+  ↓
+evaluar UNA SOLA VEZ
+```
+
+Nunca:
+
+```
+TEST → seleccionar threshold
+```
+
+Nunca:
+
+```
+TEST → optimizar threshold
+```
+
+Nunca:
+
+```
+VALIDATION + TEST → seleccionar threshold
+```
+
+==================================================
+
+## PASO 1 — INSPECCIÓN DEL PIPELINE ACTUAL
+
+---
+
+Antes de modificar código, inspeccionar:
+
+```
+app/ml/models/sequence_base.py
+app/ml/training/compare.py
+app/ml/training/data.py
+train_and_compare.py
+```
+
+Determinar exactamente dónde:
+
+1. se generan probabilidades
+2. se convierten probabilidades en clases
+3. se calcula precision
+4. se calcula recall
+5. se calcula F1
+6. se calcula ROC-AUC
+7. se calcula PR-AUC
+
+No modificar comportamiento todavía.
+
+Reportar primero:
+
+```
+Current probability source:
+Current classification method:
+Current threshold:
+Current metric calculation path:
+```
+
+==================================================
+
+## PASO 2 — IMPLEMENTAR THRESHOLD CONFIGURABLE
+
+---
+
+Crear una función reutilizable:
+
+```
+classify_with_threshold(probabilities, threshold)
+```
+
+Comportamiento esperado:
+
+```
+threshold = 0.50
+
+P=0.49 → 0
+P=0.50 → 1
+P=0.51 → 1
+```
+
+La función debe:
+
+* aceptar array/list de probabilidades de clase positiva
+* aceptar threshold float
+* devolver array binario
+* validar que threshold esté en [0, 1]
+
+Ejemplo:
+
+```
+probabilities =
+    [0.20, 0.42, 0.50, 0.61, 0.83]
+
+threshold = 0.50
+
+predictions =
+    [0, 0, 1, 1, 1]
+```
+
+==================================================
+
+## PASO 3 — NO CAMBIAR ROC-AUC NI PR-AUC
+
+---
+
+ROC-AUC y PR-AUC deben calcularse utilizando:
+
+```
+y_true
+probability_of_positive_class
+```
+
+NO utilizando las clases binarias.
+
+Por ejemplo:
+
+```
+roc_auc_score(y_true, probabilities)
+average_precision_score(y_true, probabilities)
+```
+
+Estas métricas son independientes del threshold.
+
+Por lo tanto, cambiar threshold NO debe cambiar:
+
+```
+ROC-AUC
+PR-AUC
+```
+
+Sí puede cambiar:
+
+```
+Accuracy
+Precision
+Recall
+F1
+confusion matrix
+```
+
+==================================================
+
+## PASO 4 — BÚSQUEDA DE THRESHOLD EN VALIDATION
+
+---
+
+Implementar una búsqueda explícita sobre VALIDATION.
+
+Rango recomendado:
+
+```
+0.20 → 0.80
+```
+
+Paso:
+
+```
+0.01
+```
+
+Ejemplo:
+
+```
+thresholds = np.arange(0.20, 0.801, 0.01)
+```
+
+Para cada threshold calcular:
+
+```
+threshold
+accuracy
+precision
+recall
+f1
+positive_predictions
+predicted_positive_rate
+```
+
+El criterio principal será:
+
+```
+MAX F1
+```
+
+usando exclusivamente VALIDATION.
+
+No usar TEST.
+
+==================================================
+
+## PASO 5 — MANEJAR CASOS EXTREMOS
+
+---
+
+Si un threshold produce:
+
+```
+precision indefinida
+recall indefinido
+F1 indefinido
+```
+
+utilizar una política explícita y estable.
+
+Por ejemplo:
+
+```
+zero_division=0
+```
+
+Nunca ocultar errores silenciosamente.
+
+Registrar además:
+
+```
+número de positivos predichos
+```
+
+Esto permite detectar thresholds degenerados.
+
+Por ejemplo, NO aceptar como "mejor":
+
+```
+threshold = 0.79
+predicted_positive_rate = 0.01%
+```
+
+si esto produce un resultado artificial debido a muy pocas
+predicciones positivas.
+
+Si el mejor threshold produce una tasa positiva extremadamente
+baja, reportarlo explícitamente.
+
+==================================================
+
+## PASO 6 — TABLA DE RESULTADOS
+
+---
+
+Mostrar al menos:
+
+```
+Threshold    Precision    Recall    F1    Pred_Pos_Rate
+```
+
+Ejemplo:
+
+```
+0.40         0.48         0.61      0.54  52.1%
+0.45         0.52         0.55      0.53  44.7%
+0.50         0.55         0.44      0.48  32.9%
+0.55         0.58         0.35      0.44  25.1%
+0.60         0.62         0.22      0.32  14.8%
+```
+
+El ejemplo anterior es ilustrativo.
+
+Los números reales deben calcularse.
+
+Mostrar al menos:
+
+* threshold 0.30
+* threshold 0.35
+* threshold 0.40
+* threshold 0.45
+* threshold 0.50
+* threshold 0.55
+* threshold 0.60
+* threshold 0.65
+* threshold 0.70
+
+y adicionalmente el mejor threshold encontrado.
+
+==================================================
+
+## PASO 7 — COMPARACIÓN CONTRA BASELINE
+
+---
+
+El baseline es:
+
+```
+threshold = 0.50
+```
+
+Comparar:
+
+```
+BASELINE
+  threshold = 0.50
+```
+
+contra:
+
+```
+OPTIMIZED
+  threshold = best_validation_threshold
+```
+
+Mostrar:
+
+```
+Metric          Baseline    Optimized    Delta
+
+Accuracy        ...
+Precision       ...
+Recall          ...
+F1              ...
+ROC-AUC         ...
+PR-AUC          ...
+```
+
+Esperado:
+
+```
+ROC-AUC ≈ igual
+PR-AUC  ≈ igual
+```
+
+mientras que:
+
+```
+Precision / Recall / F1
+```
+
+pueden cambiar.
+
+==================================================
+
+## PASO 8 — APLICAR THRESHOLD AL TEST
+
+---
+
+Después de seleccionar el threshold usando VALIDATION:
+
+```
+best_threshold = X.XX
+```
+
+aplicarlo al TEST FINAL.
+
+IMPORTANTE:
+
+El threshold NO puede volver a optimizarse utilizando TEST.
+
+Calcular:
+
+```
+Accuracy
+Precision
+Recall
+F1
+ROC-AUC
+PR-AUC
+```
+
+ROC-AUC y PR-AUC deben utilizar probabilidades.
+
+F1/Precision/Recall deben utilizar:
+
+```
+probability >= best_threshold
+```
+
+==================================================
+
+## PASO 9 — COMPARACIÓN FINAL
+
+---
+
+Mostrar:
+
+```
+FINAL TEST
+
+Metric       threshold=0.50    optimized    Delta
+
+Accuracy     ...
+Precision    ...
+Recall       ...
+F1           ...
+ROC-AUC      ...
+PR-AUC       ...
+```
+
+La conclusión debe responder:
+
+1. ¿El threshold optimizado mejora F1 en VALIDATION?
+2. ¿Cuánto?
+3. ¿La mejora sobrevive en TEST?
+4. ¿Qué ocurre con precision?
+5. ¿Qué ocurre con recall?
+6. ¿ROC-AUC permanece estable?
+7. ¿PR-AUC permanece estable?
+8. ¿El threshold seleccionado parece robusto?
+
+==================================================
+
+## PASO 10 — PERSISTENCIA
+
+---
+
+Guardar el threshold seleccionado como metadata del modelo.
+
+Ejemplo:
+
+```
+models/lstm_USDCAD.meta.json
+```
+
+Agregar:
+
+```
+"decision_threshold": 0.XX,
+"threshold_selection": {
+    "dataset": "validation",
+    "metric": "f1",
+    "range": [0.20, 0.80],
+    "step": 0.01
+}
+```
+
+NO sobrescribir información existente.
+
+==================================================
+
+## SALIDA ESPERADA
+
+---
+
+# FASE 3.1 — THRESHOLD OPTIMIZATION
+
+## Baseline
+
+classification_method: argmax
+baseline_threshold: 0.50
+
+## VALIDATION
+
+ROC-AUC: ...
+PR-AUC: ...
+F1: ...
+Precision: ...
+Recall: ...
+
+## Threshold sweep
+
+Threshold    Precision    Recall    F1       Pred_Pos_Rate
+0.30         ...          ...       ...      ...
+0.35         ...          ...       ...      ...
+0.40         ...          ...       ...      ...
+0.45         ...          ...       ...      ...
+0.50         ...          ...       ...      ...
+0.55         ...          ...       ...      ...
+0.60         ...          ...       ...      ...
+0.65         ...          ...       ...      ...
+0.70         ...          ...       ...      ...
+
+## Best validation threshold
+
+threshold: 0.XX
+metric: F1
+validation F1: 0.XXXX
+
+## TEST FINAL
+
+Baseline threshold = 0.50
+
+F1: ...
+Precision: ...
+Recall: ...
+
+Optimized threshold = 0.XX
+
+F1: ...
+Precision: ...
+Recall: ...
+
+## Comparison
+
+Metric       Baseline    Optimized    Delta
+
+Accuracy     ...         ...          ...
+Precision    ...         ...          ...
+Recall       ...         ...          ...
+F1           ...         ...          ...
+ROC-AUC      ...         ...          ...
+PR-AUC       ...         ...          ...
+
+## Conclusion
+
+1. Threshold optimization on VALIDATION: SUCCESS/NO
+2. Validation F1 improvement: ...
+3. Test F1 improvement: ...
+4. Precision impact: ...
+5. Recall impact: ...
+6. ROC-AUC changed: YES/NO
+7. PR-AUC changed: YES/NO
+8. Threshold appears robust: YES/NO
+
+==================================================
+
+## VERIFICACIÓN
+
+---
+
+Ejecutar:
+
+```
+pytest
+```
+
+y posteriormente:
+
+```
+python train_and_compare.py ...
+```
+
+Verificar que:
+
+* TEST nunca participa en la selección
+* threshold se selecciona únicamente con VALIDATION
+* ROC-AUC utiliza probabilidades
+* PR-AUC utiliza probabilidades
+* F1 utiliza clasificación binaria
+* el modelo no fue modificado arquitectónicamente
+* las features no cambiaron
+* labels no cambiaron
+* split temporal no cambió
+
+==================================================
+
+## REGLA DE IMPLEMENTACIÓN
+
+---
+
+Esta fase debe producir una mejora de DECISIÓN,
+no una mejora del MODELO.
+
+No interpretar un aumento de F1 por threshold como aumento
+de capacidad predictiva del LSTM.
+
+El objetivo es encontrar una política de decisión más adecuada
+para las probabilidades que el modelo ya produce.

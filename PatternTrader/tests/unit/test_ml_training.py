@@ -9,8 +9,10 @@ from app.ml.factory import MLModelFactory
 from app.ml.training.compare import (
     AVAILABLE_METRICS,
     build_eval_sequences,
+    classify_with_threshold,
     evaluate_model,
     evaluate_winner_on_test,
+    metrics_at_threshold,
     run_comparison,
     save_summary,
     save_winner,
@@ -710,3 +712,71 @@ class TestTrainAndCompareCLIFase2:
         meta = json.loads((models_dir / "random_forest_USDCAD.meta.json").read_text())
         assert "final_test_metrics" in meta
         assert {"roc_auc", "pr_auc", "accuracy"} <= set(meta["final_test_metrics"])
+
+
+class TestClassifyWithThreshold:
+    def test_threshold_050_boundary(self):
+        probs = np.array([0.20, 0.42, 0.50, 0.61, 0.83])
+        preds = classify_with_threshold(probs, 0.50)
+        np.testing.assert_array_equal(preds, np.array([0, 0, 1, 1, 1]))
+
+    def test_threshold_060(self):
+        probs = np.array([0.20, 0.42, 0.50, 0.61, 0.83])
+        preds = classify_with_threshold(probs, 0.60)
+        np.testing.assert_array_equal(preds, np.array([0, 0, 0, 1, 1]))
+
+    def test_accepts_list_input(self):
+        preds = classify_with_threshold([0.49, 0.5, 0.51], 0.50)
+        np.testing.assert_array_equal(preds, np.array([0, 1, 1]))
+
+    def test_invalid_threshold_rejected(self):
+        with pytest.raises(ValueError):
+            classify_with_threshold([0.5], 1.1)
+        with pytest.raises(ValueError):
+            classify_with_threshold([0.5], -0.1)
+
+
+class TestMetricsAtThreshold:
+    def test_metrics_depend_on_threshold(self):
+        rng = np.random.default_rng(0)
+        y = rng.integers(0, 2, 500)
+        # Probabilidades con señal: tienden altas para positivos.
+        probs = np.clip(
+            np.where(y == 1, rng.normal(0.7, 0.2, 500), rng.normal(0.3, 0.2, 500)),
+            0.0,
+            1.0,
+        )
+        m_low = metrics_at_threshold(y, probs, 0.30)
+        m_high = metrics_at_threshold(y, probs, 0.70)
+
+        assert m_low["recall"] >= m_high["recall"]
+        assert m_high["precision"] >= m_low["precision"]
+        assert m_low["predicted_positive_rate"] >= m_high["predicted_positive_rate"]
+
+    def test_roc_pr_auc_independent_of_threshold(self):
+        rng = np.random.default_rng(1)
+        y = rng.integers(0, 2, 400)
+        probs = np.clip(rng.uniform(0, 1, 400) + y * 0.2, 0.0, 1.0)
+
+        m050 = metrics_at_threshold(y, probs, 0.50)
+        m070 = metrics_at_threshold(y, probs, 0.70)
+
+        assert m050["roc_auc"] == pytest.approx(m070["roc_auc"])
+        assert m050["pr_auc"] == pytest.approx(m070["pr_auc"])
+
+    def test_zero_division_handling(self):
+        y = np.array([1, 0, 0])
+        probs = np.array([0.1, 0.2, 0.3])
+        m = metrics_at_threshold(y, probs, 0.90)
+        # Sin positivos predichos: precision/f1/recall no deben romper.
+        assert m["precision"] == 0.0
+        assert m["recall"] == 0.0
+        assert m["f1"] == 0.0
+        assert m["predicted_positive_rate"] == 0.0
+
+    def test_positive_predictions_count(self):
+        y = np.array([1, 0, 1, 0, 1])
+        probs = np.array([0.8, 0.6, 0.4, 0.2, 0.9])
+        m = metrics_at_threshold(y, probs, 0.50)
+        assert m["positive_predictions"] == 3.0
+        assert m["predicted_positive_rate"] == pytest.approx(0.6)

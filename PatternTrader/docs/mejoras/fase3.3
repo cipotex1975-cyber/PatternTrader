@@ -1,0 +1,859 @@
+# FASE 3.3 — PLAN DE IMPLEMENTACIÓN
+
+## Análisis de Distribution Shift y cambio de régimen
+
+==================================================
+
+## CONTEXTO
+
+---
+
+Las fases anteriores encontraron un hecho importante:
+
+```
+VALIDATION:
+  periodo = 2021-08 → 2024-01
+  positive_rate = 41.84%
+
+TEST:
+  periodo = 2024-01 → 2026-05
+  positive_rate = 29.16%
+```
+
+Cambio:
+
+```
+-12.67 puntos porcentuales
+```
+
+Además:
+
+```
+Validation ROC-AUC = 0.6292
+Test ROC-AUC       = 0.6307
+```
+
+El ROC-AUC permanece prácticamente estable.
+
+Sin embargo:
+
+```
+Validation PR-AUC = 0.5218
+Test PR-AUC       = 0.3916
+```
+
+Cambio:
+
+```
+-0.1302
+```
+
+También se observaron diferencias de distribución en:
+
+```
+RSI
+EMA_21
+EMA_50
+ATR
+high_low_range
+close_position
+trend_strength
+```
+
+La hipótesis actual es:
+
+```
+cambio de distribución / régimen de mercado
+```
+
+pero todavía no está demostrado de forma cuantitativa.
+
+Esta fase tiene como objetivo determinar:
+
+1. qué cambió
+2. cuánto cambió
+3. cuándo comenzó
+4. si afecta las etiquetas
+5. si afecta las features
+6. si afecta las probabilidades del modelo
+7. si existe evidencia de cambio de régimen
+
+==================================================
+
+## OBJETIVO
+
+---
+
+Realizar una auditoría cuantitativa de distribution shift.
+
+NO se debe todavía:
+
+* reentrenar modelos
+* cambiar features
+* cambiar threshold
+* hacer backtesting
+* implementar ensemble
+* aplicar adaptación online
+* aplicar weighting
+* modificar labels
+* cambiar split
+* seleccionar otro modelo
+
+Esta fase es DIAGNÓSTICA.
+
+==================================================
+
+## PASO 1 — DIVISIÓN TEMPORAL
+
+---
+
+Utilizar exactamente los mismos splits:
+
+```
+TRAIN
+VALIDATION
+TEST
+```
+
+No modificar fechas.
+
+Analizar al menos:
+
+```
+TRAIN vs VALIDATION
+VALIDATION vs TEST
+TRAIN vs TEST
+```
+
+El foco principal será:
+
+```
+VALIDATION → TEST
+```
+
+==================================================
+
+## PASO 2 — PREVALENCIA
+
+---
+
+Calcular:
+
+```
+positive_rate
+negative_rate
+```
+
+por:
+
+```
+TRAIN
+VALIDATION
+TEST
+```
+
+Mostrar:
+
+```
+Dataset       Positive Rate
+
+TRAIN         ...
+VALIDATION    ...
+TEST          ...
+```
+
+Calcular:
+
+```
+Validation → Test delta
+```
+
+en puntos porcentuales.
+
+==================================================
+
+## PASO 3 — DISTRIBUCIÓN DE FEATURES
+
+---
+
+Para cada feature de FEATURE_NAMES calcular:
+
+```
+mean
+std
+median
+p05
+p25
+p75
+p95
+```
+
+para:
+
+```
+VALIDATION
+TEST
+```
+
+Ejemplo:
+
+```
+Feature      Val Mean    Test Mean    Delta
+
+rsi          ...         ...          ...
+atr          ...         ...          ...
+ema_21       ...         ...          ...
+```
+
+No limitarse únicamente a la media.
+
+==================================================
+
+## PASO 4 — EFFECT SIZE
+
+---
+
+Para cada feature calcular una medida cuantitativa de cambio.
+
+Preferentemente:
+
+```
+standardized mean difference
+```
+
+o:
+
+```
+Cohen's d
+```
+
+Ejemplo:
+
+```
+d = (mean_test - mean_val) / pooled_std
+```
+
+Clasificar aproximadamente:
+
+```
+|d| < 0.20
+    negligible
+
+0.20 ≤ |d| < 0.50
+    small
+
+0.50 ≤ |d| < 0.80
+    medium
+
+|d| ≥ 0.80
+    large
+```
+
+No utilizar estos límites como verdad absoluta;
+son únicamente una clasificación descriptiva.
+
+==================================================
+
+## PASO 5 — KS TEST
+
+---
+
+Ejecutar Kolmogorov-Smirnov para cada feature:
+
+```
+scipy.stats.ks_2samp(validation_feature, test_feature)
+```
+
+Reportar:
+
+```
+KS statistic
+p-value
+```
+
+Ejemplo:
+
+```
+Feature       KS       p-value
+
+rsi           ...      ...
+atr           ...      ...
+ema_21        ...      ...
+```
+
+Debido al gran número de muestras, un p-value pequeño puede
+aparecer incluso ante diferencias pequeñas.
+
+Por lo tanto NO utilizar p-value como único criterio.
+
+Combinar:
+
+```
+KS statistic
+effect size
+distribución visual/descriptiva
+```
+
+==================================================
+
+## PASO 6 — TOP FEATURES CON SHIFT
+
+---
+
+Ordenar features por:
+
+```
+KS statistic
+```
+
+y mostrar:
+
+```
+TOP 5
+```
+
+Ejemplo:
+
+```
+1. ATR
+   KS = ...
+   effect_size = ...
+
+2. EMA_50
+   KS = ...
+   effect_size = ...
+
+...
+```
+
+También reportar cuáles tienen:
+
+```
+large effect
+medium effect
+small effect
+```
+
+==================================================
+
+## PASO 7 — LABEL SHIFT
+
+---
+
+Determinar si el cambio de distribución de features viene
+acompañado de un cambio de relación con el target.
+
+Para cada feature importante analizar, cuando sea posible:
+
+```
+feature distribution | positive label
+feature distribution | negative label
+```
+
+comparando:
+
+```
+VALIDATION
+TEST
+```
+
+El objetivo no es crear nuevas features.
+
+Es comprobar si:
+
+```
+P(Y | X)
+```
+
+parece haber cambiado.
+
+Si el sistema puede calcularlo de forma robusta,
+comparar también:
+
+```
+positive rate condicionado a bins de feature
+```
+
+Ejemplo:
+
+```
+RSI bin       Validation P(Y=1)    Test P(Y=1)
+
+30-40         ...                  ...
+40-50         ...                  ...
+50-60         ...                  ...
+60-70         ...                  ...
+```
+
+Esto ayuda a distinguir:
+
+```
+covariate shift
+```
+
+de:
+
+```
+concept shift
+```
+
+==================================================
+
+## PASO 8 — PROBABILITY SHIFT DEL MODELO
+
+---
+
+Utilizar las probabilidades generadas por el LSTM.
+
+Comparar:
+
+```
+VALIDATION probabilities
+TEST probabilities
+```
+
+Calcular:
+
+```
+mean
+std
+median
+p05
+p25
+p75
+p95
+```
+
+y, si es posible:
+
+```
+KS test
+```
+
+entre las distribuciones de probabilidades.
+
+Esto permite determinar si el modelo cambia su comportamiento
+de scoring entre periodos.
+
+==================================================
+
+## PASO 9 — CALIBRACIÓN DESCRIPTIVA
+
+---
+
+NO calibrar el modelo todavía.
+
+Únicamente evaluar si las probabilidades mantienen una relación
+similar con la frecuencia real de positivos.
+
+Crear bins de probabilidad:
+
+```
+0.0–0.1
+0.1–0.2
+0.2–0.3
+0.3–0.4
+0.4–0.5
+0.5–0.6
+0.6–0.7
+0.7–0.8
+0.8–0.9
+0.9–1.0
+```
+
+Para cada periodo:
+
+```
+número de samples
+mean predicted probability
+actual positive rate
+```
+
+Ejemplo:
+
+```
+Probability bin    Predicted    Actual
+
+0.4-0.5            0.45         0.39
+0.5-0.6            0.55         0.48
+```
+
+Comparar VALIDATION contra TEST.
+
+Esto ayudará a comprobar la hipótesis:
+
+```
+"el ROC-AUC permanece estable pero las probabilidades
+ están peor calibradas bajo el nuevo régimen."
+```
+
+==================================================
+
+## PASO 10 — DETECTAR CUÁNDO OCURRE EL CAMBIO
+
+---
+
+No asumir que el cambio comenzó exactamente en:
+
+```
+2024-01-04
+```
+
+Analizar el periodo temporal en bloques.
+
+Por ejemplo:
+
+```
+6 meses
+12 meses
+```
+
+según disponibilidad.
+
+Calcular por ventana:
+
+```
+positive_rate
+mean RSI
+mean ATR
+mean high_low_range
+mean volume_ratio
+```
+
+y, si es posible:
+
+```
+ROC-AUC
+PR-AUC
+```
+
+del modelo por ventana.
+
+Ejemplo:
+
+```
+Period              PosRate    ROC-AUC    PR-AUC
+
+2022 H1             ...        ...        ...
+2022 H2             ...        ...        ...
+2023 H1             ...        ...        ...
+2023 H2             ...        ...        ...
+2024 H1             ...        ...        ...
+2024 H2             ...        ...        ...
+2025 H1             ...        ...        ...
+2025 H2             ...        ...        ...
+2026 H1             ...        ...        ...
+```
+
+No optimizar ningún parámetro utilizando estas ventanas.
+
+Es únicamente análisis diagnóstico.
+
+==================================================
+
+## PASO 11 — DIFERENCIAR TRES HIPÓTESIS
+
+---
+
+La conclusión debe diferenciar:
+
+### HIPÓTESIS A — PREVALENCE SHIFT
+
+```
+P(Y=1) cambia
+```
+
+pero:
+
+```
+P(X | Y)
+```
+
+permanece aproximadamente estable.
+
+Indicador:
+
+```
+positive_rate cambia
+ROC-AUC estable
+```
+
+### HIPÓTESIS B — COVARIATE SHIFT
+
+```
+P(X) cambia
+```
+
+pero la relación:
+
+```
+P(Y | X)
+```
+
+permanece aproximadamente estable.
+
+Indicadores:
+
+```
+feature distributions cambian
+ROC-AUC puede permanecer estable
+```
+
+### HIPÓTESIS C — CONCEPT SHIFT
+
+La relación:
+
+```
+P(Y | X)
+```
+
+cambia.
+
+Indicadores:
+
+```
+misma región de feature
+diferente frecuencia de positivos
+```
+
+y/o:
+
+```
+degradación significativa de métricas
+```
+
+La conclusión puede indicar:
+
+```
+evidence
+weak evidence
+strong evidence
+```
+
+pero NO afirmar causalidad absoluta.
+
+==================================================
+
+## PASO 12 — NO CONFUNDIR PR-AUC CON CAPACIDAD DISCRIMINATIVA
+
+---
+
+La interpretación debe dejar claro:
+
+```
+ROC-AUC ≈ estable
+```
+
+significa que la capacidad de ranking del modelo
+permanece relativamente estable.
+
+Mientras:
+
+```
+PR-AUC ↓
+```
+
+puede estar influenciada por:
+
+```
+prevalence shift
+calibration shift
+ranking changes
+concept shift
+```
+
+Por lo tanto NO concluir simplemente:
+
+```
+"el modelo empeoró"
+```
+
+solo porque PR-AUC cayó.
+
+==================================================
+
+## SALIDA ESPERADA
+
+---
+
+# FASE 3.3 — DISTRIBUTION SHIFT AUDIT
+
+## Dataset periods
+
+VALIDATION:
+start: ...
+end: ...
+
+TEST:
+start: ...
+end: ...
+
+## Prevalence
+
+VALIDATION:
+positive_rate: XX.XX%
+
+TEST:
+positive_rate: XX.XX%
+
+change:
+-X.XX pp
+
+## Feature distribution shift
+
+Feature          Val Mean    Test Mean    Delta    KS       Effect
+
+rsi              ...         ...          ...      ...      ...
+macd             ...         ...          ...      ...      ...
+...
+
+## Top distribution shifts
+
+1. FEATURE
+   KS: ...
+   effect_size: ...
+   interpretation: ...
+
+2. FEATURE
+   KS: ...
+   effect_size: ...
+   interpretation: ...
+
+3. FEATURE
+   KS: ...
+   effect_size: ...
+   interpretation: ...
+
+## Probability distribution
+
+VALIDATION:
+mean: ...
+median: ...
+p05: ...
+p95: ...
+
+TEST:
+mean: ...
+median: ...
+p05: ...
+p95: ...
+
+Probability KS:
+statistic: ...
+p-value: ...
+
+## Calibration comparison
+
+Bin          Val Pred    Val Actual    Test Pred    Test Actual
+
+0.0-0.1      ...         ...           ...          ...
+0.1-0.2      ...         ...           ...          ...
+...
+0.9-1.0      ...         ...           ...          ...
+
+## Temporal evolution
+
+Period       PosRate    ROC-AUC    PR-AUC
+
+...          ...        ...        ...
+
+## Shift interpretation
+
+Prevalence shift:
+NONE / WEAK / MODERATE / STRONG
+
+Covariate shift:
+NONE / WEAK / MODERATE / STRONG
+
+Concept shift:
+NONE / WEAK / MODERATE / STRONG
+
+## Conclusion
+
+1. ¿La prevalencia cambió significativamente?
+2. ¿Las features cambiaron?
+3. ¿Las probabilidades cambiaron?
+4. ¿ROC-AUC permaneció estable?
+5. ¿PR-AUC cayó principalmente por prevalence/calibration/other?
+6. ¿Existe evidencia de covariate shift?
+7. ¿Existe evidencia de concept shift?
+8. ¿Cuándo parece comenzar el cambio?
+9. ¿Es necesario investigar retraining periódico?
+10. ¿Es necesario investigar calibración?
+11. ¿Es necesario investigar rolling windows?
+
+==================================================
+
+## QUÉ NO HACER
+
+---
+
+NO:
+
+* modificar modelos
+* reentrenar para mejorar resultados
+* cambiar threshold
+* cambiar features
+* eliminar features
+* agregar features
+* cambiar labels
+* cambiar split
+* hacer backtesting
+* hacer trading simulation
+* optimizar hiperparámetros
+* aplicar weighting
+* aplicar oversampling
+* aplicar undersampling
+* implementar ensemble
+* adaptar el modelo al TEST
+
+El TEST es únicamente un conjunto de evaluación.
+
+==================================================
+
+## VERIFICACIÓN
+
+---
+
+Ejecutar:
+
+```
+pytest
+```
+
+Confirmar que:
+
+```
+1. no cambió el pipeline productivo
+2. no cambió el modelo
+3. no cambió el split
+4. no cambió labels
+5. no se optimizó ningún parámetro
+6. el análisis es reproducible
+```
+
+==================================================
+
+## RESULTADO FINAL DE LA FASE
+
+---
+
+La fase debe terminar con una conclusión basada en evidencia,
+por ejemplo:
+
+```
+"Existe un prevalence shift fuerte entre VALIDATION y TEST,
+ acompañado por cambios moderados en ATR y EMA_50. ROC-AUC
+ permanece estable, mientras PR-AUC disminuye. La evidencia
+ favorece covariate/prevalence shift sobre una pérdida total
+ de capacidad discriminativa."
+```
+
+O:
+
+```
+"No existe evidencia suficiente para afirmar un cambio
+ estructural de régimen."
+```
+
+NO asumir la conclusión antes de ejecutar el análisis.

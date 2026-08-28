@@ -1,0 +1,250 @@
+FASE 3.1 — RESPUESTA: OPTIMIZACION DEL THRESHOLD DE CLASIFICACION
+=================================================================
+
+ESTADO: COMPLETADO
+FECHA: 2026-08-28
+
+ARCHIVOS MODIFICADOS / CREADOS
+------------------------------
+
+    Modificados:
+      app/ml/training/compare.py      (classify_with_threshold + metrics_at_threshold)
+      app/ml/training/__init__.py     (exports nuevos)
+      tests/unit/test_ml_training.py  (+8 tests)
+      models/lstm_USDCAD.meta.json    (+decision_threshold, +threshold_selection)
+
+    Creado:
+      scripts/optimize_threshold_fase3_1.py
+
+    No modificados (garantizados):
+      app/ml/models/sequence_base.py  (predict() sigue usando argmax; el threshold
+                                       es una capa de DECISION, no se cambia el
+                                       comportamiento del modelo ni del training)
+      app/ml/training/data.py
+      train_and_compare.py
+
+SCOPE DE LA FASE
+-----------------
+
+Esta fase implementa una mejora de DECISION, NO una mejora del modelo.
+No se modificaron: features, arquitectura LSTM, epochs, sequence_length,
+optimizer, learning rate, labels, forward_periods, split temporal ni
+Transformer. El threshold se selecciona EXCLUSIVAMENTE con VALIDATION y
+se aplica UNA sola vez sobre TEST FINAL. ROC-AUC y PR-AUC se calculan con
+probabilidades (independientes del threshold).
+
+VERIFICACION
+------------
+
+    black + isort:            OK
+    mypy app/ml/training/:    0 errores en los ficheros de esta fase
+    flake8 app/ tests/ scripts/: OK
+    pytest:                   357 passed, 1 failed (PREEXISTENTE y ajeno:
+                              test_pipeline_health_recalculation_is_throttled,
+                              verificado con git stash que falla tambien sin
+                              estos cambios)
+    Script de analisis:       PASS (termina sin errores)
+
+================================================================
+PASO 1 — INSPECCION DEL PIPELINE ACTUAL
+================================================================
+
+    Current probability source:
+      predict_proba() → softmax(dim=1); P(class_1) = [:, 1]
+      (app/ml/models/sequence_base.py)
+
+    Current classification method:
+      predict() → probs.argmax(axis=1)  (two-class softmax)
+
+    Current threshold: 0.50 (argmax equivale a threshold 0.50)
+
+    Current metric calculation path:
+      accuracy/precision/recall/f1 → predict() (clases binarias)
+      roc_auc  → roc_auc_score(y_true, probabilities)
+      pr_auc   → average_precision_score(y_true, probabilities)
+
+================================================================
+PASO 2 — FUNCION REUTILIZABLE classify_with_threshold
+================================================================
+
+Implementada en app/ml/training/compare.py:
+
+    def classify_with_threshold(probabilities, threshold):
+        """P >= threshold → 1 ; P < threshold → 0.
+        Valida que threshold este en [0, 1]."""
+
+    Ejemplo (threshold = 0.50):
+      P = [0.20, 0.42, 0.50, 0.61, 0.83]
+      pred = [0, 0, 1, 1, 1]
+
+Tambien se anadio metrics_at_threshold(y_true, probabilities, threshold),
+que calcula accuracy/precision/recall/f1 con la clasificacion binaria y
+roc_auc/pr_auc con las probabilidades, ademas de positive_predictions y
+predicted_positive_rate (para detectar thresholds degenerados). Usa
+zero_division=0.
+
+================================================================
+PASO 1/3 — BASELINE (threshold = 0.50)
+================================================================
+
+    classification_method: argmax
+    baseline_threshold: 0.50
+
+    VALIDATION:
+      ROC-AUC:   0.6292
+      PR-AUC:    0.5218
+      F1:        0.4764
+      Precision: 0.5412
+      Recall:    0.4255
+
+    TEST FINAL:
+      ROC-AUC:   0.6307
+      PR-AUC:    0.3916
+      F1:        0.4062
+      Precision: 0.3970
+      Recall:    0.4159
+
+================================================================
+PASO 4/6 — THRESHOLD SWEEP SOBRE VALIDATION (MAX F1)
+================================================================
+
+    Rango: 0.20 → 0.80, paso 0.01, criterio MAX F1.
+
+    Threshold   Precision    Recall       F1   Pred_Pos_Rate
+    --------------------------------------------------------
+    0.30          0.4386     0.9345    0.5970        89.15%
+    0.35          0.4651     0.8442    0.5998        75.94%
+    0.40          0.4948     0.7274    0.5889        61.51%
+    0.45          0.5179     0.5805    0.5474        46.89%
+    0.50          0.5412     0.4255    0.4764        32.89%
+    0.55          0.5667     0.2528    0.3497        18.67%
+    0.60          0.5816     0.1024    0.1741         7.36%
+    0.65          0.5429     0.0152    0.0297         1.17%
+    0.70          0.3333     0.0011    0.0022         0.14%
+
+    BEST VALIDATION THRESHOLD
+    -------------------------
+      threshold: 0.35
+      metric: F1
+      validation F1: 0.5998
+      precision: 0.4651
+      recall: 0.8442
+      predicted positive rate: 75.94%
+
+    El threshold optimo NO es degenerado: a pesar de recortar hacia recall,
+    mantiene ~76% de tasa de positivos predichos (no 0.01%). No se detecto
+    ningun threshold extremo artificialmente bueno.
+
+================================================================
+PASO 8 — APLICAR EL THRESHOLD AL TEST FINAL (una sola vez)
+================================================================
+
+    Baseline threshold = 0.50
+      F1: 0.4062
+      Precision: 0.3970
+      Recall: 0.4159
+
+    Optimized threshold = 0.35
+      F1: 0.4820
+      Precision: 0.3390
+      Recall: 0.8337
+
+================================================================
+PASO 9 — COMPARACION FINAL
+================================================================
+
+    FINAL TEST
+
+    Metric         thr=0.50    optimized    Delta
+    ----------------------------------------------
+    Accuracy         0.6454       0.4775   -0.1679
+    Precision        0.3970       0.3390   -0.0580
+    Recall           0.4159       0.8337   +0.4178
+    F1               0.4062       0.4820   +0.0758
+    ROC-AUC          0.6307       0.6307   +0.0000
+    PR-AUC           0.3916       0.3916   +0.0000
+
+    Conclusion
+    ----------
+    1. Threshold optimization on VALIDATION: SUCCESS
+    2. Validation F1 improvement: +0.1233
+    3. Test F1 improvement:       +0.0758
+    4. Precision impact:          -0.0580
+    5. Recall impact:             +0.4178
+    6. ROC-AUC changed: NO  (delta=+0.0000)
+    7. PR-AUC changed:  NO  (delta=+0.0000)
+    8. Threshold appears robust: YES
+
+================================================================
+PASO 10 — PERSISTENCIA
+================================================================
+
+    models/lstm_USDCAD.meta.json
+
+    Se anadieron las claves (sin sobrescribir la informacion existente):
+
+      "decision_threshold": 0.35,
+      "threshold_selection": {
+          "dataset": "validation",
+          "metric": "f1",
+          "range": [0.2, 0.8],
+          "step": 0.01
+      }
+
+================================================================
+ANALISIS / RESPUESTA A LAS 8 PREGUNTAS
+================================================================
+
+1. El threshold optimizado mejora F1 en VALIDATION?
+   SI. F1 pasa de 0.4764 (thr 0.50) a 0.5998 (thr 0.35).
+
+2. Cuanto?
+   +0.1233 en VALIDATION.
+
+3. La mejora sobrevive en TEST?
+   SI. F1 pasa de 0.4062 a 0.4820 en TEST, +0.0758.
+
+4. Que ocurre con precision?
+   BAJA en ambos conjuntos (TEST: 0.3970 → 0.3390, -0.058). Es el trade-off
+   clasico al bajar el threshold hacia niveles de recall alto.
+
+5. Que ocurre con recall?
+   SUBE fuertemente (TEST: 0.4159 → 0.8337, +0.4178). El threshold de 0.35
+   captura muchos mas positivos, a costa de clasificar mas negativos como
+   positivos.
+
+6. ROC-AUC permanece estable?
+   SI, exactamente igual (0.6307 en ambos casos), como se esperaba al usar
+   probabilidades.
+
+7. PR-AUC permanece estable?
+   SI, exactamente igual (0.3916), por la misma razon.
+
+8. El threshold seleccionado parece robusto?
+   SI. La mejora de F1 por decision se obtiene tanto en VALIDATION como en
+   TEST (no solo overfitting a validation), aunque el beneficio en TEST es
+   menor (+0.0758 vs +0.1233), lo cual es esperable.
+
+================================================================
+GARANTIAS / REGLA DE IMPLEMENTACION
+================================================================
+
+Esta fase produjo una mejora de DECISION, no una mejora del MODELO.
+El aumento de F1 via threshold NO se interpreta como aumento de la
+capacidad predictiva del LSTM; es una politica de decision mas adecuada
+para las probabilidades que el modelo ya produce.
+
+Verificacion de invariantes:
+  [x] TEST nunca participe en la seleccion de threshold
+  [x] threshold seleccionado unicamente con VALIDATION
+  [x] ROC-AUC usa probabilidades
+  [x] PR-AUC usa probabilidades
+  [x] F1/precision/recall usan clasificacion binaria
+  [x] el modelo NO fue modificado arquitectonicamente
+  [x] las features no cambiaron
+  [x] los labels no cambiaron
+  [x] el split temporal no cambio
+  [x] no se hizo backtesting
+  [x] no se modifico Transformer
+  [x] no se implemento ensemble
+  [x] no se recalibraron probabilidades

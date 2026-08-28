@@ -1,0 +1,891 @@
+FASE 2.1 — AUDITORÍA VALIDATION / TEST
+=======================================
+
+CONTEXTO
+--------
+
+La Fase 2 implementó correctamente, a nivel conceptual, el split temporal:
+
+    TRAIN
+       ↓
+    VALIDATION
+       ↓
+    TEST FINAL
+
+Los modelos se entrenan utilizando TRAIN.
+
+El ganador se selecciona utilizando exclusivamente VALIDATION.
+
+El ganador se evalúa posteriormente sobre TEST FINAL.
+
+Resultado actual:
+
+    Winner: LSTM
+
+    VALIDATION:
+        ROC-AUC = 0.6333
+        PR-AUC  = 0.5326
+
+    TEST FINAL:
+        ROC-AUC = 0.6380
+        PR-AUC  = 0.4011
+        Accuracy = 0.6495
+        Precision = 0.4057
+        Recall = 0.4339
+        F1 = 0.4193
+
+La caída de PR-AUC:
+
+    0.5326 → 0.4011
+
+es suficientemente grande como para requerir una auditoría antes
+de realizar nuevas optimizaciones.
+
+IMPORTANTE:
+
+Esta fase es EXCLUSIVAMENTE DE AUDITORÍA.
+
+NO modificar el comportamiento del pipeline de entrenamiento.
+
+NO mejorar modelos.
+
+NO optimizar hiperparámetros.
+
+NO optimizar threshold.
+
+NO hacer backtesting.
+
+NO modificar features.
+
+NO modificar app/ml/.
+
+============================================================
+OBJETIVO
+============================================================
+
+Crear una auditoría reproducible que permita responder:
+
+1. ¿Cuál es exactamente la distribución de labels en TRAIN,
+   VALIDATION y TEST?
+
+2. ¿Cuál es realmente el threshold utilizado para producir
+   predicciones binarias?
+
+3. ¿Cómo se distribuyen las probabilidades del LSTM en VALIDATION
+   y TEST?
+
+4. ¿Existe evidencia de leakage temporal?
+
+5. ¿Cómo se construyen exactamente las secuencias en las fronteras
+   TRAIN/VALIDATION y VALIDATION/TEST?
+
+6. ¿Cuál es exactamente el gap entre VALIDATION y TEST?
+
+7. ¿Puede el cambio de prevalencia explicar parte de la caída
+   de PR-AUC?
+
+8. ¿Existe evidencia de cambio de distribución entre VALIDATION
+   y TEST?
+
+============================================================
+ARCHIVOS A INSPECCIONAR
+============================================================
+
+Revisar antes de implementar:
+
+    app/ml/training/data.py
+    app/ml/training/compare.py
+    app/ml/models/sequence_base.py
+    train_and_compare.py
+
+También revisar si existe:
+
+    models/lstm_USDCAD.meta.json
+
+El código existente debe considerarse la fuente de verdad sobre
+cómo funciona actualmente el pipeline.
+
+NO asumir comportamiento únicamente a partir de este prompt.
+
+Si el código real difiere de las hipótesis descritas abajo,
+reportar la diferencia y adaptar la auditoría al comportamiento real.
+
+============================================================
+ARCHIVO A CREAR
+============================================================
+
+Crear exclusivamente:
+
+    scripts/audit_fase2_1.py
+
+No modificar:
+
+    app/ml/training/data.py
+    app/ml/training/compare.py
+    app/ml/models/sequence_base.py
+    train_and_compare.py
+
+salvo que exista una imposibilidad técnica demostrable para ejecutar
+la auditoría. En ese caso, NO modificar silenciosamente: reportar
+qué impide la auditoría.
+
+============================================================
+PRINCIPIO FUNDAMENTAL
+============================================================
+
+El script debe reutilizar las mismas funciones que utiliza el
+pipeline actual siempre que sea posible.
+
+No duplicar lógica de:
+
+    create_features()
+    create_labels()
+    split_chronological()
+    build_sequences()
+    evaluate_model()
+
+si dichas funciones ya existen.
+
+El objetivo es auditar el pipeline REAL, no construir una segunda
+implementación que podría comportarse diferente.
+
+============================================================
+PASO 0 — INSPECCIÓN PREVIA
+============================================================
+
+Antes de escribir código:
+
+1. Inspeccionar data.py.
+2. Inspeccionar compare.py.
+3. Inspeccionar sequence_base.py.
+4. Inspeccionar train_and_compare.py.
+5. Identificar exactamente:
+
+   - cómo se construyen features;
+   - cómo se construyen labels;
+   - cómo se hace el split;
+   - cómo se construyen secuencias;
+   - cómo se obtiene predict_proba();
+   - cómo se obtiene predict();
+   - cómo se calcula ROC-AUC;
+   - cómo se calcula PR-AUC;
+   - cómo se calcula F1;
+   - qué threshold se utiliza.
+
+Si alguna de las hipótesis de este prompt no coincide con el código,
+el reporte debe indicar:
+
+    IMPLEMENTATION DIFFERENCE DETECTED
+
+y explicar la diferencia.
+
+============================================================
+PASO 1 — LABEL DISTRIBUTION
+============================================================
+
+Utilizar directamente el resultado de split_chronological().
+
+Reportar para cada dataset:
+
+    samples
+    positives
+    negatives
+    positive_rate
+
+Formato:
+
+TRAIN:
+  samples: XXXXX
+  positives: XXXXX
+  negatives: XXXXX
+  positive_rate: XX.XX%
+
+VALIDATION:
+  samples: XXXXX
+  positives: XXXXX
+  negatives: XXXXX
+  positive_rate: XX.XX%
+
+TEST:
+  samples: XXXXX
+  positives: XXXXX
+  negatives: XXXXX
+  positive_rate: XX.XX%
+
+IMPORTANTE:
+
+Los conteos deben corresponder al dataset realmente utilizado
+por cada evaluación.
+
+Si la construcción de secuencias elimina muestras iniciales,
+reportar también:
+
+    raw split samples
+    evaluated sequence samples
+
+Ejemplo:
+
+VALIDATION:
+  raw samples: 14899
+  evaluated samples: 14870
+
+Esto es importante porque el LSTM puede utilizar sequence_length-1
+muestras de contexto.
+
+============================================================
+PASO 2 — CLASSIFICATION THRESHOLD
+============================================================
+
+Inspeccionar el código real de:
+
+    sequence_base.py
+
+Determinar exactamente cómo predict() convierte probabilidades
+en clase.
+
+Si el código utiliza:
+
+    argmax(axis=1)
+
+sobre softmax de dos clases, documentar:
+
+    classification_threshold = 0.50
+
+pero aclarar:
+
+    El pipeline NO implementa actualmente un threshold configurable.
+    La decisión se realiza mediante argmax de las dos probabilidades.
+
+NO modificarlo.
+
+NO optimizarlo.
+
+NO cambiarlo.
+
+La salida debe ser:
+
+Classification threshold
+------------------------
+classification_threshold = 0.50
+classification_method = argmax(two-class softmax)
+configurable = NO
+
+Si el código real es diferente, reportar el comportamiento real.
+
+============================================================
+PASO 3 — PROBABILITY DISTRIBUTION
+============================================================
+
+Reentrenar el LSTM usando EXACTAMENTE la configuración actual.
+
+No cambiar:
+
+    epochs
+    sequence_length
+    architecture
+    optimizer
+    learning rate
+    batch size
+    loss
+    features
+    labels
+
+El objetivo es producir probabilidades correspondientes al
+pipeline actual.
+
+Obtener:
+
+    validation_probabilities
+    test_probabilities
+
+Utilizar predict_proba() del modelo.
+
+Para cada conjunto calcular:
+
+    min
+    p05
+    p25
+    median
+    p75
+    p95
+    max
+    mean
+
+Formato:
+
+VALIDATION probabilities:
+  min:    X.XXXX
+  p05:    X.XXXX
+  p25:    X.XXXX
+  median: X.XXXX
+  p75:    X.XXXX
+  p95:    X.XXXX
+  max:    X.XXXX
+  mean:   X.XXXX
+
+TEST probabilities:
+  min:    X.XXXX
+  p05:    X.XXXX
+  p25:    X.XXXX
+  median: X.XXXX
+  p75:    X.XXXX
+  p95:    X.XXXX
+  max:    X.XXXX
+  mean:   X.XXXX
+
+Además reportar:
+
+    fraction_probability_ge_0.50
+
+para VALIDATION y TEST.
+
+Esto permite determinar si el cambio en precision/recall se debe
+simplemente a un desplazamiento de las probabilidades.
+
+============================================================
+PASO 4 — TEMPORAL LEAKAGE AUDIT
+============================================================
+
+Realizar una auditoría estática y dinámica.
+
+--------------------------------
+4.1 FEATURES
+--------------------------------
+
+Verificar que cada feature utilice únicamente información disponible
+hasta el timestamp t.
+
+Documentar:
+
+    rsi
+    macd
+    macd_signal
+    macd_hist
+    ema_21
+    ema_50
+    atr
+    volume_ratio
+    price_change
+    high_low_range
+    close_position
+    trend_strength
+
+Para cada feature indicar:
+
+    causal = YES/NO
+
+No basta con afirmar que "rolling es causal".
+
+Identificar específicamente cualquier:
+
+    shift(-k)
+    future value
+    centered rolling
+    global normalization
+    fitting on complete dataset
+
+--------------------------------
+4.2 LABEL
+--------------------------------
+
+Confirmar que labels utilicen información futura únicamente para
+crear y, posteriormente, evaluar el target.
+
+Por ejemplo:
+
+    high[t+k]
+
+es permitido para construir:
+
+    label[t]
+
+porque representa el futuro que se intenta predecir.
+
+Pero esa información NO debe entrar en X[t].
+
+Reportar:
+
+    Label future dependency: EXPECTED
+    Feature future dependency: NONE
+
+--------------------------------
+4.3 PREPROCESSING
+--------------------------------
+
+Buscar:
+
+    StandardScaler
+    MinMaxScaler
+    RobustScaler
+    normalization
+    fit()
+    fit_transform()
+
+Determinar si algún transformador se ajusta utilizando:
+
+    VALIDATION
+    TEST
+
+Si no existe scaler:
+
+    preprocessing_scaler = NONE
+
+--------------------------------
+4.4 SPLIT
+--------------------------------
+
+Confirmar:
+
+    TRAIN < VALIDATION < TEST
+
+temporalmente.
+
+Reportar timestamps exactos:
+
+    TRAIN:
+      start
+      end
+
+    VALIDATION:
+      start
+      end
+
+    TEST:
+      start
+      end
+
+--------------------------------
+4.5 SEQUENCES
+--------------------------------
+
+Determinar exactamente si las secuencias:
+
+    TRAIN
+    VALIDATION
+    TEST
+
+pueden utilizar contexto histórico del split anterior.
+
+IMPORTANTE:
+
+Usar contexto histórico anterior NO constituye automáticamente
+data leakage.
+
+Por ejemplo:
+
+    TRAIN termina: 2021-08-12
+    VALIDATION comienza: 2021-08-13
+
+Una secuencia de VALIDATION puede utilizar:
+
+    últimos 29 candles de TRAIN
+    + primer candle de VALIDATION
+
+Esto es causal y puede ser correcto.
+
+Lo importante es que ninguna secuencia de VALIDATION utilice
+información futura de VALIDATION o TEST, y ninguna secuencia de TEST
+utilice información de TEST futura.
+
+Reportar explícitamente:
+
+    cross_split_historical_context = YES/NO
+
+y:
+
+    future_information_crossing_boundary = YES/NO
+
+Conclusión:
+
+    Temporal leakage check: PASS/FAIL
+
+============================================================
+PASO 5 — SEQUENCE BOUNDARY AUDIT
+============================================================
+
+sequence_length actual:
+
+    30
+
+No asumirlo si el código permite otro valor.
+
+Obtener timestamps reales de las secuencias evaluadas.
+
+Para TRAIN:
+
+    first sequence timestamp
+    last sequence timestamp
+
+Para VALIDATION:
+
+    first sequence timestamp
+    last sequence timestamp
+
+Para TEST:
+
+    first sequence timestamp
+    last sequence timestamp
+
+Además reportar explícitamente el contexto de la primera secuencia
+de VALIDATION:
+
+    validation first target timestamp
+    validation context start timestamp
+    validation context end timestamp
+
+Y para TEST:
+
+    test first target timestamp
+    test context start timestamp
+    test context end timestamp
+
+Ejemplo:
+
+VALIDATION:
+    context:
+        2021-08-11 ... 2021-08-12
+    target:
+        2021-08-13
+
+Esto demuestra que el contexto es histórico y causal.
+
+No etiquetar automáticamente esta situación como leakage.
+
+============================================================
+PASO 6 — VALIDATION / TEST METRIC GAP
+============================================================
+
+Calcular directamente en esta ejecución:
+
+    ROC-AUC
+    PR-AUC
+    F1
+
+para VALIDATION y TEST.
+
+No depender exclusivamente del meta.json.
+
+El meta.json puede utilizarse como referencia secundaria.
+
+Formato:
+
+Metric       Validation    Test       Gap
+ROC-AUC      0.6333        0.6380     +0.0047
+PR-AUC       0.5326        0.4011     -0.1315
+F1           X.XXXX        0.4193     X.XXXX
+
+IMPORTANTE:
+
+El script debe indicar si los valores reproducidos difieren de los
+valores históricos del entrenamiento anterior.
+
+Por ejemplo:
+
+Reference comparison
+--------------------
+Validation ROC-AUC:
+  reference: 0.6333
+  audit:     0.6328
+  delta:    -0.0005
+
+Si la diferencia existe, NO intentar ocultarla ni corregirla.
+
+============================================================
+PASO 7 — PREVALENCE VS PR-AUC
+============================================================
+
+Calcular:
+
+    validation_positive_rate
+    test_positive_rate
+
+y:
+
+    prevalence_change_pp =
+        test_positive_rate - validation_positive_rate
+
+Formato:
+
+Prevalence vs PR-AUC
+--------------------
+validation positive_rate: XX.XX%
+test positive_rate:       XX.XX%
+prevalence change:        X.XX pp
+
+PR-AUC:
+    validation: X.XXXX
+    test:       X.XXXX
+    change:     X.XXXX
+
+IMPORTANTE:
+
+NO concluir automáticamente:
+
+    "la caída de PR-AUC se explica por menor prevalencia"
+
+Simplemente porque la prevalencia cambie.
+
+La conclusión debe diferenciar:
+
+    OBSERVED:
+        prevalence changed
+
+de:
+
+    INTERPRETATION:
+        this may contribute to PR-AUC change
+
+Si la prevalencia no cambia significativamente, indicarlo.
+
+============================================================
+PASO 7.1 — DISTRIBUTION SHIFT BÁSICO
+============================================================
+
+Sin cambiar modelos ni features, calcular estadísticas descriptivas
+para las features en:
+
+    VALIDATION
+    TEST
+
+Para cada feature:
+
+    mean
+    std
+    median
+    p05
+    p95
+
+No ejecutar tests estadísticos complejos todavía.
+
+El objetivo es detectar cambios evidentes.
+
+Formato resumido:
+
+Feature          Val mean   Test mean   Delta
+rsi              ...
+macd             ...
+atr              ...
+...
+
+Además reportar las 3 features con mayor cambio relativo, si es
+posible calcularlo de forma estable.
+
+Esta sección NO modifica el pipeline.
+
+============================================================
+PASO 8 — OUTPUT
+============================================================
+
+Generar:
+
+    FASE 2.1 AUDIT
+    ==============
+
+    Label distribution
+    ------------------
+
+    TRAIN:
+      samples:
+      positives:
+      negatives:
+      positive_rate:
+
+    VALIDATION:
+      samples:
+      positives:
+      negatives:
+      positive_rate:
+
+    TEST:
+      samples:
+      positives:
+      negatives:
+      positive_rate:
+
+    Classification threshold
+    ------------------------
+    classification_threshold =
+    classification_method =
+    configurable =
+
+    Probability distribution
+    ------------------------
+
+    VALIDATION probabilities:
+      min:
+      p05:
+      p25:
+      median:
+      p75:
+      p95:
+      max:
+      mean:
+      fraction_probability_ge_0.50:
+
+    TEST probabilities:
+      min:
+      p05:
+      p25:
+      median:
+      p75:
+      p95:
+      max:
+      mean:
+      fraction_probability_ge_0.50:
+
+    Temporal leakage
+    ----------------
+    Feature future dependency: NONE/DETECTED
+    Label future dependency: EXPECTED
+    Scaler leakage: NONE/DETECTED
+    Temporal split: PASS/FAIL
+    Future information crossing boundary: NO/YES
+
+    Temporal leakage check: PASS/FAIL
+
+    Sequence boundary audit
+    -----------------------
+
+    TRAIN:
+      first sequence timestamp:
+      last sequence timestamp:
+
+    VALIDATION:
+      context start:
+      context end:
+      first target timestamp:
+      last target timestamp:
+
+    TEST:
+      context start:
+      context end:
+      first target timestamp:
+      last target timestamp:
+
+    Cross-split historical context:
+      YES/NO
+
+    Future information crossing split:
+      YES/NO
+
+    Sequence boundary check: PASS/FAIL
+
+    Validation/Test comparison
+    ---------------------------
+
+    Metric       Validation    Test       Gap
+    ROC-AUC      X.XXXX        X.XXXX     X.XXXX
+    PR-AUC       X.XXXX        X.XXXX     X.XXXX
+    F1           X.XXXX        X.XXXX     X.XXXX
+
+    Prevalence vs PR-AUC
+    --------------------
+
+    validation positive_rate: XX.XX%
+    test positive_rate:       XX.XX%
+    prevalence change:        X.XX pp
+
+    validation PR-AUC: X.XXXX
+    test PR-AUC:       X.XXXX
+    PR-AUC change:     X.XXXX
+
+    Feature distribution shift
+    ---------------------------
+
+    Feature          Val mean    Test mean    Delta
+    ...
+
+    Top distribution changes:
+      1.
+      2.
+      3.
+
+    Conclusion
+    ----------
+
+    1. El split es causal: SÍ/NO
+    2. El TEST está aislado: SÍ/NO
+    3. Existe cambio de distribución: SÍ/NO
+    4. Existe evidencia de leakage: SÍ/NO
+    5. El threshold debe optimizarse en fase posterior: SÍ/NO
+
+    Additional finding:
+      Explicar brevemente la principal causa probable del cambio
+      VALIDATION → TEST, diferenciando claramente:
+
+        HECHO OBSERVADO
+        vs
+        INTERPRETACIÓN
+
+============================================================
+RESTRICCIONES ABSOLUTAS
+============================================================
+
+NO:
+
+- cambiar features
+- cambiar modelos
+- cambiar arquitectura
+- cambiar epochs
+- cambiar sequence_length
+- cambiar optimizer
+- cambiar learning rate
+- cambiar batch size
+- cambiar loss
+- cambiar threshold
+- optimizar threshold
+- optimizar hiperparámetros
+- hacer backtesting
+- entrenar ensemble
+- modificar Transformer
+- modificar Random Forest
+- modificar LightGBM
+- modificar XGBoost
+- modificar CatBoost
+- modificar AutoEncoder
+- modificar Isolation Forest
+- tocar database
+- modificar train_and_compare.py
+- modificar app/ml/
+
+Únicamente:
+
+    CREAR scripts/audit_fase2_1.py
+
+============================================================
+VERIFICACIÓN
+============================================================
+
+Ejecutar:
+
+    python scripts/audit_fase2_1.py
+
+Después ejecutar:
+
+    pytest
+
+Comprobar:
+
+1. El script termina sin errores.
+2. El reporte contiene las 8 secciones.
+3. Los timestamps coinciden con los splits reales.
+4. Las métricas reproducidas son coherentes con el pipeline.
+5. No se modificaron archivos de app/ml/.
+6. pytest continúa pasando.
+
+Al finalizar mostrar:
+
+    Files modified:
+      scripts/audit_fase2_1.py
+
+    Files not modified:
+      app/ml/...
+      train_and_compare.py
+
+    Tests:
+      pytest: PASS/FAIL
+
+    Audit:
+      PASS/FAIL
+
+NO realizar ninguna modificación adicional después de la auditoría.

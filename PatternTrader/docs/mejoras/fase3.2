@@ -1,0 +1,584 @@
+# FASE 3.2 — PLAN DE IMPLEMENTACIÓN
+
+## Feature Scaling para modelos secuenciales
+
+==================================================
+
+## CONTEXTO
+
+---
+
+La Fase 2.1 confirmó que actualmente:
+
+```
+preprocessing_scaler = NONE
+```
+
+y:
+
+```
+sequence_base.py:
+  self._scaler = None
+```
+
+El LSTM recibe directamente las features originales.
+
+Las magnitudes son heterogéneas:
+
+```
+RSI              ≈ 0–100
+MACD             ≈ 0.0000
+MACD_SIGNAL      ≈ 0.0000
+MACD_HIST        ≈ 0.0000
+EMA_21           ≈ 1.3
+EMA_50           ≈ 1.3
+ATR              ≈ 0.001
+volume_ratio     ≈ 1
+price_change     ≈ 0
+high_low_range   ≈ 0.001
+close_position   ≈ 0–1
+trend_strength   ≈ 0
+```
+
+Esto justifica investigar si la ausencia de scaling está perjudicando
+el entrenamiento del LSTM.
+
+IMPORTANTE:
+
+Esta fase debe comparar:
+
+```
+BASELINE
+vs
+SCALED
+```
+
+de forma controlada.
+
+==================================================
+
+## OBJETIVO
+
+---
+
+Evaluar si StandardScaler mejora la estabilidad y calidad predictiva
+del LSTM.
+
+El scaler debe ajustarse:
+
+```
+ÚNICAMENTE con TRAIN.
+```
+
+Nunca:
+
+```
+VALIDATION
+TEST
+```
+
+pueden participar en:
+
+```
+scaler.fit()
+```
+
+Pipeline correcto:
+
+```
+TRAIN
+  ↓
+scaler.fit(TRAIN)
+  ↓
+scaler.transform(TRAIN)
+scaler.transform(VALIDATION)
+scaler.transform(TEST)
+```
+
+==================================================
+
+## REGLA CRÍTICA
+
+---
+
+NO hacer:
+
+```
+scaler.fit(X_train + X_validation)
+```
+
+NO hacer:
+
+```
+scaler.fit(X_all)
+```
+
+NO hacer:
+
+```
+scaler.fit(X_test)
+```
+
+NO calcular estadísticas globales antes del split.
+
+==================================================
+
+## PASO 1 — INSPECCIÓN
+
+---
+
+Inspeccionar:
+
+```
+app/ml/models/sequence_base.py
+app/ml/training/data.py
+app/ml/training/compare.py
+```
+
+Determinar:
+
+1. dónde se almacenan features
+2. dónde se crean secuencias
+3. dónde se entrena el LSTM
+4. dónde se ejecuta predict()
+5. dónde se guarda el modelo
+6. cómo se cargan posteriormente los pesos
+
+No modificar arquitectura todavía.
+
+==================================================
+
+## PASO 2 — IMPLEMENTAR SCALER
+
+---
+
+Usar:
+
+```
+sklearn.preprocessing.StandardScaler
+```
+
+Inicializar:
+
+```
+scaler = StandardScaler()
+```
+
+Entrenarlo exclusivamente:
+
+```
+scaler.fit(X_train)
+```
+
+Transformar:
+
+```
+X_train_scaled = scaler.transform(X_train)
+X_val_scaled   = scaler.transform(X_validation)
+X_test_scaled  = scaler.transform(X_test)
+```
+
+Después construir las secuencias.
+
+IMPORTANTE:
+
+El scaler debe aplicarse antes de construir las ventanas,
+manteniendo exactamente el mismo sequence_length.
+
+==================================================
+
+## PASO 3 — EVITAR CAMBIO DE MUESTRAS
+
+---
+
+El scaling NO debe alterar:
+
+```
+número de samples
+timestamps
+labels
+sequence_length
+```
+
+Para:
+
+```
+sequence_length = 30
+```
+
+debe mantenerse:
+
+```
+TRAIN sequences = n_train - 29
+```
+
+y el mecanismo de contexto temporal debe permanecer exactamente
+igual.
+
+==================================================
+
+## PASO 4 — BASELINE CONTROLADO
+
+---
+
+Ejecutar primero el LSTM actual SIN scaling.
+
+Registrar:
+
+```
+epochs
+sequence_length
+seed
+architecture
+optimizer
+learning_rate
+batch_size
+```
+
+y:
+
+```
+validation ROC-AUC
+validation PR-AUC
+validation F1
+
+test ROC-AUC
+test PR-AUC
+test F1
+```
+
+Este será el baseline.
+
+==================================================
+
+## PASO 5 — EXPERIMENTO SCALED
+
+---
+
+Entrenar el mismo LSTM con:
+
+```
+StandardScaler
+```
+
+Mantener EXACTAMENTE iguales:
+
+```
+arquitectura
+epochs
+sequence_length
+optimizer
+learning rate
+batch size
+labels
+threshold
+train/validation/test split
+```
+
+La única diferencia debe ser:
+
+```
+feature scaling
+```
+
+==================================================
+
+## PASO 6 — MÉTRICAS
+
+---
+
+Comparar:
+
+```
+BASELINE vs SCALED
+```
+
+para:
+
+```
+Validation ROC-AUC
+Validation PR-AUC
+Validation F1
+
+Test ROC-AUC
+Test PR-AUC
+Test F1
+```
+
+También:
+
+```
+train_loss
+validation_loss si existe
+```
+
+==================================================
+
+## PASO 7 — DISTRIBUCIÓN DEL SCALER
+
+---
+
+Reportar para cada feature:
+
+```
+mean
+std
+```
+
+calculados exclusivamente sobre TRAIN.
+
+Ejemplo:
+
+```
+Feature          mean        std
+rsi              ...
+macd             ...
+ema_21           ...
+atr               ...
+volume_ratio      ...
+```
+
+Esto sirve para comprobar que el scaler está funcionando.
+
+Después del scaling:
+
+```
+mean ≈ 0
+std  ≈ 1
+```
+
+para las features con variación suficiente.
+
+==================================================
+
+## PASO 8 — PERSISTENCIA
+
+---
+
+Si el modelo scaled resulta seleccionado como ganador,
+guardar el scaler junto con el modelo.
+
+Por ejemplo:
+
+```
+models/lstm_USDCAD.pt
+models/lstm_USDCAD_scaler.pkl
+```
+
+o un formato equivalente.
+
+La metadata debe indicar:
+
+```
+"preprocessing": {
+    "type": "StandardScaler",
+    "fit_dataset": "train"
+}
+```
+
+Es obligatorio que el sistema de inferencia pueda reproducir
+exactamente la transformación utilizada durante entrenamiento.
+
+NO guardar solamente el modelo sin el scaler.
+
+==================================================
+
+## PASO 9 — COMPATIBILIDAD CON INFERENCIA
+
+---
+
+Inspeccionar el flujo de scoring en vivo.
+
+El mismo scaler debe aplicarse a:
+
+```
+nuevas features
+```
+
+antes de:
+
+```
+construir/usar la secuencia
+ejecutar LSTM
+```
+
+Si el pipeline de inferencia actual no soporta scaler,
+NO hacer un cambio parcial que produzca incompatibilidad.
+
+En ese caso:
+
+```
+reportar incompatibilidad
+```
+
+y corregirla antes de declarar la fase completa.
+
+==================================================
+
+## PASO 10 — CRITERIO DE SELECCIÓN
+
+---
+
+No seleccionar automáticamente el scaled solo porque una métrica
+mejora ligeramente.
+
+Utilizar esta jerarquía:
+
+1. TEST ROC-AUC
+2. TEST PR-AUC
+3. TEST F1
+
+pero interpretar siempre los resultados junto con VALIDATION.
+
+Una mejora válida debería mostrar:
+
+```
+mejora en VALIDATION
++
+mejora o estabilidad en TEST
+```
+
+Si:
+
+```
+Validation mejora
+pero Test empeora
+```
+
+entonces:
+
+```
+NO declarar scaling como mejora confirmada.
+```
+
+==================================================
+
+## SALIDA ESPERADA
+
+---
+
+# FASE 3.2 — FEATURE SCALING AUDIT
+
+## Scaler
+
+type: StandardScaler
+fit_dataset: TRAIN
+
+## Feature statistics
+
+Feature          TRAIN_MEAN    TRAIN_STD
+rsi              ...           ...
+macd             ...           ...
+macd_signal      ...           ...
+macd_hist        ...           ...
+ema_21           ...           ...
+ema_50           ...           ...
+atr              ...           ...
+volume_ratio     ...           ...
+price_change     ...           ...
+high_low_range   ...           ...
+close_position   ...           ...
+trend_strength   ...           ...
+
+## Baseline LSTM
+
+Validation:
+ROC-AUC: ...
+PR-AUC: ...
+F1: ...
+
+Test:
+ROC-AUC: ...
+PR-AUC: ...
+F1: ...
+
+## Scaled LSTM
+
+Validation:
+ROC-AUC: ...
+PR-AUC: ...
+F1: ...
+
+Test:
+ROC-AUC: ...
+PR-AUC: ...
+F1: ...
+
+## Comparison
+
+Metric              Baseline    Scaled    Delta
+
+VAL ROC-AUC         ...         ...       ...
+VAL PR-AUC          ...         ...       ...
+VAL F1              ...         ...       ...
+
+TEST ROC-AUC        ...         ...       ...
+TEST PR-AUC         ...         ...       ...
+TEST F1             ...         ...       ...
+
+## Leakage check
+
+Scaler fit dataset: TRAIN
+Validation leakage: NO
+Test leakage: NO
+
+## Conclusion
+
+1. StandardScaler implemented: YES/NO
+2. Scaler fit exclusively on TRAIN: YES/NO
+3. Validation improvement: YES/NO
+4. Test improvement: YES/NO
+5. Inference compatibility: YES/NO
+6. Scaling adopted: YES/NO
+
+==================================================
+
+## QUÉ NO HACER
+
+---
+
+NO:
+
+* cambiar arquitectura
+* aumentar epochs
+* cambiar sequence_length
+* cambiar learning rate
+* cambiar optimizer
+* cambiar labels
+* cambiar features
+* cambiar threshold
+* optimizar hiperparámetros
+* utilizar TEST para ajustar scaler
+* recalibrar probabilidades
+* implementar ensemble
+* realizar backtesting
+
+==================================================
+
+## VERIFICACIÓN
+
+---
+
+Ejecutar:
+
+```
+pytest
+```
+
+Después ejecutar el experimento baseline y scaled.
+
+Confirmar explícitamente:
+
+```
+scaler.fit() → TRAIN únicamente
+```
+
+y:
+
+```
+validation/test → transform() únicamente.
+```
+
+La implementación solo se considera correcta si el modelo
+scaled puede utilizarse posteriormente en producción con
+exactamente el mismo preprocessing.

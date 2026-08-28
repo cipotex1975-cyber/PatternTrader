@@ -118,6 +118,58 @@ def _model_kwargs(
     return kwargs
 
 
+def classify_with_threshold(probabilities: np.ndarray, threshold: float) -> np.ndarray:
+    """Convierte probabilidades de la clase positiva en clases binarias.
+
+    comportamiento:
+        P >= threshold → 1
+        P <  threshold → 0
+
+    Ejemplo con threshold=0.50:
+        P=[0.20, 0.42, 0.50, 0.61, 0.83] → [0, 0, 1, 1, 1]
+
+    Valida que el threshold esté en [0, 1]. Esta función es un mecanismo
+    de DECISIÓN: cambiar el threshold no altera el modelo ni las métricas
+    basadas en probabilidades (ROC-AUC, PR-AUC).
+    """
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError(f"threshold debe estar en [0, 1]; recibido {threshold}")
+    probs = np.asarray(probabilities, dtype=np.float64)
+    return (probs >= threshold).astype(np.int64)
+
+
+def metrics_at_threshold(
+    y_true: np.ndarray,
+    probabilities: np.ndarray,
+    threshold: float,
+) -> dict[str, float]:
+    """Métricas dependientes del threshold para una probabilidad dada.
+
+    ROC-AUC y PR-AUC se calculan con las probabilidades (independientes del
+    threshold); accuracy, precision, recall y f1 con la clasificación binaria
+    inducida por ``classify_with_threshold``. Usa ``zero_division=0`` para
+    thresholds degenerados (sin positivos ni negativos predichos).
+    """
+    labels = np.asarray(y_true)
+    predictions = classify_with_threshold(probabilities, threshold)
+    n = len(labels)
+    positive_predictions = int(predictions.sum())
+    predicted_positive_rate = positive_predictions / n if n > 0 else 0.0
+
+    metrics: dict[str, float] = {
+        "accuracy": float(accuracy_score(labels, predictions)),
+    }
+    if len(np.unique(labels)) > 1:
+        metrics["precision"] = float(precision_score(labels, predictions, zero_division=0))
+        metrics["recall"] = float(recall_score(labels, predictions, zero_division=0))
+        metrics["f1"] = float(f1_score(labels, predictions, zero_division=0))
+        metrics["roc_auc"] = float(roc_auc_score(labels, probabilities))
+        metrics["pr_auc"] = float(average_precision_score(labels, probabilities))
+    metrics["positive_predictions"] = float(positive_predictions)
+    metrics["predicted_positive_rate"] = float(predicted_positive_rate)
+    return metrics
+
+
 def evaluate_model(model: BaseMLModel, X: np.ndarray, y: np.ndarray) -> dict[str, float]:
     """Métricas unificadas (0-1) para cualquier modelo de la plataforma."""
     predictions = model.predict(X)

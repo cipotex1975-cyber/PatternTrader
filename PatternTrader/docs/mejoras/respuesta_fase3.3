@@ -1,0 +1,296 @@
+FASE 3.3 — RESPUESTA: DISTRIBUTION SHIFT / CAMBIO DE REGIMEN
+=============================================================
+
+ESTADO: COMPLETADO (AUDITORIA DIAGNOSTICA; NO SE MODIFICA EL PIPELINE)
+FECHA: 2026-08-28
+
+ALCANCE
+-------
+
+Esta fase es DIAGNOSTICA: determina QUÉ cambia, CUÁNTO cambia y CUÁNDO
+comienza el cambio entre VALIDATION (2021-08-12 -> 2024-01-03) y TEST
+(2024-01-03 -> 2026-05-29), con foco en VALIDATION -> TEST.
+
+NO se reentrenó para mejorar, no se cambió modelo, features, threshold,
+labels ni split. El único entrenamiento fue el del LSTM en su configuración
+actual (identical a la de producción y a las fases 3.1/3.2) únicamente para
+producir probabilidades sobre VAL y TEST.
+
+ARCHIVOS CREADOS
+----------------
+
+    Creado:
+      scripts/audit_fase3_3.py    (auditoría reproducible)
+
+    No modificados (correcto: fase diagnóstico, no toca el pipeline):
+      app/**, models/**, train_and_compare.py
+
+VERIFICACION
+------------
+
+    black + isort:            OK
+    flake8 scripts/:          OK (audit_fase3_3.py limpio)
+    mypy:                     N/A (no se modificó app/)
+    pytest:                   358 passed, 17 skipped
+    Script de auditoría:      PASS (termina sin errores)
+
+===============================================================
+# FASE 3.3 — DISTRIBUTION SHIFT AUDIT
+===============================================================
+
+## Dataset periods
+
+VALIDATION: 2021-08-12 00:00:00 -> 2024-01-03 00:00:00
+TEST:       2024-01-03 00:00:00 -> 2026-05-29 00:00:00
+
+## Prevalence
+
+Dataset         PosRate
+TRAIN            41.49%
+VALIDATION       41.84%
+TEST             29.16%
+change (VAL->TEST): -12.67 pp
+
+## Feature distribution shift
+
+Feature            Val Mean  Test Mean      Delta       KS     Effect
+---------------------------------------------------------------------
+  rsi               50.0558    50.5226    +0.4668   0.0274     0.0271
+  macd               0.0000     0.0000    -0.0000   0.0897    -0.0128
+  macd_signal        0.0000     0.0000    -0.0000   0.0908    -0.0127
+  macd_hist          0.0000    -0.0000    -0.0000   0.0828    -0.0026
+  ema_21             1.3152     1.3817    +0.0665   0.6474     1.8847
+  ema_50             1.3151     1.3817    +0.0666   0.6583     1.8890
+  atr                0.0017     0.0013    -0.0004   0.3834    -0.7537
+  volume_ratio       1.0225     1.0166    -0.0060   0.0598    -0.0131
+  price_change       0.0000     0.0000    -0.0000   0.0748    -0.0028
+  high_low_range     0.0013     0.0009    -0.0004   0.2605    -0.4864
+  close_position     0.4970     0.5025    +0.0055   0.0118     0.0180
+  trend_strength     0.0001     0.0000    -0.0000   0.0898    -0.0148
+
+## Top distribution shifts
+
+1. EMA_50
+   KS: 0.6583 (p=0.000e+00)
+   effect_size: 1.8890 (large)
+   Val mean 1.3151 -> Test mean 1.3817
+
+2. EMA_21
+   KS: 0.6474 (p=0.000e+00)
+   effect_size: 1.8847 (large)
+   Val mean 1.3152 -> Test mean 1.3817
+
+3. ATR
+   KS: 0.3834 (p=0.000e+00)
+   effect_size: -0.7537 (medium)
+   Val mean 0.0017 -> Test mean 0.0013
+
+4. HIGH_LOW_RANGE
+   KS: 0.2605 (p=0.000e+00)
+   effect_size: -0.4864 (small)
+   Val mean 0.0013 -> Test mean 0.0009
+
+5. MACD_SIGNAL
+   KS: 0.0908 (p=7.144e-54)
+   effect_size: -0.0127 (negligible)
+   Val mean 0.0000 -> Test mean 0.0000
+
+Effect size counts: negligible=8, large=2, medium=1, small=1
+
+INTERPRETACION: las features que más cambian (EMA_21, EMA_50, ATR,
+high_low_range) son precisamente las ligadas al nivel absoluto de precio
+y a la volatilidad. Las features "estructuradas" (RSI, MACD,
+close_position, trend_strength, volume_ratio) permanecen estables (KS<0.1,
+effect negligible). El shift es fundamentalmente de volatilidad/escala de
+precio y de prevalencia, no de forma de las series normalizadas.
+
+## Label shift / P(Y|X) by feature bins
+
+--- RSI bins ---
+Bin                      Val P(Y=1)  Test P(Y=1)
+[14.9442, 32.6469]            42.2%        28.6%
+[32.6469, 50.3495]            41.4%        30.4%
+[50.3495, 68.0522]            42.4%        29.7%
+[68.0522, 85.7549]            42.3%        26.8%
+
+--- ATR bins ---
+Bin                      Val P(Y=1)  Test P(Y=1)
+[0.0006, 0.0013]              44.7%        28.6%
+[0.0013, 0.0020]              39.5%        27.8%
+[0.0020, 0.0026]              40.5%        35.4%
+[0.0026, 0.0033]              52.5%        44.7%
+
+INTERPRETACION: dentro de una misma región de feature (mismo bin de RSI o
+de ATR), P(Y=1) cae casi uniformemente ~13 pp en TEST respecto a
+VALIDATION. Es decir: la relación P(Y|X) condicionada al feature NO cambia
+de forma drástica (la caída es uniforme en los bins), lo que apunta a
+PREVALENCE shift global más que a un concepto que cambie la forma de la
+dependencia. No hay evidencia de un cruce selectivo de P(Y|X) por bin.
+
+## Probability distribution
+
+VALIDATION:
+  mean: 0.4410
+  median: 0.4391
+  p05: 0.2744
+  p25: 0.3532
+  p75: 0.5253
+  p95: 0.6106
+
+TEST:
+  mean: 0.4309
+  median: 0.4303
+  p05: 0.2634
+  p25: 0.3387
+  p75: 0.5175
+  p95: 0.6054
+
+Probability KS: statistic=0.0445 p-value=2.974e-13
+
+INTERPRETACION: las distribuciones de probabilidad son casi idénticas en
+forma y ubicación (KS=0.0445, un shift estadísticamente significativo por
+el gran N pero de magnitud muy pequeña). El modelo NO cambia
+apreciablemente su comportamiento de scoring entre periodos.
+
+## Calibration comparison
+
+Bin          Val Pred  Val Actual  Test Pred  Test Actual
+-------------------------------------------------------
+0.0-0.1         0.098      0.000        n/a        n/a
+0.1-0.2         0.141      0.214      0.175      0.333
+0.2-0.3         0.273      0.253      0.271      0.162
+0.3-0.4         0.352      0.314      0.350      0.210
+0.4-0.5         0.450      0.441      0.452      0.324
+0.5-0.6         0.546      0.530      0.546      0.378
+0.6-0.7         0.625      0.586      0.622      0.469
+0.7-0.8         0.718      0.333      0.710      0.800
+0.8-0.9           n/a        n/a        n/a        n/a
+0.9-1.0           n/a        n/a        n/a        n/a
+
+INTERPRETACION: el predicted mean por bin es casi idéntico entre VAL y
+TEST, pero el ACTUAL positive rate por bin cae consistentemente en TEST
+(0.4-0.5: 0.441 -> 0.324; 0.5-0.6: 0.530 -> 0.378; 0.6-0.7: 0.586 ->
+0.469). Es decir, la relación pred->actual se preserva en predicción pero
+se degrada la tasa real de positivos para el mismo nivel de score. Esto es
+el sello de un PREVALENCE SHIFT acoplado a un CALIBRATION SHIFT (las
+probabilidades sobreestiman la frecuencia real de positivos en TEST),
+aunque la capacidad de ranking (ROC-AUC) se mantiene.
+
+## Temporal evolution
+
+Period      PosRate   meanRSI   meanATR     range
+--------------------------------------------------
+2021-H1      39.65%     48.62    0.0015    0.0012   (train)
+2021-H2      40.34%     50.36    0.0016    0.0012   (train)
+2022-H1      45.09%     49.43    0.0018    0.0014   (train)
+2022-H2      50.81%     50.77    0.0022    0.0016   (train)
+2023-H1      38.23%     49.78    0.0016    0.0012   (train)
+2023-H2      34.22%     49.76    0.0014    0.0010   (train/val)
+2024-H1      26.77%     50.10    0.0012    0.0008   (test)
+2024-H2      27.55%     51.47    0.0012    0.0008   (test)
+2025-H1      38.12%     49.34    0.0018    0.0013   (test)
+2025-H2      23.94%     51.08    0.0011    0.0008   (test)
+2026-H1      29.92%     50.93    0.0012    0.0009   (test)
+
+## Temporal evolution (ROC-AUC / PR-AUC, LSTM)
+
+Period        Samples  PosRate  ROC-AUC   PR-AUC
+------------------------------------------------
+2021-H2          2420    40.4%   0.6242   0.5019
+2022-H1          3094    45.1%   0.6208   0.5494
+2022-H2          3137    50.8%   0.6276   0.6192
+2023-H1          3118    38.2%   0.6327   0.4905
+2023-H2          3089    34.2%   0.6440   0.4470
+2024-H1          3093    26.8%   0.6804   0.4422
+2024-H2          3129    27.5%   0.6260   0.3678
+2025-H1          3069    38.1%   0.6022   0.4592
+2025-H2          3129    23.9%   0.6583   0.3484
+2026-H1          2527    29.9%   0.6087   0.3653
+
+INTERPRETACION (cuándo comienza el cambio): la prevalencia se desploma
+bruscamente en el paso 2023-H2/2024-H1 (34.2% -> 26.8%), y a la vez la
+volatilidad (ATR) cae de 0.0014-0.0016 a 0.0011-0.0012. El quiebre coincide
+con 2024 (inicio de TEST) y se mantiene bajo durante 2024-2026, salvo un
+rebote puntual en 2025-H1 (38.1%) que no sostiene (2025-H2 23.9%). El
+periodo de menor positividad y menor volatilidad es 2024-H2 y 2025-H2.
+ROC-AUC se mantiene en todo momento entre ~0.60-0.68 (capacidad de ranking
+estable), mientras PR-AUC cae de forma persistente en 2024-2026
+(típicamente ~0.35-0.44), arrastrado por la baja prevalencia más que por
+una pérdida de poder discriminativo.
+
+## Shift interpretation
+
+Prevalence shift:     STRONG  (positive_rate delta VAL->TEST: -12.67 pp)
+Covariate shift:      MODERATE (large=2, medium=1, small=1; en EMA/ATR/
+                      high_low_range, ligados a precio y volatilidad)
+Concept shift:        NONE    (ROC-AUC delta +0.0015; P(Y|X) por bin estable
+                      con caída uniforme en todos los bins)
+
+## Conclusion
+
+1. ¿La prevalencia cambió significativamente? SI (-12.67 pp, 41.84% -> 29.16%).
+2. ¿Las features cambiaron? SI (MODERATE): EMA_21/EMA_50 (large), ATR
+   (medium), high_low_range (small); las features normalizadas/estructuradas
+   permanecen estables.
+3. ¿Las probabilidades cambiaron? Mínimamente en forma (KS=0.0445, muy
+   pequeña); sí cambia la correspondencia pred->actual (calibración).
+4. ¿ROC-AUC permaneció estable? SI (0.6292 -> 0.6307, delta +0.0015).
+5. ¿PR-AUC cayó principalmente por prevalence/calibration/other?
+   -0.1302. La caída se explica por PREVALENCE shift + CALIBRATION shift
+   (misma capacidad de ranking) y por la baja positividad del nuevo
+   régimen, no por pérdida de poder discriminativo.
+6. ¿Existe evidencia de covariate shift? MODERADA, concentrada en features
+   de escala/volatilidad (EMA, ATR, high_low_range).
+7. ¿Existe evidencia de concept shift? NO (P(Y|X) por bin estable con caída
+   uniforme; ROC-AUC estable).
+8. ¿Cuándo parece comenzar el cambio? A finales de 2023 / inicio de 2024
+   (paso 2023-H2 -> 2024-H1): caída brusca de positivo y de volatilidad;
+   el régimen bajo se mantiene en 2024-2026.
+9. ¿Es necesario investigar retraining periódico? SI (prevalence shift
+   fuerte; conviene un rolling/retraining que absorba el régimen nuevo).
+10. ¿Es necesario investigar calibración? SI (las probabilidades
+    sobreestiman la frecuencia real de positivos en TEST).
+11. ¿Es necesario investigar rolling windows? SI (el shift comienza a
+    fines de 2023 y es persistente; ventanas deslizantes mitigarían la
+    prevalencia de largo plazo).
+
+===============================================================
+CONCLUSION GLOBAL
+===============================================================
+
+Existe un PREVALENCE SHIFT FUERTE entre VALIDATION y TEST (-12.67 pp,
+41.84% -> 29.16%), que comienza a fines de 2023 / inicios de 2024 y es
+persistente. Va acompañado de un COVARIATE SHIFT MODERADO en features de
+escala y volatilidad (EMA_21, EMA_50 con effect size large; ATR medium;
+high_low_range small). La capacidad discriminativa del modelo (ROC-AUC)
+permanece estable (~0.63), por lo que la caída de PR-AUC (-0.1302) se
+explica fundamentalmente por la baja prevalencia y por un CALIBRATION shift
+(las probabilidades sobreestiman la frecuencia de positivos en TEST), NO
+por una pérdida de ranking del modelo. NO hay evidencia de CONCEPT shift:
+la relación P(Y|X) condicionada a bins de feature se mantiene estable, con
+una caída uniforme de la tasa de positivos en todos los bins.
+
+La evidencia favorece la hipótesis de cambio de régimen de mercado
+(prevalencia + volatilidad) sobre una degradación estructural del modelo.
+Las acciones con mayor potencial de fases futuras son: retraining/rolling
+periódico y calibración de probabilidades. Quedan fuera del alcance de esta
+fase.
+
+===============================================================
+QUÉ NO SE HIZO / GARANTIAS
+===============================================================
+
+  [x] no se reentrenó para mejorar resultados
+  [x] no se cambió el modelo de producción
+  [x] no se cambiaron features
+  [x] no se eliminaron ni agregaron features
+  [x] no se cambió el threshold
+  [x] no se cambiaron labels
+  [x] no se cambió el split temporal
+  [x] no se optimizaron hiperparámetros
+  [x] no se hicieron backtesting ni trading simulation
+  [x] no se aplicó weighting / oversampling / undersampling
+  [x] no se implementó ensemble
+  [x] no se aplicó adaptación online
+  [x] no se adaptó el modelo al TEST (TEST = solo evaluación)
+  [x] el análisis es reproducible (scripts/audit_fase3_3.py)

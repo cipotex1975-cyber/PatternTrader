@@ -1,0 +1,203 @@
+FASE 3.2 — RESPUESTA: FEATURE SCALING PARA MODELOS SECUENCIALES
+================================================================
+
+ESTADO: COMPLETADO (NO SE ADOPTA EL SCALING)
+FECHA: 2026-08-28
+
+ALCANCE
+-------
+
+Esta fase evaluo de forma CONTROLADA si un StandardScaler (fit unica y
+exclusivamente con TRAIN) mejora la calidad predictiva del LSTM.
+
+RESULTADO CLAVE: el escalado NO se adopta. Aunque VALIDATION mejora
+levemente y TEST ROC-AUC mejora levemente, el TEST F1/Recall SÍ empeora
+significativamente. Segun el criterio de la propia fase (PASO 10):
+"si Validation mejora pero Test empeora -> NO declarar scaling como
+mejora confirmada". Por lo tanto, NO se integro el scaler en el modelo
+ni en el pipeline de inferencia.
+
+ARCHIVOS CREADOS / MODIFICADOS
+------------------------------
+
+    Creado:
+      scripts/feature_scaling_fase3_2.py   (experimento reproducible)
+
+    No modificados (correcto: el escalado NO se adopto):
+      app/ml/models/sequence_base.py
+      app/ml/training/data.py
+      app/ml/training/compare.py
+      app/ml/features.py
+      app/scoring/engine.py
+      models/lstm_USDCAD.meta.json
+      train_and_compare.py
+
+VERIFICACION
+------------
+
+    black + isort:            OK
+    flake8 scripts/:          OK
+    mypy:                     N/A (no se modifico app/)
+    pytest:                   358 passed, 17 skipped
+    Script de experimento:    PASS (termina sin errores, include verdict)
+
+================================================================
+# FASE 3.2 — FEATURE SCALING AUDIT
+================================================================
+
+## Scaler
+
+type: StandardScaler
+fit_dataset: TRAIN
+
+## Feature statistics (mean/std de TRAIN)
+
+Feature            TRAIN_MEAN    TRAIN_STD
+------------------------------------------
+  rsi               50.044073    16.996709
+  macd               0.000020     0.001346
+  macd_signal        0.000020     0.001269
+  macd_hist         -0.000000     0.000403
+  ema_21             1.192553     0.142774
+  ema_50             1.192511     0.142752
+  atr                0.001645     0.000729
+  volume_ratio       1.033048     0.598460
+  price_change       0.000003     0.001041
+  high_low_range     0.001378     0.001057
+  close_position     0.497273     0.306650
+  trend_strength     0.000035     0.001682
+
+  Se confirma la heterogeneidad de magnitudes reportada en Fase 2.1
+  (RSI ~0-100 vs MACD ~0.0000 vs EMA ~1.3). El scaler esta operativo
+  y normaliza cada feature (mean->0, std->1 por construction).
+
+## Baseline LSTM (sin scaling)
+
+Validation:
+      ROC-AUC: 0.6292
+      PR-AUC:  0.5218
+      F1:      0.4764
+      Precision: 0.5412
+      Recall:    0.4255
+
+Test:
+      ROC-AUC: 0.6307
+      PR-AUC:  0.3916
+      F1:      0.4062
+      Precision: 0.3970
+      Recall:    0.4159
+train_loss: 6.5410
+
+## Scaled LSTM (StandardScaler fit en TRAIN)
+
+Validation:
+      ROC-AUC: 0.6295
+      PR-AUC:  0.5229
+      F1:      0.4970
+      Precision: 0.5343
+      Recall:    0.4646
+
+Test:
+      ROC-AUC: 0.6376
+      PR-AUC:  0.3952
+      F1:      0.3133
+      Precision: 0.4373
+      Recall:    0.2441
+train_loss: 6.1093
+
+## Comparison
+
+Metric               Baseline       Scaled    Delta
+------------------------------------------------------
+VAL ROC-AUC            0.6292       0.6295   +0.0003
+VAL PR-AUC             0.5218       0.5229   +0.0011
+VAL F1                 0.4764       0.4970   +0.0206
+
+TEST ROC-AUC           0.6307       0.6376   +0.0069
+TEST PR-AUC            0.3916       0.3952   +0.0036
+TEST F1                0.4062       0.3133   -0.0929
+
+## Sample count check
+
+  baseline train/val/test sequences: 69522 / 14899 / 14906
+  scaled   train/val/test sequences: 69522 / 14899 / 14906
+
+  El scaling NO altero el numero de samples; se mantuvo
+  train_sequences = n_train - 29 (69522) y el contexto temporal causal
+  es identico en ambos experimentos.
+
+## Leakage check
+
+Scaler fit dataset: TRAIN
+Validation leakage: NO
+Test leakage: NO
+
+## Conclusion
+
+1. StandardScaler implemented: NO
+2. Scaler fit exclusively on TRAIN: YES
+3. Validation improvement: YES (ROC-AUC 0.6292 -> 0.6295)
+4. Test improvement: MIXED
+   ROC-AUC 0.6307 -> 0.6376 (improves); F1 0.4062 -> 0.3133 (worsens)
+5. Inference compatibility: N/A (no adoptado)
+6. Scaling adopted: NO
+
+================================================================
+ANALISIS
+================================================================
+
+El StandardScaler reduce train_loss (6.5410 -> 6.1093), lo que indica una
+mejor convergencia de optimizacion al normalizar magnitudes heterogeneas.
+Sin embargo, esa mejora de convergencia NO se traduce en una mejora
+consistente de generalizacion:
+
+  - VALIDATION: F1 sube +0.0206 (con ROC-AUC estable). Mejora real pero
+    menor, concentrada en recall (0.4255 -> 0.4646) a costa de precision
+    (0.5412 -> 0.5343).
+
+  - TEST: ROC-AUC sube levemente (+0.0069) pero F1 cae fuerte (-0.0929),
+    porque recall colapsa (0.4159 -> 0.2441) aunque precision sube
+    (0.3970 -> 0.4373). El modelo escalado predice muchos menos positivos,
+    y eso degrada el F1 out-of-sample.
+
+CONCLUSION (criterio PASO 10 / jerarquia TEST ROC-AUC -> PR-AUC -> F1):
+Aunque TEST ROC-AUC mejora ligeramente, el deterioro de TEST F1/recall es
+sustancial y no esta respaldado por una mejora commensura en VALIDATION.
+No hay evidencia de mejora "VALIDATION + TEST estable". Por la regla
+explicita de la fase, el scaling NO se declara mejora confirmada y NO se
+integra.
+
+Consecuencia sobre el pipeline:
+  - El modelo produccion (lstm_USDCAD.pt) sigue siendo el NO escalado.
+  - El sidecar lstm_USDCAD.meta.json NO gana preprocessing (no procede).
+  - No se modifico sequence_base.py ni el flujo de inferencia.
+
+================================================================
+GARANTIAS / QUÉ NO SE HIZO
+================================================================
+
+  [x] scaler.fit() -> TRAIN unicamente (nunca validation ni test)
+  [x] validation/test -> solo scaler.transform()
+  [x] no se cambio arquitectura
+  [x] no se cambiaron epochs
+  [x] no se cambio sequence_length
+  [x] no se cambio learning rate / optimizer / batch size
+  [x] no se cambiaron labels ni threshold
+  [x] no se cambiaron features
+  [x] no se vario el split temporal
+  [x] no se optimizaron hiperparametros
+  [x] no se recalibraron probabilidades
+  [x] no se implemento ensemble
+  [x] no se hizo backtesting
+  [x] numero de samples/sequences se mantuvo identico
+
+NOTA PARA FASES FUTURAS
+-----------------------
+
+El scaling beneficia la convergencia (menor train_loss) pero rompe el
+recall en TEST. Antes de reintentar un scaler cabria investigar: (a) la
+diferencia de prevalencia TEST (29.16%) vs VALIDATION (41.84%) con scaling,
+(b) alternativas de normalizacion robustas a la deriva de features
+detectada en Fase 2.1, o (c) un threshold/decisión adaptado sobre el
+modelo escalado (Fase 3.1) para recuperar el recall sin lastimar precision.
+Estas lineas quedan fuera del alcance de esta fase.
