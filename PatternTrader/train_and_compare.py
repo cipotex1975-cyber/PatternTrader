@@ -7,22 +7,28 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 from app.core.config.settings import get_settings  # noqa: E402
 from app.core.logger import get_logger  # noqa: E402
 from app.ml.training import (  # noqa: E402
     FEATURE_NAMES,
+    build_walk_forward_folds,
     create_features,
     create_labels,
     evaluate_winner_on_test,
     format_summary_table,
     load_data,
     run_comparison,
+    run_walk_forward_comparison,
     save_summary,
     save_winner,
+    select_walk_forward_winner,
     select_winner,
     split_chronological,
+    validate_walk_forward_no_future,
 )
 from app.ml.training.compare import AVAILABLE_METRICS  # noqa: E402
 
@@ -173,6 +179,16 @@ async def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--sequence-length", type=int, default=30, help="Longitud de ventana (modelos secuenciales)"
     )
+    parser.add_argument(
+        "--feature-scaling",
+        type=str,
+        default="none",
+        choices=["none", "standard"],
+        help=(
+            "Preprocessing sobre features: none (sin escalar) o standard "
+            "(StandardScaler fit SOLO con TRAIN). Default: none"
+        ),
+    )
     parser.add_argument("--epochs", type=int, default=10, help="Épocas (modelos secuenciales)")
     parser.add_argument(
         "--min-up-moves",
@@ -186,10 +202,12 @@ async def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--walk-forward-splits",
         type=int,
-        default=5,
+        default=1,
         help=(
-            "Número de folds para validación walk‑forward "
-            "(RESERVADO: aún no afecta al entrenamiento)"
+            "Número de folds para validación walk-forward (FASE 5). Default 1 = "
+            "desactivado (selección por VALIDATION de Fase 2). Con N>1 se "
+            "selecciona por la media de la métrica sobre N folds expanding; "
+            "el TEST FINAL queda aislado."
         ),
     )
     parser.add_argument(
@@ -222,10 +240,10 @@ async def main(argv: list[str] | None = None) -> None:
     symbol = args.symbol or derive_symbol(args.data_file)
     timeframe = args.timeframe or derive_timeframe(args.data_file)
 
-    if args.walk_forward_splits != 5:
-        logger.warning(
-            "--walk-forward-splits todavía no tiene efecto en el entrenamiento "
-            "(validación walk-forward pendiente de implementar)"
+    if args.walk_forward_splits > 1:
+        logger.info(
+            f"Modo walk-forward activo: {args.walk_forward_splits} splits "
+            "(selección por media de folds; TEST FINAL aislado)"
         )
     if args.early_stop_rounds != 20:
         logger.warning(
@@ -276,35 +294,82 @@ async def main(argv: list[str] | None = None) -> None:
     for group in args.model or ["all"]:
         model_names.extend(name.strip() for name in group.split(",") if name.strip())
     print(f"\nEntrenando modelos: {', '.join(model_names)} (métrica objetivo: {args.metric})")
-    summary, trained = run_comparison(
-        split.X_train,
-        split.y_train,
-        split.X_validation,
-        split.y_validation,
-        model_names=model_names,
-        metric=args.metric,
-        feature_names=FEATURE_NAMES,
-        sequence_length=args.sequence_length,
-        epochs=args.epochs,
-        settings=settings,
-    )
+
+    walk_forward = args.walk_forward_splits > 1
+
+    if walk_forward:
+        # FASE 5 — Conjunto de selección = TRAIN + VALIDATION (cronológico).
+        X_selection = np.concatenate([split.X_train, split.X_validation], axis=0)
+        y_selection = np.concatenate([split.y_train, split.y_validation], axis=0)
+        wf_folds = build_walk_forward_folds(
+            X_selection,
+            y_selection,
+            n_splits=args.walk_forward_splits,
+            forward_periods=args.forward_periods,
+            min_train_size=100,
+            seq_context=args.sequence_length,
+        )
+        validate_walk_forward_no_future(wf_folds)
+        print(f"\nWalk-forward validation: {len(wf_folds)} folds expanding window")
+
+        summary, trained = run_walk_forward_comparison(
+            X_selection,
+            y_selection,
+            n_splits=args.walk_forward_splits,
+            model_names=model_names,
+            metric=args.metric,
+            feature_names=FEATURE_NAMES,
+            sequence_length=args.sequence_length,
+            epochs=args.epochs,
+            settings=settings,
+            feature_scaling=args.feature_scaling,
+            forward_periods=args.forward_periods,
+        )
+        winner = select_walk_forward_winner(summary, args.metric)
+        winner_metric = winner["metrics"].get(f"wf_mean_{args.metric}") if winner else None
+        eval_context = X_selection
+    else:
+        summary, trained = run_comparison(
+            split.X_train,
+            split.y_train,
+            split.X_validation,
+            split.y_validation,
+            model_names=model_names,
+            metric=args.metric,
+            feature_names=FEATURE_NAMES,
+            sequence_length=args.sequence_length,
+            epochs=args.epochs,
+            settings=settings,
+            feature_scaling=args.feature_scaling,
+        )
+        winner = select_winner(summary, args.metric)
+        winner_metric = winner["metrics"].get(args.metric) if winner else None
+        eval_context = split.X_validation
 
     print("\n" + format_summary_table(summary, args.metric))
 
-    winner = select_winner(summary, args.metric)
     if winner is None:
         print("\nNo hubo modelos exitosos. Revisa los errores arriba.")
         return
 
-    winner_metric = winner["metrics"].get(args.metric)
-
-    print("\nModel selection")
-    print("===============")
-    print("\nSelection dataset : VALIDATION")
-    print(f"Selection metric  : {label}")
-    print("\nWinner:")
-    print(f"  {winner['model']}")
-    print(f"  validation {label} = {winner_metric:.4f}")
+    if walk_forward:
+        print("\nModel selection")
+        print("===============")
+        print("\nSelection dataset : WALK-FORWARD VALIDATION (media de folds)")
+        print(f"Selection metric  : mean {label}")
+        print("\nWinner:")
+        print(f"  {winner['model']}")
+        if winner_metric is not None:
+            print(f"  mean {label} (folds) = {winner_metric:.4f}")
+    else:
+        print("\nModel selection")
+        print("===============")
+        print("\nSelection dataset : VALIDATION")
+        print(f"Selection metric  : {label}")
+        print("\nWinner:")
+        print(f"  {winner['model']}")
+        if winner_metric is not None:
+            print(f"  validation {label} = {winner_metric:.4f}")
 
     # Evaluación única del ganador sobre TEST FINAL (nunca vuelve a selección).
     final_metrics: dict[str, float] = {}
@@ -312,7 +377,7 @@ async def main(argv: list[str] | None = None) -> None:
         final_metrics = evaluate_winner_on_test(
             trained,
             str(winner["model"]),
-            split.X_validation,
+            eval_context,
             split.X_test,
             split.y_test,
             sequence_length=args.sequence_length,
@@ -346,7 +411,7 @@ async def main(argv: list[str] | None = None) -> None:
         artifact_path = ""
         summary_path = ""
 
-    logger.info(f"Winner: {winner['model']} | validation {args.metric}={winner_metric:.4f}")
+    logger.info(f"Winner: {winner['model']} | {label}={winner_metric:.4f}")
     logger.info("Training completed successfully.")
 
     db_registered: bool | None = None
@@ -360,14 +425,24 @@ async def main(argv: list[str] | None = None) -> None:
     print("\n========== RESULTADO ==========")
     print("Training:")
     print("  SUCCESS")
+    print("Preprocessing:")
+    print(f"  mode = {args.feature_scaling}")
+    if args.feature_scaling == "standard":
+        print("  scaler = StandardScaler")
+        print("  fit dataset = TRAIN ONLY")
+        print("  features = 12")
     print("Selection:")
-    print("  dataset = VALIDATION")
-    print(f"  metric = {label}")
+    if walk_forward:
+        print(f"  dataset = WALK-FORWARD VALIDATION ({args.walk_forward_splits} folds)")
+        print(f"  metric = mean {label}")
+    else:
+        print("  dataset = VALIDATION")
+        print(f"  metric = {label}")
     print("Final evaluation:")
     print("  dataset = TEST FINAL")
     print("Winner:")
     print(f"  {winner['model']}")
-    print(f"  validation {args.metric}={winner_metric:.4f}")
+    print(f"  {label} = {winner_metric:.4f}")
     if final_metrics and "roc_auc" in final_metrics:
         print(f"  test {args.metric}={final_metrics['roc_auc']:.4f}")
     if not args.no_save:

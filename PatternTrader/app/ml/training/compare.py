@@ -22,6 +22,11 @@ from app.core.logger import get_logger
 from app.ml.base import BaseMLModel
 from app.ml.factory import MLModelFactory
 from app.ml.training.data import SEQUENCE_MODELS, format_for_model
+from app.ml.training.scaling import (
+    SCALER_SIDECAR_STEM,
+    apply_feature_scaling,
+    scaler_to_artifact,
+)
 
 logger = get_logger("TrainAndCompare")
 
@@ -243,6 +248,7 @@ def run_comparison(
     epochs: int = 10,
     settings: Settings | None = None,
     hyperparams: dict[str, dict[str, Any]] | None = None,
+    feature_scaling: str = "none",
     # TODO(fase 3+): cablear early_stop_rounds/patience en el entrenamiento real y
     # implementar validación walk-forward con walk_forward_splits. Hoy son placeholders.
     early_stop_rounds: int = 20,
@@ -283,6 +289,17 @@ def run_comparison(
     rows: list[dict[str, Any]] = []
     trained: dict[str, BaseMLModel] = {}
 
+    # FASE 4 — Preprocessing reproducible. El scaler (si ``feature_scaling`` es
+    # ``standard``) se ajusta SOLO con TRAIN; VALIDATION y TEST usan ``transform``.
+    # En ``none`` (default) se devuelven las matrices sin tocar y scaler=None.
+    X_tr_scaled, X_val_scaled, _, scaler = apply_feature_scaling(
+        X_train,
+        X_validation,
+        X_validation,
+        mode=feature_scaling,
+        feature_names=feature_names,
+    )
+
     for name in selected:
         try:
             # ---------------------------------------------------------
@@ -290,7 +307,7 @@ def run_comparison(
             # ---------------------------------------------------------
             X_tr, y_tr = format_for_model(
                 name,
-                X_train,
+                X_tr_scaled,
                 y_train,
                 sequence_length,
             )
@@ -303,8 +320,8 @@ def run_comparison(
                 # sequence_length - 1 muestras del train como contexto
                 # histórico para las primeras muestras de la validación.
                 X_ev, y_ev = build_eval_sequences(
-                    X_train,
-                    X_validation,
+                    X_tr_scaled,
+                    X_val_scaled,
                     y_validation,
                     sequence_length,
                 )
@@ -313,7 +330,7 @@ def run_comparison(
                 # mantienen el comportamiento original.
                 X_ev, y_ev = format_for_model(  # type: ignore[assignment]
                     name,
-                    X_validation,
+                    X_val_scaled,
                     y_validation,
                     sequence_length,
                 )
@@ -334,6 +351,8 @@ def run_comparison(
             )
 
             model = MLModelFactory.create_new(name, **kwargs)
+            if scaler is not None and hasattr(model, "_scaler"):
+                model._scaler = scaler
 
             # ---------------------------------------------------------
             # TRAIN
@@ -399,6 +418,187 @@ def run_comparison(
     return summary, trained
 
 
+def run_walk_forward_comparison(
+    X: np.ndarray,
+    y: np.ndarray,
+    n_splits: int,
+    model_names: list[str] | None = None,
+    metric: str = "roc_auc",
+    feature_names: list[str] | None = None,
+    sequence_length: int = 30,
+    epochs: int = 10,
+    settings: Settings | None = None,
+    hyperparams: dict[str, dict[str, Any]] | None = None,
+    feature_scaling: str = "none",
+    forward_periods: int = 5,
+    min_train_size: int = 100,
+) -> tuple[pd.DataFrame, dict[str, BaseMLModel]]:
+    """Validación walk-forward (FASE 5): reentrena cada modelo en N folds expanding.
+
+    Recibe el conjunto de selección (TRAIN+VALIDATION concatenados en orden
+    cronológico) y genera ``n_splits`` folds con ``build_walk_forward_folds``.
+    Para cada modelo y fold:
+
+    - Se aplica el scaler (Fase 4) con ``fit`` SOLO en el train del fold.
+    - Los secuenciales reconstruyen secuencias con el contexto del train del fold.
+    - Se registran las métricas por fold (``fold_<metric>``).
+
+    Selección (fase5.md, sección 7): el ganador se elige por la MEDIA de la
+    métrica objetivo sobre los folds. ``trained`` conserva la instancia del
+    fold más grande (el último), que servirá para evaluar el TEST FINAL aislado.
+
+    Retorna (summary, trained). ``summary`` es un DataFrame con una fila por
+    modelo, las columnas de Fase 2 (model/status/samples...) y los agregados
+    ``wf_*`` (mean/std/min/max por métrica) calculados sobre los folds.
+    """
+    from app.ml.training.walk_forward import (
+        build_walk_forward_folds,
+        validate_walk_forward_no_future,
+    )
+
+    if metric not in AVAILABLE_METRICS:
+        raise ValueError(
+            f"Metric desconocida: {metric}. " f"Válidas: {', '.join(AVAILABLE_METRICS)}"
+        )
+
+    registered = set(MLModelFactory.get_all())
+    if not model_names or "all" in model_names:
+        selected = sorted(registered)
+    else:
+        selected = [name for name in model_names if name in registered]
+    if not selected:
+        raise ValueError(
+            f"No hay modelos válidos entre {model_names}. "
+            f"Registrados: {', '.join(sorted(registered))}"
+        )
+
+    folds = build_walk_forward_folds(
+        X,
+        y,
+        n_splits=n_splits,
+        forward_periods=forward_periods,
+        min_train_size=min_train_size,
+        seq_context=sequence_length,
+    )
+    validate_walk_forward_no_future(folds)
+
+    per_fold: dict[str, list[dict[str, float]]] = {name: [] for name in selected}
+    trained: dict[str, BaseMLModel] = {}
+
+    for name in selected:
+        for fold in folds:
+            X_tr_raw, y_tr_raw = fold.X_train, fold.y_train
+            X_val_raw, y_val_raw = fold.X_validation, fold.y_validation
+
+            X_tr_scaled, X_val_scaled, _, scaler = apply_feature_scaling(
+                X_tr_raw,
+                X_val_raw,
+                X_val_raw,
+                mode=feature_scaling,
+                feature_names=feature_names,
+            )
+
+            kwargs = _model_kwargs(
+                name,
+                feature_names=feature_names,
+                sequence_length=sequence_length,
+                epochs=epochs,
+                settings=settings,
+                hyperparams=hyperparams,
+            )
+            model = MLModelFactory.create_new(name, **kwargs)
+            if scaler is not None and hasattr(model, "_scaler"):
+                model._scaler = scaler
+
+            X_tr, y_tr = format_for_model(name, X_tr_scaled, y_tr_raw, sequence_length)
+            if y_tr is None:
+                raise ValueError(f"{name}: no se pudieron formatear etiquetas de train")
+
+            if name in SEQUENCE_MODELS:
+                X_ev, y_ev = build_eval_sequences(
+                    X_tr_scaled,
+                    X_val_scaled,
+                    y_val_raw,
+                    sequence_length,
+                )
+            else:
+                X_ev, y_ev = format_for_model(  # type: ignore[assignment]
+                    name, X_val_scaled, y_val_raw, sequence_length
+                )
+
+            if y_ev is None:
+                raise ValueError(f"{name}: no se pudieron formatear etiquetas de validation")
+
+            model.train(X_tr, y_tr, feature_names=feature_names)
+            fold_metrics = evaluate_model(model, X_ev, y_ev)
+            per_fold[name].append(fold_metrics)
+
+            # Conservar la instancia entrenada en el fold más grande (el último).
+            if fold.fold_index == len(folds) - 1:
+                trained[name] = model
+
+    # --- Agregados walk-forward por modelo ---
+    wf_metrics = [
+        "accuracy",
+        "precision",
+        "recall",
+        "f1",
+        "roc_auc",
+        "pr_auc",
+    ]
+    rows: list[dict[str, Any]] = []
+    for name in selected:
+        fold_list = per_fold[name]
+        row: dict[str, Any] = {
+            "model": name,
+            "status": "ok" if fold_list else "error: sin folds evaluados",
+            "train_accuracy": float("nan"),
+            "train_loss": float("nan"),
+            "samples_train": 0,
+            "samples_validation": 0,
+            "wf_folds": len(fold_list),
+        }
+        for m in wf_metrics:
+            values = [f[m] for f in fold_list if m in f]
+            if values:
+                arr = np.asarray(values, dtype=np.float64)
+                row[f"wf_mean_{m}"] = float(np.mean(arr))
+                row[f"wf_std_{m}"] = float(np.std(arr))
+                row[f"wf_min_{m}"] = float(np.min(arr))
+                row[f"wf_max_{m}"] = float(np.max(arr))
+            else:
+                row[f"wf_mean_{m}"] = float("nan")
+                row[f"wf_std_{m}"] = float("nan")
+                row[f"wf_min_{m}"] = float("nan")
+                row[f"wf_max_{m}"] = float("nan")
+        rows.append(row)
+
+    summary = pd.DataFrame(rows)
+    if summary.empty:
+        raise RuntimeError("Ningún modelo se evaluó correctamente en walk-forward")
+
+    return summary, trained
+
+
+def select_walk_forward_winner(
+    summary: pd.DataFrame, metric: str = "roc_auc"
+) -> dict[str, Any] | None:
+    """Selecciona al ganador por la MEDIA de la métrica sobre los folds (FASE 5).
+
+    La media ``wf_mean_<metric>`` se computa con las validaciones walk-forward
+    y NO utiliza el TEST FINAL. Sirve para ``save_winner``/``register_in_db``.
+    """
+    mean_col = f"wf_mean_{metric}"
+    if mean_col not in summary.columns:
+        return None
+    valid = summary[summary["status"] == "ok"].copy()
+    valid = valid.dropna(subset=[mean_col])
+    if valid.empty:
+        return None
+    best = valid.loc[valid[mean_col].idxmax()]
+    return {"model": best["model"], "metrics": best.to_dict()}
+
+
 def select_winner(summary: pd.DataFrame, metric: str = "roc_auc") -> dict[str, Any] | None:
     """Elige la fila con mejor métrica objetivo entre los modelos exitosos.
 
@@ -432,18 +632,27 @@ def evaluate_winner_on_test(
     if model is None:
         raise ValueError(f"No hay instancia entrenada para {winner_name}")
 
+    # FASE 4: aplicar el MISMO scaler (fit con TRAIN) a validation y test
+    # antes de construir las secuencias de evaluación final.
+    X_val = X_validation
+    X_te = X_test
+    scaler = getattr(model, "_scaler", None)
+    if scaler is not None:
+        X_val = scaler.transform(X_validation)
+        X_te = scaler.transform(X_test)
+
     X_final: np.ndarray
     y_final: np.ndarray | None
     if winner_name in SEQUENCE_MODELS:
         # Contexto causal: cola de validation para las primeras ventanas de test.
         X_final, y_final = build_eval_sequences(
-            X_validation,
-            X_test,
+            X_val,
+            X_te,
             y_test,
             sequence_length,
         )
     else:
-        X_final, y_final = format_for_model(winner_name, X_test, y_test, sequence_length)
+        X_final, y_final = format_for_model(winner_name, X_te, y_test, sequence_length)
 
     if y_final is None:
         raise ValueError(f"{winner_name}: no se pudieron formatear las etiquetas de test")
@@ -502,8 +711,27 @@ def save_winner(
             if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(float(v))
         }
     sidecar = Path(save_dir) / f"{model_name}_{symbol}.meta.json"
+
+    # FASE 4 — Persistir el preprocessing reproducible. Si el ganador lleva un
+    # scaler (mode=standard, fit TRAIN_ONLY) se guarda su artefacto JSON y se
+    # registra el bloque ``preprocessing`` en el sidecar para rehidratarlo en
+    # serving (raw → scaler → sequence → model).
+    sidecar_extra = ""
+    scaler = getattr(model, "_scaler", None)
+    feature_names = list(getattr(model, "_feature_names", []) or [])
+    if scaler is not None and feature_names:
+        scaler_path = Path(save_dir) / f"{model_name}_{symbol}.{SCALER_SIDECAR_STEM}.json"
+        scaler_path.parent.mkdir(parents=True, exist_ok=True)
+        scaler_path.write_text(
+            json.dumps(scaler_to_artifact(scaler, feature_names), indent=2, default=str)
+        )
+        meta["preprocessing"] = scaler_to_artifact(scaler, feature_names)
+        sidecar_extra = str(scaler_path)
+
     sidecar.write_text(json.dumps(meta, indent=2, default=str))
     logger.info(f"Modelo ganador guardado: {artifact} (metric={metric})")
+    if sidecar_extra:
+        logger.info(f"Scaler de preprocesamiento guardado: {sidecar_extra}")
 
     return str(artifact), str(sidecar)
 

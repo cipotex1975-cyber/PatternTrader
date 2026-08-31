@@ -252,6 +252,8 @@ python train_and_compare.py app/datos_test/USDCAD_H1_201005311000_202606010000.t
 | `--threshold` | 0.001 | Retorno mínimo para label positivo |
 | `--sequence-length` | 30 | Longitud de ventana temporal para modelos secuenciales |
 | `--epochs` | 10 | Épocas de entrenamiento para modelos de PyTorch |
+| `--feature-scaling` | `none` | Preprocessing de features: `none` (sin escalar) o `standard` (StandardScaler fit SOLO con TRAIN) |
+| `--walk-forward-splits` | `1` | Validación walk-forward (Fase 5). Default `1` = desactivado (selección por VALIDATION de Fase 2). Con `N>1` selecciona por la media de la métrica sobre N folds expanding; el TEST FINAL queda aislado |
 | `--db` | `False` | Registrar el ganador en la base de datos y marcarlo como activo |
 | `--no-save` | `False` | No persistir el artefacto ganador en disco |
 
@@ -264,4 +266,48 @@ La Fase 3 del plan (`docs/gap_mejoraS_ml.md`) está implementada:
 - **Pruebas**:
   - Unitarias: `tests/unit/test_scoring.py` (rehidratación por símbolo) y `tests/unit/test_ml_training.py` (CLI completo de `train_and_compare.py`).
   - Integración (requiere Postgres): `tests/integration/test_learning_integration.py` → `register_in_db` activa el ganador del par y desactiva el anterior.
+
+### Preprocessing / Feature Scaling (Fase 4)
+
+La infraestructura de preprocessing reproducible está integrada en `train_and_compare.py` y en el `ScoringEngine`:
+
+- **Flag** `--feature-scaling {none|standard}` (default `none`). Con `standard` se aplica un `StandardScaler` cuyo `fit` se hace **exclusivamente con TRAIN**; VALIDATION y TEST usan únicamente `scaler.transform()` (sin leakage). Con `none` las matrices pasan intactas (default de producción, respeta la conclusión de la Fase 3.2).
+- **Orden documentado**: `raw features → scaler.transform → build sequences → model` (el scaling se aplica antes de construir las ventanas).
+- **Modelos a los que aplica**: sensibles (LSTM, CNN, Transformer, AutoEncoder). No se fuerza en Random Forest, XGBoost, LightGBM ni CatBoost.
+- **Persistencia**: al entrenar con `standard`, el ganador guarda un artefacto `{modelo}_{symbol}.scaler.json` y el sidecar `*.meta.json` registra un bloque `preprocessing`:
+
+  ```json
+  "preprocessing": {
+    "type": "StandardScaler",
+    "features": ["rsi", ... , "trend_strength"],
+    "fitted_on": "TRAIN_ONLY"
+  }
+  ```
+
+- **Serving**: el `ScoringEngine` rehidrata el scaler desde el sidecar al cargar el modelo de un par y lo reaplica en inferencia (`raw → scaler → sequence → model`), garantizando paridad entrenamiento/serving.
+- **Tests**: `tests/unit/test_feature_scaling.py` verifica no-leakage (fit solo TRAIN), orden de features, round-trip sidecar→model y que servir equivale a predecir sobre datos ya escalados.
+
+La activación es **opt-in**: el default sigue siendo `none` para no alterar las métricas actuales. Detalles completos en `docs/mejoras/respuesta_fase4`.
+
+### Walk-Forward Validation (Fase 5)
+
+La validación walk-forward mide la **estabilidad** del modelo a lo largo de
+distintos períodos históricos usando una ventana expanding (sin shuffle, sin
+futuro, sin overlap). Es **opt-in** mediante `--walk-forward-splits N>1`:
+
+- Operación dentro del **conjunto de selección** (`TRAIN + VALIDATION` en orden
+  cronológico); el **TEST FINAL queda aislado** y se evalúa una sola vez al final.
+- Folds contiguos; cada validation fold es estrictamente posterior a su train.
+- Anti-leakage de labels: cada `train_fold` y `validation_fold` recorta sus
+  últimas `forward_periods` muestras (patrón OPCIÓN B de Fase 2). Verificado por
+  `validate_walk_forward_no_future`.
+- **Escaler por fold**: `fit` solo con el train del fold; validation solo
+  `transform()`.
+- **Secuenciales**: se reentrenan en cada fold con su propio context-build.
+- **Selección**: el ganador se elige por la **media de la métrica objetivo sobre
+  los folds** (`select_walk_forward_winner`); el TEST FINAL no participa.
+
+Cada fold reentrena el modelo, lo cual es costoso (sobre todo para LSTM/CNN/
+Transformer); por eso el default es OFF y se recomienda probar con `--model lstm`
+y pocos splits. Detalles completos en `docs/mejoras/respuesta_fase5`.
 

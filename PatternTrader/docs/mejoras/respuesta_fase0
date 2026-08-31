@@ -64,7 +64,7 @@ Respuestas puntuales a los 18 objetivos:
 12. **Guardado**: `save_winner` (compare.py:351): artefacto nativo (.pkl/.json/.cbm/.pt) + sidecar JSON con modelo, símbolo, extensión, métrica, versión, trained_at y métricas numéricas.
 13. **DB**: solo con `--db`: desactiva modelos previos del símbolo y upsert `{modelo}_{symbol}` activo con métricas y metadata (train_and_compare.py:47-80; mlmodel.py).
 14. **Scoring/inferencia**: ScoringEngine rehidrata por símbolo desde sidecar priorizando `trained_at` más reciente (engine.py:94-131); features vivas las calcula `extract_technical_features` (features.py:67); para modelos secuenciales construye una ventana de `seq_len` velas recalculando features por sub-ventana (engine.py:409-441).
-15. **CLI no conectados**: ver sección 4 (`--min-up-moves`, `--walk-forward-splits`, `--early-stop-rounds`, `--patience`).
+15. **CLI no conectados**: ver sección 4 (`--min-up-moves`, `--early-stop-rounds`, `--patience`). Nota: `--walk-forward-splits` ya está conectado desde FASE 5.
 
 ---
 
@@ -74,10 +74,10 @@ Respuestas puntuales a los 18 objetivos:
 |----|----------|---------|-----------|-----------|
 | P01 | `--min-up-moves` declarado pero nunca llega a `create_labels()` (usa default 2) | train_and_compare.py:121-126 vs :164 | MEDIA | `create_labels(df, forward_periods=args.forward_periods, threshold=args.threshold)` omite `min_up_moves=args.min_up_moves` |
 | P02 | Columna `train_accuracy` recibe el LOSS cuando el modelo no devuelve accuracy (secuenciales/anomalía) | compare.py:289-299 | MEDIA | `train_acc=None → float(train_loss)`: LSTM/Transformer/CNN devuelven `{"epochs","loss"}` (sequence_base.py:138), autoencoder también (autoencoder.py:114); isolation_forest devuelve `{"samples","outliers"}` → NaN |
-| P03 | `--walk-forward-splits` muerto en ambos extremos: no se pasa al runner y `run_comparison` lo declara pero jamás lo usa | train_and_compare.py:127-132; compare.py:187 | ALTA | grep: única aparición en compare.py es la firma; no existe validación walk-forward en el flujo |
+| P03 | `--walk-forward-splits` muerto en ambos extremos: no se pasa al runner y `run_comparison` lo declara pero jamás lo usa | train_and_compare.py:127-132; compare.py:187 | ALTA | **RESUELTO → FASE 5**: `--walk-forward-splits N>1` activa la validación walk-forward (expanding window) vía `run_walk_forward_comparison`; el ganador se selecciona por la media de la métrica sobre los folds y el TEST FINAL queda aislado. Ver `docs/mejoras/respuesta_fase5`. |
 | P04 | `--early-stop-rounds` y `--patience` sin efecto: no se pasan y ningún modelo implementa early-stopping real | train_and_compare.py:133-144; sequence_base.py:46,57,127-133 | MEDIA | `SequenceModel._patience` se almacena y nunca se consulta; bucle de entrenamiento recorre siempre todas las épocas; árboles hacen `fit(X,y)` sin eval_set |
 | P05 | El ganador se selecciona con métricas calculadas sobre TEST (selección sesgada / leakage de selección) | compare.py:283-287,335-344; train_and_compare.py:198 | ALTA | No existe conjunto de validación; TEST cumple doble rol (selección + informe) |
-| P06 | No existe scaler/preprocessing: los features se usan crudos y heterogéneos (rsi≈0-100 vs ema/atr≈precios ~1.x) | sequence_base.py:59 (`self._scaler = None` nunca usado); data.py:93 | ALTA para torch/anomalía, BAJA para árboles | Ningún fit de scaler en todo el repo; tampoco se persiste transformación junto al artefacto |
+| P06 | No existe scaler/preprocessing: los features se usan crudos y heterogéneos (rsi≈0-100 vs ema/atr≈precios ~1.x) | sequence_base.py:59 (`self._scaler = None` nunca usado); data.py:93 | ALTA para torch/anomalía, BAJA para árboles | **RESUELTO → FASE 4**: `app/ml/training/scaling.py` implementa `StandardScaler` fit SOLO con TRAIN (opt-in `--feature-scaling standard`), persistido en `{modelo}_{symbol}.scaler.json` + bloque `preprocessing` en el sidecar y rehidratado por el `ScoringEngine` en serving. Ver `docs/mejoras/respuesta_fase4`. |
 | P07 | Primeras ventanas del test usan contexto histórico del train | compare.py:138-170 | SIN LEAKAGE (correcto) | El contexto es estrictamente pasado respecto de cada muestra de test; labels pertenecen solo a y_test; alineación exacta (len(windows)==len(X_test)) |
 | P08 | Labels del tramo final del TRAIN miran hacia adelante y consumen observaciones que caerán en TEST | train_and_compare.py:163-176; data.py:146-155 | MEDIA | Labelado global antes del split: hasta `forward_periods` muestras del fin de train usan highs del periodo de test |
 | P09 | Modelos de anomalía compiten con métricas de clasificación y con semántica inconsistente entre sí | isolation_forest.py:57-66 vs autoencoder.py:128-137 | MEDIA | IF: `p=sigmoid(+decision_function)` → clase "positiva" = punto NORMAL (invertido); AE: `p=sigmoid(error-thr)` → positiva = ANÓMALO. Ambos ignoran `y` al entrenar |
@@ -99,10 +99,9 @@ Respuestas puntuales a los 18 objetivos:
 - **Impacto**: pequeño en volumen (≤ forward_periods muestras) pero contamina la frontera exactamente donde se mide la generalización inmediata.
 - **Corrección**: tras el split, recortar del train las últimas `forward_periods` filas (o reetiquetar respetando el corte).
 
-### L3 — Scaler fit sobre todo el dataset — NO EXISTE (porque no hay scaler)
-- **Explicación**: P06: no hay ninguna normalización. No puede haber leakage de scaler porque no existe.
-- **Impacto**: no de leakage, sino de conditioning: torch y métodos basados en distancia sufren; árboles apenas.
-- **Corrección**: si se introduce scaler, fit SOLO con train y persistirlo dentro del artefacto/sidecar para aplicar idéntico en inferencia.
+### L3 — Scaler fit sobre todo el dataset — CORREGIDO (no hay leakage)
+- **Explicación**: P06 (ausencia de scaler) fue resuelto en FASE 4 (`app/ml/training/scaling.py`). El `StandardScaler` (opt-in `--feature-scaling standard`) hace `fit` SOLO con TRAIN; validation y test usan `scaler.transform()`. El scaler se persiste (`*.scaler.json`) y se reaplica idéntico en inferencia.
+- **Impacto**: sin leakage de preprocessing. Ver `docs/mejoras/respuesta_fase4`.
 
 ### L4 — Look-ahead en features — NO EXISTE
 - **Explicación**: todos los indicadores son retrospectivos (rolling/ewm hacia atrás, pct_change, shift(+)).
@@ -125,13 +124,17 @@ Respuestas puntuales a los 18 objetivos:
 
 ```
 --min-up-moves         → declarado (train_and_compare.py:121) pero NO llega a create_labels()
---walk-forward-splits  → declarado (:127) pero no se pasa a run_comparison ni se usa allí
 --early-stop-rounds    → declarado (:133) pero no se pasa ni ningún árbol lo consume
 --patience             → declarado (:139) pero no se pasa; SequenceModel lo acepta y nunca lo aplica
 ```
 
+> Actualización (FASE 5): `--walk-forward-splits` ya NO es un parámetro muerto.
+> Con `N>1` activa la validación walk-forward implementada en Fase 5 (ver P03
+> y `docs/mejoras/respuesta_fase5`).
+
 Sí están conectados: `--metric`, `--test-size`, `--forward-periods`, `--threshold`,
-`--sequence-length`, `--epochs`, `--symbol/--timeframe/--save-dir/--db/--no-save`.
+`--sequence-length`, `--epochs`, `--feature-scaling`, `--walk-forward-splits`,
+`--symbol/--timeframe/--save-dir/--db/--no-save`.
 
 ---
 
@@ -161,10 +164,15 @@ TEST  = último 20% cronológico (contiguo, sin shuffle)
 - Implementar walk-forward opcional con `walk_forward_splits` dentro del TRAIN para selección robusta.
 - Seleccionar ganador con VALIDACIÓN; TEST solo informe final.
 - Recortar las últimas `forward_periods` filas del TRAIN tras el split (arregla L2/P08).
+- **IMPLEMENTADO → FASE 5**: el walk-forward opcional (expanding window) quedó
+  implementado en la Fase 5 (`app/ml/training/walk_forward.py` +
+  `run_walk_forward_comparison`), seleccionando por la media de la métrica sobre
+  los folds y manteniendo el TEST FINAL aislado. Ver `docs/mejoras/respuesta_fase5`.
 
 ### FASE 3 — Preprocessing reproducible
 - Introducir scaler (Standard/Robust) ajustado SOLO con TRAIN para familias sensibles (torch, anomalía).
 - Persistir el scaler junto al artefacto (dentro del .pt / sidecar) y aplicarlo en inferencia.
+- **IMPLEMENTADO → FASE 4**: la infraestructura de preprocessing reproducible quedó completa en la Fase 4 (`app/ml/training/scaling.py`), con `--feature-scaling none|standard`, fit TRAIN_ONLY, sidecar `preprocessing` y rehidratación en el `ScoringEngine`. Ver `docs/mejoras/respuesta_fase4`.
 
 ### FASE 4 — Paridad entrenamiento/serving de features
 - Corregir `_macd` de `app/ml/features.py` (calcular EMA9 de la serie completa de macd, como en training) y unificar nombres FEATURE_NAMES ↔ TECHNICAL_FEATURE_NAMES.

@@ -1,0 +1,135 @@
+FASE 5 — RESPUESTA: WALK-FORWARD VALIDATION
+============================================
+
+ESTADO: COMPLETADO (OPT-IN, DEFAULT = OFF)
+FECHA: 2026-08-31
+
+ALCANCE
+-------
+
+Esta fase implementa la validación walk-forward (expanding window) que el plan
+`docs/mejoras/fase5` dejaba pendiente (parámetro `--walk-forward-splits`
+declarado pero muerto, gap P03 de Fase 0). Se integra de punta a punta en
+`train_and_compare.py` y selecciona el ganador por la MEDIA de la métrica
+objetivo sobre los folds de validación, manteniendo el TEST FINAL totalmente
+aislado (se evalúa una sola vez al final).
+
+El comportamiento por defecto NO cambia: `--walk-forward-splits 1` (default)
+equivale al flujo de FASE 2 (selección por VALIDATION global). La validación
+walk-forward es OPT-IN al usar `--walk-forward-splits N>1`.
+
+DECISIONES DE DISEÑO (confirmadas con el usuario)
+--------------------------------------------------
+
+1. **Fuente de folds**: el walk-forward opera sobre el conjunto de selección
+   de Fase 2 = `concat(TRAIN, VALIDATION global)` en orden cronológico. El
+   bloque TEST FINAL queda aislado y no participa en ninguna decisión.
+2. **Default OFF**: `--walk-forward-splits N>1` activa el modo; `1` (default)
+   conserva el comportamiento de Fase 2.
+3. **Selección**: el ganador se elige por la media de la métrica objetivo
+   (`--metric`) sobre los folds (`wf_mean_<metric>`), no por el TEST FINAL.
+4. **Secuenciales (LSTM/CNN/Transformer)**: se reentrenan en cada fold, con su
+   propio scaler (fit solo con el train del fold) y su propio context-build.
+5. **Métricas por fold**: `roc_auc, pr_auc, accuracy, precision, recall, f1`;
+   agregados `mean/std/min/max` por métrica.
+
+ARQUITECTURA / INVARIANTS DE FASE 5
+------------------------------------
+
+- Folds contiguos y cronológicos (nunca shuffle).
+- Cada validation fold es estrictamente posterior a su train (sin overlap).
+- Anti-leakage de labels: cada train_fold y validation_fold recorta sus
+  últimas `forward_periods` muestras (patrón OPCIÓN B de Fase 2).
+- Scaler por fold: `fit` solo con el train del fold; validation solo `transform`.
+- TEST FINAL no entra en selección: se evalúa una sola vez al final con el
+  modelo entrenado en el fold más grande (último fold).
+
+ARCHIVOS CREADOS / MODIFICADOS
+-------------------------------
+
+    Creado:
+      app/ml/training/walk_forward.py          (folds expanding + validación no futuro)
+      scripts/walk_forward_fase5.py            (auditoría reproducible)
+      tests/unit/test_walk_forward.py          (11 tests de folds/leakage/selección)
+
+    Modificado:
+      app/ml/training/compare.py               (run_walk_forward_comparison +
+                                                select_walk_forward_winner)
+      app/ml/training/__init__.py              (exporta el módulo walk_forward)
+      train_and_compare.py                     (rama walk-forward en el CLI + OUTPUT)
+
+    No modificados:
+      app/ml/models/*, app/scoring/engine.py, app/ml/features.py, data.py,
+      app/ml/models/sequence_base.py
+      (la selección walk-forward es un modo de entrenamiento; el serving y el
+       guardado del artefacto ganador reutilizan la infraestructura de Fase 4).
+
+VERIFICACION
+------------
+
+    black + isort:            OK
+    flake8 (app/ + tests/ + scripts/): OK (sin errores nuevos)
+    mypy:                     N/A → sin errores NUEVOS en walk_forward.py/compare.py
+                              (los errores restantes son pre-existentes en
+                              app/ml/models/* y app/patterns/*)
+    pytest:                   381 passed (370 previos + 11 nuevos de test_walk_forward)
+    Script de auditoría:      scripts/walk_forward_fase5.py termina sin errores y
+                              emite el OUTPUT del plan FASE 5
+
+================================================================
+# FASE 5 — WALK-FORWARD VALIDATION
+================================================================
+
+## Flujo integrado (modo walk-forward)
+
+    split cronológico (Fase 2) → TRAIN / VALIDATION / TEST FINAL
+    conjunto de selección = TRAIN + VALIDATION (cronológico)
+    → build_walk_forward_folds(selección, n_splits, forward_periods)
+    → por cada modelo y cada fold:
+        scaler.fit(train_fold)  (solo train del fold)
+        format_for_model / build_eval_sequences (contexto del train del fold)
+        model.train + evaluate_model → métricas del fold
+    → agregados wf_mean/wf_std/wf_min/wf_max por métrica
+    → selección del ganador por wf_mean_<metric>
+    → evaluate_winner_on_test (TEST FINAL, UNA sola vez, aislado)
+
+## Anti-leakage en los folds
+
+Cada train_fold termina `forward_periods` muestras antes de la frontera de su
+validation_fold; cada validation_fold recorta sus `forward_periods` finales.
+Así ningún label de un fold usa `high` de un segmento posterior. La función
+`validate_walk_forward_no_future` lo comprueba programáticamente
+(`validation_start > train_end` en cada fold).
+
+## OUTPUT de la auditoría (scripts/walk_forward_fase5.py, dataset real)
+
+Dataset USDCAD H1, TRAIN 69551 / VALIDATION 14899 / TEST FINAL 14906, 12 features.
+
+    ## Folds (expanding window)
+    Fold      TRAIN  VALID t0  VALID t1
+      0          95       100     42270
+      1       42270     42275     84445
+
+    ## Walk-Forward (modelo=lstm, EPOCHS=1, n_splits=2)
+      Folds evaluados : 2
+      ROC-AUC: mean=0.5461 std=0.0489 min=0.4972 max=0.5950
+      PR-AUC : mean=0.4466 std=0.0033
+
+    ## Selección
+      dataset : WALK-FORWARD VALIDATION (media de folds)
+      metric  : mean roc_auc → winner = lstm (mean 0.5461)
+
+    ## FINAL OUT-OF-SAMPLE TEST (aislado)
+      roc_auc=0.6186 pr_auc=0.3643 accuracy=0.6374 f1=0.4242
+
+> Nota: los números son de una corrida rápida de auditoría (EPOCHS=1, 2 folds)
+> y SÓLO ilustran que el pipeline funciona. Con más epochs y splits los valores
+> cambian. El propósito de Fase 5 es medir ESTABILIDAD (mean/std/min/max) del
+> modelo a lo largo de distintos periodos, no optimizar una cifra.
+
+## Rendimiento / costo
+
+Cada fold reentrena el modelo; para los secuenciales esto es lo dominante.
+Por eso el default es OFF y la auditoría usa `--model lstm` (rápido) con pocas
+épocas. Para un análisis de estabilidad completo conviene pocos splits y, si se
+desea, restringir a subconjuntos de modelos.

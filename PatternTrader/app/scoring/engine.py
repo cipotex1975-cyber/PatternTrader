@@ -13,6 +13,7 @@ from app.ml.base import BaseMLModel
 from app.ml.factory import MLModelFactory
 from app.ml.features import extract_technical_features, features_to_dict
 from app.ml.models.random_forest import RandomForestModel
+from app.ml.training.scaling import SCALER_SIDECAR_STEM, load_scaler_sidecar
 from app.patterns.base_pattern import PatternResult
 from app.scoring.models import ScoreComponent, ScoreResult
 
@@ -123,6 +124,24 @@ class ScoringEngine:
                 artifact = model_dir / f"{model_name}_{symbol}{ext}"
                 model = MLModelFactory.create_new(model_name)
                 model.load(str(artifact))
+
+                # FASE 4 — Rehidratar el preprocessing del sidecar: si el modelo se
+                # entrenó con un scaler (fit TRAIN_ONLY), el serving aplica el mismo
+                # scaler sobre features crudas (raw → scaler → sequence → model).
+                preprocessing = meta.get("preprocessing")
+                if (
+                    preprocessing
+                    and preprocessing.get("type") == "StandardScaler"
+                    and hasattr(model, "_scaler")
+                ):
+                    scaler_path = model_dir / f"{model_name}_{symbol}.{SCALER_SIDECAR_STEM}.json"
+                    if scaler_path.exists():
+                        model._scaler = load_scaler_sidecar(str(scaler_path))
+                        logger.info(
+                            f"Adjuntado scaler de preprocesamiento a {model_name} "
+                            f"para {symbol} (fit {preprocessing.get('fitted_on')})"
+                        )
+
                 self._symbol_models[symbol] = model
                 logger.info(f"Loaded per-symbol ML model: {model_name} for {symbol}")
                 return model

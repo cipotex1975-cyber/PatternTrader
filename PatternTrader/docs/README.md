@@ -501,6 +501,16 @@ python train_and_compare.py app/datos_test/USDCAD_H1_201005311000_202606010000.t
   --db
 ```
 
+Preprocessing opcional y reproducible (Fase 4): añade `--feature-scaling standard`
+para normalizar features con un `StandardScaler` ajustado **solo con TRAIN** (sin
+leakage) y persistir el scaler en el sidecar del modelo. El default es `none`;
+más detalles en `docs/mejoras/respuesta_fase4` y `docs/MODEL_TRAINING.md`.
+
+Validación walk-forward (Fase 5): añade `--walk-forward-splits N` (N>1) para
+evaluar la estabilidad del modelo en N folds expanding y seleccionar al ganador
+por la media de la métrica sobre los folds, manteniendo el TEST FINAL aislado.
+Default `1` (desactivado). Detalles en `docs/mejoras/respuesta_fase5`.
+
 1. Crear archivo en `app/patterns/reversal/` o `app/patterns/continuation/`
 2. Heredar de `BasePattern`
 3. Implementar métodos abstractos

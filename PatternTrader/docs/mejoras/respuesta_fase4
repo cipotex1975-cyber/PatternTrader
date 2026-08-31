@@ -1,0 +1,175 @@
+FASE 4 — RESPUESTA: PREPROCESSING Y SCALING REPRODUCIBLE
+=========================================================
+
+ESTADO: COMPLETADO (INFRAESTRUCTURA ADITIVA, OPT-IN; DEFAULT = none)
+FECHA: 2026-08-31
+
+ALCANCE
+-------
+
+Esta fase implementa la infraestructura de preprocessing reproducible que
+permite entrenar y servir modelos con un `StandardScaler` cuyo fit se hace
+EXCLUSIVAMENTE con TRAIN (sin leakage). Queda integrada de punta a punta:
+
+    raw features → scaler.fit(TRAIN ONLY) → transform(validation/test)
+    → build sequences → model
+
+y su contraparte en SERVING:
+
+    raw features → cargar scaler → transform → sequence → model
+
+El default de producción se mantiene en `--feature-scaling none`. Esto
+respeta la conclusión de la FASE 3.2, que ya evaluó el StandardScaler sobre
+el LSTM y NO lo adoptó (mejoraba convergencia y Test ROC-AUC, pero degradaba
+Test F1/recall). La infraestructura es OPT-IN y aditiva: con `none` el
+artefacto y las métricas actuales no cambian.
+
+ARCHIVOS CREADOS / MODIFICADOS
+------------------------------
+
+    Creado:
+      app/ml/training/scaling.py               (helper de scaling reproducible)
+      scripts/scaling_fase4.py                 (auditoría reproducible)
+      tests/unit/test_feature_scaling.py       (tests de scaling/leakage/serving)
+
+    Modificado:
+      app/ml/training/__init__.py              (exporta el módulo scaling)
+      app/ml/training/compare.py               (run_comparison/evaluate_winner_on_test/
+                                                save_winner integran el scaler)
+      app/ml/models/sequence_base.py           (aplica el scaler en prepare/get_prediction)
+      app/scoring/engine.py                    (rehidrata el scaler del sidecar en serving)
+      train_and_compare.py                     (flag --feature-scaling + bloque OUTPUT)
+
+    No modificados:
+      app/ml/models/lstm_model.py, cnn_model.py, transformer_model.py,
+      autoencoder.py, isolation_forest.py, random_forest.py, xgboost_model.py,
+      lightgbm_model.py, catboost_model.py, app/ml/features.py, data.py
+
+VERIFICACION
+------------
+
+    black + isort:            OK
+    flake8 (app/ + tests/ + scripts/): OK (sin errores nuevos)
+    mypy:                     N/A → sin errores NUEVOS (los 2 de sequence_base
+                              son pre-existentes y quedan intactos)
+    pytest:                   370 passed, 17 skipped
+    Script de auditoría:      scripts/scaling_fase4.py termina sin errores y
+                              emite el OUTPUT del plan FASE 4
+
+================================================================
+# FASE 4 — PREPROCESSING / SCALING REPRODUCIBLE
+================================================================
+
+## Decisión de diseño documentada (plan, sección 4)
+
+El scaling ocurre ANTES de construir las ventanas:
+
+    raw features (2D, por vela)
+    → scaler.transform
+    → build sequences (3D)
+
+En el pipeline de entrenamiento el scaler se aplica a los arrays 2D de
+TRAIN/VALIDATION/TEST antes de `format_for_model`/`build_eval_sequences`.
+En el modelo (`SequenceModel`) el scaler se aplica a las features crudas 2D
+antes del reshape a secuencia, de modo que SERVING produce exactamente las
+mismas features escaladas que TRAIN (consistencia total).
+
+## Scaler
+
+Tipo: StandardScaler
+Opciones soportadas:
+  --feature-scaling none      (default; devuelve matrices sin tocar)
+  --feature-scaling standard  (fit SOLO con TRAIN)
+Aplica a: LSTM, CNN, Transformer y AutoEncoder (modelos torch sensibles).
+Isolation Forest: los modelos "anomaly" (AutoEncoder/isolation_forest) reciben
+la mecánica de scaler via `_scaler`; se aplica si el sidecar lo declara.
+No se fuerza en RMB/XGBoost/LightGBM/CatBoost (plan, sección 1).
+
+## Leakage (plan, sección 3)
+
+  scaler.fit()  →  TRAIN (única y exclusivamente)
+  validation    →  scaler.transform()
+  test          →  scaler.transform()
+  Nunca scaler.fit(X_train + validation + test)
+
+Verificado en `tests/unit/test_feature_scaling.py`:
+  - el scaler devuelto coincide con `StandardScaler().fit(X_train)` (referencia
+    aislada); media/desviación dependen sólo de TRAIN.
+  - transform(validation) == scaler.transform(validation) con el scaler de TRAIN.
+  - test nunca entra en el fit.
+
+## Secuencias (plan, sección 4)
+
+Orden confirmado empíricamente:
+  TRAIN   : transform(TRAIN) → build_sequences → 69522 secuencias
+  VALID   : transform(VALID) → build (con contexto histórico de train)
+  TEST    : transform(TEST)  → build (con contexto histórico de validation)
+Las primeras ventanas de VALIDATION/TEST usan contexto cronológico causal del
+segmento anterior (ya transformado con el MISMO scaler), lo que NO es leakage.
+
+## Artifacto / Sidecar (plan, secciones 5 y 6)
+
+Con `--feature-scaling standard` el ganador persiste:
+  {modelo}_{symbol}.scaler.json        (params mean_/scale_/var_ + features)
+y el sidecar `*.meta.json` registra:
+
+  "preprocessing": {
+    "type": "StandardScaler",
+    "features": [rsi, macd, ..., trend_strength],
+    "fitted_on": "TRAIN_ONLY"
+  }
+
+El `ScoringEngine` lee el bloque `preprocessing` del sidecar al cargar cada
+modelo de un par, rehidrata el scaler desde `*.scaler.json` y lo adjunta al
+modelo. Desde entonces SERVING hace: raw → scaler → sequence → model.
+
+## Output del script reproducible (scripts/scaling_fase4.py)
+
+Dataset      : USDCAD H1 (TRAIN 69551 / VALIDATION 14899 / TEST 14906)
+Scaler       : StandardScaler (fit TRAIN ONLY)
+Features     : 12
+Validation transformed: YES
+Test transformed: YES
+Test used for scaler fitting: NO
+Scaler rehydratable en serving: YES
+
+Leakage check del script:
+  |transform(val por TRAIN) − transform(val por VAL)| mean = 0.204315
+  (>0 confirma que NO se refitea con validation).
+
+LSTM demos (3 epochs, escalado):
+  Validation ROC-AUC: 0.6509 | Test ROC-AUC: 0.6697 | Test F1: 0.3198
+  (SÓLO demostrativo de que el pipeline opera; no es un bench de adopción.)
+
+================================================================
+CONCLUSION
+================================================================
+
+La infraestructura de preprocessing reproducible queda completa y operativa:
+un `StandardScaler` se ajusta con TRAIN, se aplica por transform sobre
+validation/test antes de construir secuencias, se persiste en un artefacto
+`*.scaler.json` y se declara en el sidecar (`preprocessing`), y el serving lo
+rehidrata y reaplica idénticamente (raw → scaler → sequence → model). Los
+tests verifican el no-leakage (fit sólo TRAIN), el orden de features, y que el
+modelo durante inferencia equivale a predecir sobre datos ya escalados.
+
+El DEFAULT de producción permanece `--feature-scaling none`. Esta fase NO
+declara el scaling como mejora adoptada: sólo proporciona la vía reproducible
+para activarlo por modelo/perímetro (`--feature-scaling standard`) cuando un
+bench futuro lo justifique, sin romper la conclusión de la FASE 3.2.
+
+================================================================
+QUÉ NO SE HIZO / GARANTIAS
+================================================================
+
+  [x] no se cambió el default de producción (sigue siendo none)
+  [x] no se modificaron features, labels, threshold ni split
+  [x] no se cambió la arquitectura de los modelos
+  [x] no se reentrenó para mejorar resultados (el LSTM demo es ilustrativo)
+  [x] no se adoptó el scaler como mejora confirmada (queda opt-in, FASE 3.2)
+  [x] scaler.fit() → TRAIN únicamente
+  [x] validation y test → solo scaler.transform()
+  [x] feature order coincide con FEATURE_NAMES (12)
+  [x] serving usa el MISMO scaler (round-trip sidecar → modelo)
+  [x] backtest y trading simulation NO se ejecutaron ni se alteraron
+  [x] el análisis es reproducible (scripts/scaling_fase4.py)

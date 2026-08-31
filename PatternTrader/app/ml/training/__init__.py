@@ -8,8 +8,10 @@ from app.ml.training.compare import (  # noqa: F401
     format_summary_table,
     metrics_at_threshold,
     run_comparison,
+    run_walk_forward_comparison,
     save_summary,
     save_winner,
+    select_walk_forward_winner,
     select_winner,
 )
 from app.ml.training.data import (  # noqa: F401
@@ -22,14 +24,33 @@ from app.ml.training.data import (  # noqa: F401
     load_data,
     split_chronological,
 )
+from app.ml.training.scaling import (  # noqa: F401
+    SCALER_SIDECAR_STEM,
+    SUPPORTED_SCALING_MODES,
+    apply_feature_scaling,
+    load_scaler_sidecar,
+    save_scaler_sidecar,
+    scaler_from_artifact,
+    scaler_to_artifact,
+)
+from app.ml.training.walk_forward import (  # noqa: F401
+    WalkForwardFold,
+    build_walk_forward_folds,
+    validate_walk_forward_no_future,
+)
 
 __all__ = [
     "AVAILABLE_METRICS",
     "MODEL_EXTENSIONS",
     "FEATURE_NAMES",
     "SplitResult",
+    "SCALER_SIDECAR_STEM",
+    "SUPPORTED_SCALING_MODES",
+    "WalkForwardFold",
+    "apply_feature_scaling",
     "build_eval_sequences",
     "build_sequences",
+    "build_walk_forward_folds",
     "classify_with_threshold",
     "create_features",
     "create_labels",
@@ -38,10 +59,17 @@ __all__ = [
     "format_for_model",
     "format_summary_table",
     "load_data",
+    "load_scaler_sidecar",
     "metrics_at_threshold",
     "run_comparison",
+    "run_walk_forward_comparison",
+    "save_scaler_sidecar",
     "save_summary",
     "save_winner",
+    "scaler_from_artifact",
+    "scaler_to_artifact",
     "select_winner",
+    "select_walk_forward_winner",
     "split_chronological",
+    "validate_walk_forward_no_future",
 ]

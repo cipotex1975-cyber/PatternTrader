@@ -94,6 +94,10 @@ class SequenceModel(BaseMLModel):
     def _prepare(self, X: np.ndarray) -> np.ndarray:
         X = np.asarray(X, dtype=np.float32)
         if X.ndim == 2:
+            # FASE 4: aplicar el scaler fit en TRAIN (si existe) sobre features
+            # crudas antes de construir la secuencia (raw → scaler → sequence).
+            if self._scaler is not None and X.shape[1] == self._feature_dim:
+                X = self._scaler.transform(X).astype(np.float32)
             if X.shape[1] == self._sequence_length * self._feature_dim:
                 X = X.reshape(X.shape[0], self._sequence_length, self._feature_dim)
             else:
@@ -189,6 +193,12 @@ class SequenceModel(BaseMLModel):
             raise ValueError("Model is not trained yet")
 
         features = np.asarray(features, dtype=np.float32)
+        if (
+            self._scaler is not None
+            and features.ndim == 2
+            and features.shape[1] == self._feature_dim
+        ):
+            features = self._scaler.transform(features).astype(np.float32)
         if features.ndim == 1:
             if features.size == self._sequence_length * self._feature_dim:
                 features = features.reshape(1, self._sequence_length, self._feature_dim)
