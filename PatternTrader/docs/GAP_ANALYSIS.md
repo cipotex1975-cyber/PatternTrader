@@ -8,7 +8,7 @@
 
 ## Resumen Ejecutivo
 
-PatternTrader tiene una **base sólida y completa**: la arquitectura Clean/DDD está bien implementada, el backtesting es el módulo más maduro y completo, y hay **337 tests** unitarios, de integración y E2E que se ejecutan exitosamente. Desde la auditoría inicial se han cerrado todas las fases: Fases 1-4 (bugs de runtime, arquitectura de estrategias, ciclo de vida completo, persistencia/API real), Fase 5 (patrones 8→21, modelos ML 1→9, `score()` eliminado), Fase 6 (`StrategyManager` con gestión runtime + API, dedup de señales, cooldown, confirmación de entrega, Telegram avanzado y RiskEngine con sector/correlación) y **Fase 7 completada** (configuración centralizada y validación de calidad).
+PatternTrader tiene una **base sólida y completa**: la arquitectura Clean/DDD está bien implementada, el backtesting es el módulo más maduro y completo, y hay **337 tests** unitarios, de integración y E2E que se ejecutan exitosamente. Desde la auditoría inicial se han cerrado todas las fases: Fases 1-4 (bugs de runtime, arquitectura de estrategias, ciclo de vida completo, persistencia/API real), Fase 5 (patrones 8→21, modelos ML 1→9, `score()` eliminado), Fase 6 (`StrategyManager` con gestión runtime + API, dedup de señales, cooldown, confirmación de entrega, Telegram avanzado y RiskEngine con sector/correlación), **Fase 7 completada** (configuración centralizada y validación de calidad), **Fase 8 completada** (barrido de robustez de la definición del label sobre TRAIN/VALIDATION + walk-forward), **Fase 9 completada** (reproducibilidad: semillas globales, sidecar `.meta.json` rico con hash del dataset, versions de software y git SHA) y **Fase 10 completada** (evaluación final out-of-sample: tabla de validación walk-forward, selección por media de folds, test final aislado con comparación histórica y clasificación de la señal) y **Fase 11 completada** (promoción segura a producción: `--db` registra como inactivo por defecto y el nuevo flag `--promote` realiza la activación explícita y atómica).
 
 Estado por módulo:
 
@@ -361,6 +361,32 @@ Reglas implementadas: breakout, volume, ATR, trend, R/R, liquidity, distance-to-
 2. Consumo de `walk_forward_splits` y `monte_carlo_simulations` desde la API de validación y backtesting. ✅
 3. Limpieza de código y verificación robusta. ✅
 4. Suite completa de 337 tests (unitarios, integración y E2E) cubriendo motores, repositorios, pipelines, estrategias y API. ✅
+
+### Fase 8 — Robustez de la definición del label (COMPLETADA)
+1. Barrido `threshold` (4 valores) × `min_up_moves` (3 valores) con `forward_periods=5` fijo (12 configs) sobre TRAIN/VALIDATION + walk-forward. ✅
+2. Métricas por config: positive_ratio, mean/std validation AUC y PR-AUC; tabla y diagnóstico ROBUSTA/FRÁGIL/DÉBIL sin tocar TEST FINAL. ✅
+3. Motor `run_label_sweep` + modo CLI exclusivo `--label-sweep` y tests (`tests/unit/test_fase8.py`). ✅
+4. Detalle: `docs/mejoras/respuesta_fase8`. ✅
+
+### Fase 9 — Reproducibilidad y Model Metadata (COMPLETADA)
+1. Semillas globales (Python/NumPy/PyTorch) fijadas con `seed_all()` + flag CLI `--seed`. ✅
+2. Sidecar `.meta.json` enriquecido con `dataset` (SHA-256), `features`, `label`, `preprocessing`, `sequence`, `training`, `validation`, `test`, `selection`, `software`, `git.commit_sha` y `random_seed` vía `build_model_sidecar_context()`. ✅
+3. Hash del archivo de datos (`SHA-256`) para detectar "mismo nombre, contenido diferente". ✅
+4. Integración en `save_winner()` + exports y tests (`tests/unit/test_reproducibility.py`). ✅
+5. Detalle: `docs/mejoras/respuesta_fase9`. ✅
+
+### Fase 10 — Evaluación Final Out-of-Sample (COMPLETADA)
+1. Tabla de VALIDATION walk-forward (`MODEL | MEAN_AUC | STD_AUC | MEAN_PR_AUC`) vía `format_walk_forward_table()`. ✅
+2. Selección exclusiva por media de la métrica sobre los folds (walk-forward) o VALIDATION; TEST FINAL nunca participa. ✅
+3. Evaluación única del ganador sobre TEST FINAL (`evaluate_winner_on_test`) con comparación histórica frente al experimento original (LSTM TEST=0.6513) y su aclaración OOS. ✅
+4. Conclusión/clasificación de la señal (`classify_signal`: ROBUST/POSSIBLE/WEAK/NO EVIDENCE) sin afirmar rentabilidad. ✅
+5. Tests (`tests/unit/test_fase10.py`) y detalle en `docs/mejoras/respuesta_fase10`. ✅
+
+### Fase 11 — Promoción Segura a Producción (COMPLETADA)
+1. `--db` ya NO activa automáticamente: registra el modelo como INACTIVO sin tocar el activo previo. ✅
+2. Nuevo flag `--promote`: solo `--db --promote` activa el modelo (promoción explícita). ✅
+3. Mitigación FASE 1.1: transacción única (deactivate + upsert activo) en `MLModelRepository.promote()` para evitar dejar el símbolo sin modelo activo si la conexión falla a medias. ✅
+4. Tests (`MLModelRepository.promote`, `TestDBRegistration` con `--db`/`--promote`, integración) y detalle en `docs/mejoras/respuesta_fase11`. ✅
 
 ---
 

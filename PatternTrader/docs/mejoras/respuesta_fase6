@@ -1,0 +1,263 @@
+FASE 6 — RESPUESTA (PLAN): EARLY STOPPING REAL
+===============================================
+
+ESTADO: PLAN (IMPLEMENTADO)
+FECHA: 2026-09-01
+
+OBJETIVO
+--------
+
+Implementar early stopping real de punta a punta, tal y como prescribe
+`docs/mejoras/fase6`:
+
+- Modelos secuenciales (LSTM, CNN, Transformer): usar VALIDATION durante el
+  entrenamiento, nunca TEST.
+- Early stopping por validation loss con patience.
+- Checkpoint: guardar/restaurar el MEJOR estado (best_validation_loss), no el
+  último epoch.
+- Reportar train_loss, validation_loss, train_accuracy, validation_accuracy.
+- Árboles (XGBoost, LightGBM, CatBoost): eval_set + early stopping nativo,
+  sin inventar parámetros incompatibles con la versión instalada.
+- Output epoch-a-epoch + bloque "Early stopping".
+- Tests que verifiquen: validation, no-TEST, checkpoint = mejor validation,
+  patience detiene el entrenamiento.
+
+ALCANCE / FUERA DE ALCANCE
+--------------------------
+
+DENTRO:
+  LSTM, CNN, Transformer (secuenciales — sección 1-4, 6, 7 del plan).
+  XGBoost, LightGBM, CatBoost (árboles — sección 5).
+
+FUERA (documentado como decisión):
+  RandomForest e IsolationForest no tienen early stopping nativo y NO están
+  listados en la especificación; no se les inventa ES.
+  AutoEncoder tampoco está en la especificación (modelo de anomalía); se deja
+  su bucle fijo sin cambios en esta fase.
+
+VERSIÓNES INSTALADAS (verificar con la API real de cada librería)
+-----------------------------------------------------------------
+
+  xgboost 3.4.0      → `early_stopping_rounds` y `eval_set` en `fit()`.
+  lightgbm 4.7.0     → usar `callbacks=[early_stopping(rounds=N)]` + `eval_set`
+                       (pasar `early_stopping_rounds` directo da deprecation).
+  catboost 1.2.10    → `eval_set` + `early_stopping_rounds` + `use_best_model=True`.
+  torch 2.13.0       → ES manual en el bucle (no hay callback de librería).
+
+DIAGNÓSTICO DEL ESTADO ACTUAL (código verificado)
+-------------------------------------------------
+
+  1. app/ml/models/sequence_base.py:107-142  `SequenceModel.train()`:
+     - bucle fijo `range(self._epochs)` (línea 131); **no recibe X_val/y_val**.
+     - `**kwargs` (línea 112) se ignoran; no hay camino para validación.
+     - `patience` (constructor línea 46/57) se almacena pero **nunca se lee**.
+     - `self._config()` (línea 74-83) **no persiste patience**.
+     - BUG de métrica (línea 140): `avg_loss = total_loss / len(loader)` suma
+       pérdida de TODOS los epochs pero divide por batches/epoch → el loss
+       reportado queda inflado ~ × epochs.
+     - `save()` (línea 169-175) serializa el estado del ÚLTIMO epoch; no hay
+       checkpoint del mejor estado.
+  2. Árboles: app/ml/models/xgboost_model.py:59, lightgbm_model.py:61,
+     catboost_model.py:59 — `self._model.fit(X, y)` sin `eval_set`.
+  3. compare.py:252-256: parámetros `early_stop_rounds`/`patience` **muertos** +
+     TODO obsoleto. compare.py:360 `model.train(...)` solo recibe train.
+  4. train_and_compare.py:213-224: flags `--early-stop-rounds`/`--patience`
+     declarados; líneas 248-253 emiten "RESERVADO: aún no afecta".
+  5. Sin tests de early stopping; test existente
+     `test_sequence_models_report_train_loss_without_accuracy`
+     (tests/unit/test_ml_training.py:196-211) quedará obsoleto al añadir
+     train_accuracy.
+  6. El TEST FINAL ya está aislado (Fase 2/5, verificado por
+     TestValidationSemantics/TestFinalEvaluation). Fase 6 debe mantenerlo.
+
+DECISIONES DE DISEÑO
+--------------------
+
+  1. La validación usada durante el entrenamiento = el MISMO bloque VALIDATION
+     de Fase 2 (el que ya se usa para selección en `run_comparison`). El TEST
+     FINAL no se pasa nunca al `train()`. Para secuenciales se reutilizan las
+     ventanas ya construidas por `build_eval_sequences` (X_ev/y_ev), que usan
+     como contexto causal las últimas `sequence_length-1` filas del train
+     (patrón Fase 2, sin leakage).
+  2. La señal de early stopping es la **validation loss** (CrossEntropy para
+     secuenciales; loss nativa de cada librería para árboles).
+  3. Checkpoint = `deepcopy(model.state_dict())` del mejor epoch; al terminar
+     (fin de epochs o early stop) se hace `model.load_state_dict(best_state)`
+     ANTES de `save()`. Así el artefacto `.pt` guarda el mejor estado.
+  4. `patience` y `early_stopping_rounds` viajan por `_model_kwargs` y entran
+     al constructor de los wrappers (no al constructor de la librería).
+     `X_val`/`y_val` viajan como kwargs del `train()`.
+  5. Defaults conservadores: sequence `patience=5`, árbol `early_stop_rounds=0`
+     (desactivado a menos que el usuario pase `--early-stop-rounds N>0`).
+     `--patience` aplica solo a secuenciales; `--early-stop-rounds` solo a
+     árboles. Mismo flag, familias distintas (igual que el plan Fase 6).
+  6. Se corrige el bug del avg_loss (÷ batches totales reales o acumulándolo
+     por epoch) de paso, porque Fase 6 exige reportar loss por epoch decente.
+
+PLAN DE IMPLEMENTACIÓN POR ARCHIVO
+----------------------------------
+
+## 1. SEQUENCE MODELS (LSTM / CNN / Transformer)
+
+`app/ml/models/sequence_base.py`:
+
+  a) `train()` acepta `X_val: np.ndarray | None` y `y_val` por kwargs
+     (extraídos de `**kwargs`). Si vienen, habilita validación en el bucle.
+  b) Construir un val-loader: `TensorDataset + DataLoader(shuffle=False)`,
+     reusando `self._prepare()` (las ventanas ya llegan escaladas; `_prepare`
+     pasa 3D sin tocar). Si no se pasa validación, el modelo entrena sin ES
+     (comportamiento actual + pérdida arreglada).
+  c) Bucle por epoch:
+       - train: loss + accuracy (acumuladas con/normalizadas por nº de batches).
+       - val (si existe): `model.eval()` + `torch.no_grad()` → val_loss +
+         val_accuracy, luego `model.train()`.
+       - log por epoch: `Epoch {i:02d}/{epochs} train_loss=.. val_loss=.. train_acc=.. val_acc=..`
+       - si val_loss baja del mejor en margen (estricto `<`), guardar
+         `deepcopy(state_dict)` + `best_epoch`; resetear contador patience.
+       - si no mejora, `patience_counter += 1`; al llegar a `self._patience`
+         → **early stop** (`logger` + break).
+  d) Al salir del bucle: si existe best_state → `model.load_state_dict(best_state)`
+     (checkpoint ⇒ el `save()` posterior persiste el MEJOR estado).
+  e) Retorno: `{"epochs", "train_loss", "validation_loss", "train_accuracy",
+     "validation_accuracy", "best_epoch", "best_validation_loss",
+     "early_stopping": bool, "patience": self._patience}` con NaN donde no
+     haya validación.
+  f) `_config()` añade `patience`, `best_epoch`, `best_validation_loss`;
+     `_apply_config()` los lee. LSTM `load()` (lstm_model.py:48-66) también
+     debe restaurarlos (es el único subclase que sobreescribe `load`) — o
+     delegar a una utilidad compartida.
+  g) Fix avg_loss (línea 140): dividir por el nº REAL de batches
+     (acumular `nb` o promediar por epoch) para no inflar el loss.
+
+Sin cambios en CNN/Transformer (heredan de SequenceModel) salvo confirmar
+que no rompen el roundtrip save/load con la config ampliada.
+
+## 2. ÁRBOLES (XGBoost / LightGBM / CatBoost)
+
+Patrón común: el wrapper recibe `early_stopping_rounds` como kwarg del
+constructor (`kwargs.pop` ANTES de pasarlo a la librería) y `X_val`/`y_val`
+como kwargs del `train()`.
+
+  a) `app/ml/models/xgboost_model.py`:
+       - `train(X, y, feature_names=None, X_val=None, y_val=None, **kwargs)`.
+       - si `X_val is not None` y `self._early_stopping_rounds > 0`:
+         `self._model.fit(X, y, eval_set=[(X_val, y_val)], early_stopping_rounds=..., verbose=False)`.
+         Si solo hay eval_set sin rounds → fit con eval_set + verbose=False.
+       - tras fit, `best = getattr(self._model, "best_iteration", None)`.
+         `validation_accuracy = self._model.score(X_val, y_val)`.
+       - retorno incluye `validation_accuracy`, `best_iteration`.
+  b) `app/ml/models/lightgbm_model.py` (v4.7.0):
+       - `from lightgbm import early_stopping`
+       - `self._model.fit(X, y, eval_set=[(X_val, y_val)], callbacks=[early_stopping(self._early_stopping_rounds, verbose=False)])`
+       - `best_iteration` + `validation_accuracy` en el retorno.
+       - NO pasar `early_stopping_rounds` directo a fit (deprecation en v4).
+  c) `app/ml/models/catboost_model.py` (v1.2.10):
+       - `self._model.fit(X, y, eval_set=(X_val, y_val), early_stopping_rounds=..., use_best_model=True, verbose=0)`
+       - `use_best_model=True` deja el modelo en su mejor iteración
+         (también aplica a `save_model`).
+       - `best_iteration` → `_best_iteration_` + `validation_accuracy` en retorno.
+  d) RandomForest / IsolationForest: sin cambios (no hay ES nativo; fuera de
+     alcance según especificación).
+
+## 3. WIRING EN `app/ml/training/compare.py`
+
+  a) `_model_kwargs(...)`: añadir ramas
+       - secuenciales (lstm/transformer/cnn): `kwargs["patience"] = patience` (nuevo param `patience: int = 5`).
+       - árboles (xgboost/lightgbm/catboost): `kwargs["early_stopping_rounds"] = early_stop_rounds`.
+  b) `run_comparison(...)`:
+       - quitar el TODO (líneas 252-256) y usar los params reales.
+       - llamada `model.train(X_tr, y_tr, feature_names=..., X_val=X_ev, y_val=y_ev)`.
+       - añadir a la fila del summary (línea 378-385): `train_loss`,
+         `validation_loss`, `train_accuracy`, `validation_accuracy`,
+         `best_epoch`, `best_validation_loss` (NaN si no aplica).
+  c) `run_walk_forward_comparison(...)`: misma llamada en la línea 532 con
+     `X_val=X_ev, y_val=y_ev` y pasar `early_stop_rounds`/`patience` a
+     `_model_kwargs`.
+
+## 4. CLI `train_and_compare.py`
+
+  a) Help strings: quitar "RESERVADO: aún no afecta" y describir uso real.
+  b) Borrar warnings de las líneas 248-253.
+  c) Pasar `early_stop_rounds=args.early_stop_rounds`, `patience=args.patience`
+     a `run_comparison` y `run_walk_forward_comparison`.
+  d) OUTPUT (especificación sección 6): tras entrenar al ganador, emitir
+     bloque para el modelo ganador si aplica:
+         Early stopping:
+           enabled: true|false
+           patience: 5
+           best_epoch: 12
+           best_val_loss: 0.601
+     (los logs epoch-a-epoch salen por logger durante el entrenamiento).
+
+## 5. CONFIG
+
+  Opcional (se propone mantener CLI-first): añadir a `config/settings.yaml`
+  y `app/core/config/settings.py` claves `ml.early_stop_rounds` /
+  `ml.patience` si se quiere que el YAML lleve los defaults. No es necesario
+  para la primera iteración; los wrappers ya tienen defaults en el código.
+
+## 6. TESTS
+
+Nuevo `tests/unit/test_early_stopping.py` (+ ajustes en test_ml_training.py):
+
+  a) Pure function de decisión: extraer en sequence_base una helper
+     `_early_stopping_decision(val_history: list[float], patience: int) -> (best_epoch, epochs_trained)`
+     y testearla directamente (determinista): patience realmente detiene
+     (epochs_trained == best_epoch + patience) y best_epoch es el índice del
+     mínimo de la serie.
+  b) `test_sequence_validation_used_not_test`: cuando X_val/y_val se pasan,
+     el dict retornado incluye validation_loss/validation_accuracy;
+     `test_never_used`: se verifica que solo se pasa el conjunto de selección
+     (train+validation) por el wiring; el TEST FINAL no llega a ningún train().
+  c) `test_checkpoint_restores_best_state`: con datos sintéticos y seed fija,
+     train con patience que dispare ES; verificar `best_epoch < epochs`,
+     `config` (o retorno) con best_epoch/best_validation_loss, y que el
+     estado efectivo tras train() coincide con el del mejor epoch (p.ej.
+     `load_state_dict` roundtrip / predicción igual a la de un modelo en el
+     mejor estado).
+  d) `test_sequence_accuracy_reporting`: reemplazar/ajustar
+     `test_sequence_models_report_train_loss_without_accuracy` → ahora el
+     resumen incluye train_accuracy y validation_accuracy cuando hay val.
+  e) Árboles: para xgboost/lightgbm/catboost, con X_val → retorno con
+     `validation_accuracy` y `best_iteration`; con `early_stopping_rounds`
+     pequeño y `n_estimators` grande → `best_iteration < n_estimators`.
+  f) CLI: `--patience 2 --early-stop-rounds 5 --model lstm` → la salida ya
+     no contiene "RESERVADO" ni warnings de flags; contiene bloque
+     "Early stopping" cuando aplique.
+  g) Sin validación (caso compatible): secuencial sin X_val sigue
+     entrenando epochs completos y reporta loss correcto (no inflado).
+
+ORDEN DE TRABAJO PROPUESTO
+--------------------------
+
+  1. sequence_base.py: fix avg_loss + validación + ES + checkpoint + config
+     (y LSTM load).  → pytest test_ml_training (ajustar 1 test).
+  2. wrapping de árboles + kwargs `early_stopping_rounds`.
+  3. wire compare.py (run_comparison + walk-forward + summary).
+  4. CLI flags/output.
+  5. tests nuevos test_early_stopping.py.
+  6. verificación completa + auditoría con `train_and_compare.py` real sobre
+     `app/datos_test/USDCAD_H1_...txt`.
+
+VERIFICACIÓN (AGENTS.md)
+------------------------
+
+  1. black app/ tests/ && isort app/ tests/
+  2. mypy app/
+  3. flake8 app/ tests/
+  4. pytest
+
+RIESGOS / NOTAS
+---------------
+
+  - La validation de los secuenciales incluye contexto causal del train en
+    sus primeras ventanas (patrón Fase 2 aceptado como NO-leakage). Si quisiéramos
+    ES 100% puro bastaría con construir ventanas solo del bloque val,
+    pero rompería la paridad con la evaluación de comparación de Fase 2; se
+    mantiene la misma X_ev para que train-eval y selección midan lo mismo.
+  - LightGBM 4.x: usar `callbacks` API (deprecation si no).
+  - XGBoost: `early_stopping_rounds` es param de `fit()`, NO del constructor.
+  - CatBoost: `use_best_model=True` requiere `eval_set` para tener efecto.
+  - No pasar `patience`/`early_stopping_rounds` al constructor de la librería.
+  - test_sequence_models_report_train_loss_without_accuracy (+ posibles
+    asserts de columnas del summary en otros tests) deben actualizarse.

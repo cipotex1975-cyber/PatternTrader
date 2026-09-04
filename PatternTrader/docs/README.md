@@ -498,8 +498,10 @@ flake8 app/ tests/
 python train_and_compare.py app/datos_test/USDCAD_H1_201005311000_202606010000.txt \
   --model all \
   --metric roc_auc \
-  --db
+  --db --promote
 ```
+Con `--db --promote` se promueve el ganador a producción (activo en `ml_models`).
+Sin `--promote`, `--db` solo lo registra como inactivo (Fase 11).
 
 Preprocessing opcional y reproducible (Fase 4): añade `--feature-scaling standard`
 para normalizar features con un `StandardScaler` ajustado **solo con TRAIN** (sin

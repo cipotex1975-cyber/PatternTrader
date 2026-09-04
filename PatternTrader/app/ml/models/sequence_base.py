@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 import numpy as np
@@ -19,6 +20,26 @@ from app.core.logger import get_logger
 from app.ml.base import BaseMLModel, MLPrediction
 
 logger = get_logger("SequenceModel")
+
+
+def _early_stopping_decision(val_history: list[float], patience: int) -> tuple[int, int]:
+    """Decisión de early stopping dada la serie de validation loss (FASE 6).
+
+    Devuelve ``(best_epoch, epochs_trained)`` en números de epoch (1-based):
+
+    - ``best_epoch`` es la posición del mínimo de ``val_history``.
+    - ``epochs_trained`` es ``best_epoch + patience`` (el entrenamiento se
+      detiene tras ``patience`` epochs consecutivos sin mejorar).
+
+    Ejemplo (patience=5): si el mínimo cae en el epoch 12, el entrenamiento
+    para en el epoch 17. Corresponde al ejemplo de la especificación FASE 6.
+    """
+    if not val_history:
+        return 0, 0
+    best_idx = int(np.argmin(val_history))
+    best_epoch = best_idx + 1
+    epochs_trained = min(len(val_history), best_epoch + patience)
+    return best_epoch, epochs_trained
 
 
 class _SequenceClassifier(nn.Module):
@@ -55,6 +76,8 @@ class SequenceModel(BaseMLModel):
         self._batch_size = batch_size
         self._random_state = random_state
         self._patience = patience
+        self._best_epoch = 0
+        self._best_validation_loss: float | None = None
         self._model: nn.Module | None = None
         self._scaler = None  # StandardScaler for scaling sequence data
 
@@ -80,6 +103,9 @@ class SequenceModel(BaseMLModel):
             "learning_rate": self._learning_rate,
             "batch_size": self._batch_size,
             "random_state": self._random_state,
+            "patience": self._patience,
+            "best_epoch": self._best_epoch,
+            "best_validation_loss": self._best_validation_loss,
         }
 
     def _apply_config(self, config: dict[str, Any]) -> None:
@@ -90,6 +116,9 @@ class SequenceModel(BaseMLModel):
         self._learning_rate = config.get("learning_rate", self._learning_rate)
         self._batch_size = config.get("batch_size", self._batch_size)
         self._random_state = config.get("random_state", self._random_state)
+        self._patience = config.get("patience", self._patience)
+        self._best_epoch = config.get("best_epoch", self._best_epoch)
+        self._best_validation_loss = config.get("best_validation_loss", self._best_validation_loss)
 
     def _prepare(self, X: np.ndarray) -> np.ndarray:
         X = np.asarray(X, dtype=np.float32)
@@ -109,8 +138,20 @@ class SequenceModel(BaseMLModel):
         X: np.ndarray,
         y: np.ndarray,
         feature_names: list[str] | None = None,
+        X_val: np.ndarray | None = None,
+        y_val: np.ndarray | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        """Entrena con early stopping real sobre VALIDATION (FASE 6).
+
+        - ``X_val``/``y_val`` (opcional): bloque VALIDATION usado durante el
+          entrenamiento; NUNCA el TEST FINAL.
+        - Si se pasa validación, se entrena epoch a epoch midiendo
+          ``validation_loss``; con ``self._patience`` epochs sin mejora se
+          detiene (early stopping) y se restaura el MEJOR estado (checkpoint).
+        - Reporta ``train_loss``, ``validation_loss``, ``train_accuracy`` y
+          ``validation_accuracy`` por epoch cuando están disponibles.
+        """
         X = self._prepare(X)
         if X.ndim != 3:
             raise ValueError(
@@ -127,19 +168,121 @@ class SequenceModel(BaseMLModel):
         dataset = TensorDataset(torch.tensor(X), torch.tensor(y, dtype=torch.int64))
         loader = DataLoader(dataset, batch_size=self._batch_size, shuffle=True)
 
-        total_loss = 0.0
-        for _ in range(self._epochs):
+        has_validation = X_val is not None and y_val is not None
+        val_loader: DataLoader | None = None
+        if has_validation:
+            assert X_val is not None and y_val is not None
+            X_val = self._prepare(X_val)
+            if X_val.ndim != 3:
+                raise ValueError(
+                    "Sequence model validation expects 3D input "
+                    f"(samples, timesteps, features), got {X_val.shape}"
+                )
+            val_dataset = TensorDataset(torch.tensor(X_val), torch.tensor(y_val, dtype=torch.int64))
+            val_loader = DataLoader(val_dataset, batch_size=self._batch_size, shuffle=False)
+
+        best_val_loss = float("inf")
+        best_state: dict[str, Any] | None = None
+        val_history: list[float] = []
+        no_improve_streak = 0
+        stopped_early = False
+
+        last_train_loss = float("nan")
+        last_train_acc = float("nan")
+        last_val_loss = float("nan")
+        last_val_acc = float("nan")
+
+        for epoch in range(1, self._epochs + 1):
+            # --- Train: un epoch ---
+            model.train()
+            epoch_loss = 0.0
+            num_batches = 0
+            correct = 0
+            total = 0
             for xb, yb in loader:
                 optimizer.zero_grad()
                 loss = criterion(model(xb), yb)
                 loss.backward()
                 optimizer.step()
-                total_loss += loss.item()
+                epoch_loss += loss.item()
+                num_batches += 1
+                preds = model(xb).argmax(dim=1)
+                correct += int(torch.eq(preds, yb).sum().item())
+                total += int(yb.numel())
+
+            last_train_loss = epoch_loss / max(1, num_batches)
+            last_train_acc = correct / total if total else float("nan")
+
+            # --- Validation: métricas + early stopping ---
+            if has_validation and val_loader is not None:
+                model.eval()
+                val_epoch_loss = 0.0
+                val_num_batches = 0
+                val_correct = 0
+                val_total = 0
+                with torch.no_grad():
+                    for xb, yb in val_loader:
+                        logits = model(xb)
+                        vloss = criterion(logits, yb)
+                        val_epoch_loss += vloss.item()
+                        val_num_batches += 1
+                        vpreds = logits.argmax(dim=1)
+                        val_correct += int(torch.eq(vpreds, yb).sum().item())
+                        val_total += int(yb.numel())
+                last_val_loss = val_epoch_loss / max(1, val_num_batches)
+                last_val_acc = val_correct / val_total if val_total else float("nan")
+                val_history.append(last_val_loss)
+
+                if last_val_loss < best_val_loss:
+                    best_val_loss = last_val_loss
+                    best_state = copy.deepcopy(model.state_dict())
+                    no_improve_streak = 0
+                else:
+                    no_improve_streak += 1
+                    if no_improve_streak >= self._patience:
+                        stopped_early = True
+
+            logger.info(
+                f"Epoch {epoch:02d}/{self._epochs} "
+                f"train_loss={last_train_loss:.4f} train_acc={last_train_acc:.4f} "
+                f"val_loss={last_val_loss:.4f} val_acc={last_val_acc:.4f}"
+            )
+
+            if stopped_early:
+                break
+
+        trained_epochs = epoch if self._epochs > 0 else 0
+
+        # --- Checkpoint: restaurar el MEJOR estado (no el último epoch) ---
+        best_epoch_reported, _ = _early_stopping_decision(val_history, self._patience)
+        if has_validation and best_state is not None:
+            model.load_state_dict(best_state)
+            self._best_epoch = best_epoch_reported
+            self._best_validation_loss = best_val_loss
+            logger.info(
+                f"{self.name}: checkpoint -> restaurado mejor estado "
+                f"(best_epoch={self._best_epoch}, val_loss={best_val_loss:.4f})"
+            )
+        if stopped_early:
+            logger.info(
+                f"{self.name}: early stopping en epoch {trained_epochs} "
+                f"(patience={self._patience}, best_epoch={self._best_epoch})"
+            )
 
         self._is_trained = True
-        avg_loss = total_loss / max(1, len(loader))
-        logger.info(f"Trained {self.name} for {self._epochs} epochs (loss {avg_loss:.4f})")
-        return {"epochs": self._epochs, "loss": avg_loss}
+        return {
+            "epochs": trained_epochs,
+            "train_loss": last_train_loss,
+            "train_accuracy": last_train_acc,
+            "validation_loss": last_val_loss,
+            "validation_accuracy": last_val_acc,
+            "best_epoch": self._best_epoch,
+            "best_validation_loss": (
+                float("nan") if self._best_validation_loss is None else self._best_validation_loss
+            ),
+            "early_stopping": stopped_early,
+            "patience": self._patience,
+        }
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         probs = self.predict_proba(X)

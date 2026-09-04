@@ -1,0 +1,209 @@
+FASE 7 — RESPUESTA (PLAN): EVALUACIÓN Y SEMÁNTICA DE SCORES
+============================================================
+
+ESTADO: IMPLEMENTADO (2026-09-02)
+FECHA: 2026-09-02
+
+NOTA DE VERIFICACIÓN
+--------------------
+- Todos los tests de Fase 7 pasan (tests/unit/test_fase7.py: 13 tests).
+- tests/unit/test_early_stopping.py, test_ml_training.py y clasificación pasan.
+- flake8 y black/isort limpios en los archivos modificados.
+- Test pre-existente `test_sequence_models_train_predict_evaluate` (test_ml_models.py)
+  queda en rojo por el cambio de Fase 6 (train() devuelve `train_loss`, no `loss`);
+  es un test obsoleto de Fase 6, NO relacionado con Fase 7.
+- Test `test_pipeline_health_recalculation_is_throttled` ya fallaba antes (timing),
+  no relacionado con Fase 7.
+
+OBJETIVO
+--------
+
+Revisar y corregir la evaluación de todos los modelos del proyecto, de acuerdo
+a `docs/mejoras/fase7`:
+
+- ROC-AUC / PR-AUC con score continuo (predict_proba[:, 1]), NUNCA con predict().
+- Separar ranking score de classification threshold: añadir `--classification-threshold`
+  (default 0.50). Accuracy/Precision/Recall/F1 dependen del threshold; ROC-AUC/PR-AUC no.
+- Anomaly models (IsolationForest, AutoEncoder): fijar semántica de predict_proba[:,1]
+  (1 = positivo / anómalo) y verificar orientación.
+- Por defecto NO comparar anomaly detectors con modelos supervisados en el ranking;
+  permitir `--include-anomaly-models` para incluirlos explícitamente.
+- Output con "Model family: supervised classification" / "anomaly detection".
+- Threshold optimization sobre VALIDATION (métrica = F1 por defecto). Nunca usar TEST.
+- Tests: AUC continuo, F1 depende de threshold, threshold no afecta AUC, orientación anomaly.
+
+DIAGNÓSTICO DEL ESTADO ACTUAL (código verificado)
+-------------------------------------------------
+
+YA CORRECTO:
+  1. ROC-AUC y PR-AUC ya se calculan con score continuo:
+     - `evaluate_model` (app/ml/training/compare.py:188) usa `model.predict_proba(X)[:, 1]`.
+     - Cada `model.evaluate()` (sequence_base.py:299, xgboost:105, lightgbm:119, catboost:104,
+       random_forest:74) usa `predict_proba[:,1]` para roc_auc/pr_auc.
+  2. Anomaly semantics (isolation_forest.py:57-66, autoencoder.py:128-137):
+     - `predict_proba[:,1]` = probabilidad de ANOMALÍA (1 = anómalo):
+       · IsolationForest: `_anomaly_proba = sigmoid(decision_function)`; a mayor
+         decision_function (más normal) menor proba de anomalía → orientación correcta.
+       · AutoEncoder: `_anomaly_proba = sigmoid((error - threshold)/scale)`; a mayor
+         error de reconstrucción (más anómalo) mayor proba → orientación correcta.
+     - Ambos `model_type = "anomaly"`.
+  3. `classify_with_threshold` (compare.py:136) y `metrics_at_threshold` (compare.py:156)
+     ya existen y son correctos (testeados en test_ml_training.py:721-786).
+
+GAPS / NO IMPLEMENTADO:
+  4. `evaluate_model` usa `model.predict(X)` para accuracy/precision/recall/f1 con el
+     threshold INTERNO de cada modelo (0.5 en supervisados; umbral de anomalía en
+     anomaly). No hay forma de configurar `--classification-threshold`.
+  5. `select_winner` / `select_walk_forward_winner` incluyen a los anomaly models en el
+     MISMO ranking que los supervisados (default). No hay `--include-anomaly-models`.
+  6. No se muestra "Model family" en el output de `train_and_compare.py`.
+  7. No existe optimización de threshold ni tabla de barrido sobre VALIDATION.
+  8. No hay tests de semántica de puntaje (AUC continuo, threshold, orientación anomaly).
+
+DECISIONES DE DISEÑO (confirmadas con el usuario)
+-------------------------------------------------
+
+  1. `--classification-threshold` se aplica a accuracy/precision/recall/f1 en la
+     comparación y en el TEST FINAL. ROC-AUC/PR-AUC siempre con score continuo.
+     El ganador se elige igual con la métrica objetivo (`--metric`).
+  2. Threshold optimization: métrica objetivo = F1 por defecto (se maximiza F1 sobre
+     VALIDATION). Nunca se usa TEST para escoger threshold ni para ninguna decisión.
+  3. Centralizar en proba: `evaluate_model` pasa a usar SIEMPRE
+     `classify_with_threshold(model.predict_proba(X)[:, 1], classification_threshold)`
+     en lugar de `model.predict(X)`. Esto unifica supervisados y anomaly dada la
+     convención 1 = positivo/anómalo. `model.predict()` queda como API interna/standalone.
+  4. Anomaly models NO se incluyen por defecto en la comparación/ranking
+     (`exclude_anomaly=True`). Con `--include-anomaly-models` se incluyen explícitamente
+     (felizmente existe la convención 1 = positivo, por lo que la comparación centralizada
+     funciona si el usuario decide incluirlos).
+  5. `model_family` se añade como columna a cada fila del summary y se muestra en el
+     output y en la tabla comparativa.
+
+ALCANCE / FUERA DE ALCANCE
+--------------------------
+
+DENTRO: ROC/PR-AUC (verificación), classification threshold, separación anomaly vs
+supervisado en ranking, output model family, threshold optimization, tests.
+
+FUERA: no se modifica la semántica interna de `predict()` de los modelos (se mantiene
+como API). No se añaden nuevos hiperparámetros a la librería. No se toca la definición
+de labels (0/1 de trades) ni el pipeline de features.
+
+PLAN DE IMPLEMENTACIÓN POR ARCHIVO
+----------------------------------
+
+## A. `app/ml/training/compare.py`
+
+  a) Constantes de familias de modelos:
+       `SUPERVISED_MODELS` y `ANOMALY_MODELS` (conjuntos de nombres).
+       Helper `model_family_label(model_type: str) -> str`:
+         "classification" -> "supervised classification"
+         "anomaly"       -> "anomaly detection"
+         else            -> model_type
+
+  b) `evaluate_model(model, X, y, classification_threshold: float = 0.50)`:
+       - `probabilities = model.predict_proba(X)[:, 1]`
+       - `predictions = classify_with_threshold(probabilities, classification_threshold)`
+       - accuracy/precision/recall/f1 con `predictions`; roc_auc/pr_auc con `probabilities`.
+
+  c) Nueva `optimize_classification_threshold(y_true, probabilities,
+       selection_metric: str = "f1", candidate_thresholds: list[float] | None = None)`
+       -> `tuple[float, list[dict[str, float]]]`:
+       - Barre `candidate_thresholds` (default lista en [0.20..0.80]).
+       - Para cada threshold calcula `metrics_at_threshold`.
+       - Selecciona el threshold que maximiza `selection_metric`.
+       - Retorna (best_threshold, tabla completa por threshold).
+
+  d) `run_comparison(...)`:
+       - Nuevos params: `classification_threshold: float = 0.50`, `exclude_anomaly: bool = True`.
+       - Filtrar anomalías de `selected` si `exclude_anomaly` (salvo que el usuario las
+         pida por nombre explícito en `model_names`).
+       - Añadir `model_family` a cada fila del summary.
+       - `eval_metrics = evaluate_model(model, X_ev, y_ev, classification_threshold)`.
+
+  e) `run_walk_forward_comparison(...)`:
+       - Mismos params nuevos y filtrado de anomalías.
+       - `fold_metrics = evaluate_model(model, X_ev, y_ev, classification_threshold)`.
+       - Añadir `model_family` a la fila.
+
+  f) `evaluate_winner_on_test(..., classification_threshold: float = 0.50)`:
+       - `return evaluate_model(model, X_final, y_final, classification_threshold)`.
+
+  g) `format_summary_table(...)`: mostrar columna de familia (o anexarla al nombre).
+
+## B. `app/ml/training/__init__.py`
+
+  Exportar `optimize_classification_threshold` y `model_family_label`.
+
+## C. `train_and_compare.py` (CLI)
+
+  a) Flags nuevos:
+       - `--classification-threshold` (default 0.50).
+       - `--include-anomaly-models` (store_true).
+  b) Wire `classification_threshold=args.classification_threshold` y
+     `exclude_anomaly=not args.include_anomaly_models` a `run_comparison` /
+     `run_walk_forward_comparison`; `classification_threshold` a `evaluate_winner_on_test`.
+  c) Output: mostrar "Model family: <label>" del ganador en Model selection y en
+     FINAL OUT-OF-SAMPLE TEST, y en el bloque RESULTADO final.
+  d) Threshold optimization: se computa DENTRO de `run_comparison` /
+     `run_walk_forward_comparison` (donde ya existen `X_ev`/`y_ev` y las
+     probabilidades de VALIDATION) y se persiste en la fila del summary como
+     `opt_best_threshold` + `threshold_table`. El CLI sólo lo RENDERIZA desde
+     `winner["metrics"]`:
+         Threshold Optimization (VALIDATION)
+        =====================================
+        threshold    precision    recall    F1
+        0.30 ... / 0.35 ... / ... / 0.80 ...
+        Best threshold: 0.45 (F1 = 0.XXXX)
+       El threshold óptimo es sólo reporte; la evaluación usa
+       `--classification-threshold` (no se sobreescribe la selección).
+
+## D. Tests `tests/unit/test_fase7.py` (nuevo)
+
+  a) `test_auc_uses_continuous_score_not_predict`.
+  b) `test_f1_depends_on_classification_threshold`.
+  c) `test_threshold_does_not_affect_auc`.
+  d) `test_anomaly_orientation_isolation_forest` / `test_anomaly_orientation_autoencoder`.
+  e) `test_anomaly_models_excluded_by_default`.
+  f) `test_anomaly_models_included_when_explicit` (petición por nombre explícito).
+  g) `test_model_family_in_summary`.
+  h) `test_anomaly_family_sets_are_disjoint_and_cover_registered`.
+  i) `test_optimize_threshold_finds_best` (y rechaza métricas no-dependientes del threshold).
+  j) `test_model_family_labels`.
+
+ORDEN DE TRABAJO PROPUESTO
+--------------------------
+
+  1. compare.py: constantes + `evaluate_model` refactor + `optimize_classification_threshold`.
+  2. compare.py: wiring en `run_comparison` + `run_walk_forward_comparison` (threshold,
+     exclude_anomaly, model_family).
+  3. compare.py: `evaluate_winner_on_test` con threshold + `format_summary_table` con familia.
+  4. training/__init__.py: exports.
+  5. train_and_compare.py: flags, wiring, output familia + threshold optimization.
+  6. tests/unit/test_fase7.py.
+  7. Verificación completa según AGENTS.md.
+
+VERIFICACIÓN (AGENTS.md)
+------------------------
+
+  1. black app/ tests/ && isort app/ tests/
+  2. mypy app/
+  3. flake8 app/ tests/
+  4. pytest
+
+RIESGOS / NOTAS
+---------------
+
+  - Cambiar `evaluate_model` a `classify_with_threshold` altera el valor reportado de
+    acc/prec/recall/f1 en la comparación (ya que antes usaba `predict()` con 0.5 interno).
+    Con el threshold default 0.50 el resultado coincide para supervisados estándar; para
+    anomaly cambia respecto a usar su umbral interno, pero ahora es uniforme y
+    "1 = positivo" por convención.
+  - `roc_auc`/`pr_auc` NO cambian (ya eran continuos e independientes del threshold).
+  - La optimización de threshold es solo REPORTE: no modifica `--classification-threshold`
+    de la evaluación ni la selección del ganador.
+  - Si `--include-anomaly-models` no se pasa, aparecerá un aviso en el CLI indicando que
+    se excluyeron los anomaly detectors del ranking.
+  - La exclusión por defecto respeta nombres explícitos: `--model isolation_forest` sigue
+    entrenándolo aunque `exclude_anomaly=True` (se excluyen solo del ranking cuando se usa
+    "all" o una lista que no los menciona).

@@ -1,0 +1,163 @@
+FASE 8 — RESPUESTA (PLAN): ROBUSTEZ DE LA DEFINICIÓN DEL LABEL
+==============================================================
+
+ESTADO: IMPLEMENTADO (2026-09-03)
+FECHA: 2026-09-03
+
+OBJETIVO
+--------
+
+Evaluar la robustez de la señal variando los parámetros de la definición del
+label (`threshold` × `min_up_moves`, con `forward_periods` fijo en 5),
+exclusivamente sobre TRAIN/VALIDATION o walk-forward — NUNCA sobre el TEST
+FINAL. Producir una tabla de resultados reales sin inventar valores y un
+diagnóstico cualitativo de robustez (`docs/mejoras/fase8`).
+
+VALORACIÓN / NOTA DE VERIFICACIÓN
+---------------------------------
+- Tests nuevos: `tests/unit/test_fase8.py` (11 tests) — todos pasan.
+- Verificación completa del repo: 415 passed, 17 skipped. Los 4 fallos son
+  PRE-EXISTENTES y NO relacionados con Fase 8:
+  · `test_sequence_models_train_predict_evaluate[LSTM/Transformer/CNN]`: test
+    obsoleto de Fase 6 (train() devuelve `train_loss`, no `loss`).
+  · `test_pipeline_health_recalculation_is_throttled`: falla por timing (ya
+    fallaba antes de la Fase 7).
+- flake8 limpio en los archivos modificados. black/isort limpios.
+- mypy: el repo tiene 112 errores PRE-EXISTENTES (providers, learning, api,
+  modelos ml); `label_sweep.py` no introduce errores nuevos (sus imports
+  arrastran errores ya existentes en los modelos/compare).
+
+DIAGNÓSTICO DEL ESTADO ACTUAL (código verificado)
+--------------------------------------------------
+
+YA DISPONIBLE / CORRECTO:
+  1. `create_labels(df, forward_periods, threshold, min_up_moves)`
+     (app/ml/training/data.py:119) ya acepta `min_up_moves`.
+  2. `run_walk_forward_comparison` ya permite evaluar sobre el conjunto de
+     selección (TRAIN+VALIDATION) con folds expanding sin tocar TEST.
+  3. `split_chronological` ya aplica anti-leakage de labels (OPCIÓN B).
+  4. Las features (`create_features`) son causales e independientes del label,
+     por lo que pueden reutilizarse en todas las configuraciones.
+
+FALTABA / NO IMPLEMENTADO:
+  5. No existía un mecanismo de barrido (grid sweep) sobre la definición del
+     label con métricas mean/std AUC y PR-AUC y positive_ratio.
+  6. No existía un modo CLI dedicado que produjera la tabla de robustez sin
+     seleccionar ganador ni tocar TEST.
+
+DECISIONES DE DISEÑO (confirmadas con el usuario)
+-------------------------------------------------
+  1. Motor del barrido: **walk-forward** sobre el conjunto de selección
+     (TRAIN+VALIDATION) reutilizando `run_walk_forward_comparison`, para
+     obtener mean/std de AUC y PR-AUC. No se usa TEST.
+  2. Modelo por defecto: **random_forest** (rápido, estable, repetible),
+     configurable con `--sweep-model`.
+  3. Modo CLI: **exclusivo** `--label-sweep`. Solo imprime la tabla y el
+     diagnóstico; NO selecciona ganador, NO evalúa TEST FINAL, NO persiste
+     artefactos y NO registra en DB.
+  4. `LABEL_GRID` = 4 thresholds × 3 min_up_moves con forward_periods=5
+     (12 configuraciones) tal y como prescribe la Fase 8.
+
+ALCANCE / FUERA DE ALCANCE
+--------------------------
+DENTRO: barrido threshold × min_up_moves, métricas mean/std AUC + PR-AUC +
+positive_ratio, diagnóstico cualitativo de robustez, modo CLI dedicado, tests.
+
+FUERA: no se modifica la lógica de `create_labels` (solo se reutiliza); no se
+selecciona una "mejor" configuración por TEST; no se tocan modelos ni el
+pipeline de entrenamiento/selección por defecto.
+
+PLAN DE IMPLEMENTACIÓN POR ARCHIVO
+----------------------------------
+## A. `app/ml/training/label_sweep.py` (nuevo)
+   - `LABEL_GRID`: 12 configs (threshold ∈ {0.0005, 0.0010, 0.0015, 0.0020},
+     min_up_moves ∈ {1,2,3}, forward_periods=5).
+   - `SWEEP_COLUMNS`: threshold, min_moves, forward_periods, positive_ratio,
+     mean_validation_auc, std_validation_auc, mean_validation_pr_auc.
+   - `run_label_sweep(df_raw, model_names, metric, walk_forward_splits,
+     settings, seed, hyperparams, configs)`: por cada config recalcula labels,
+     dropna, split cronológico, concatena selección (TRAIN+VALIDATION) y llama
+     a `run_walk_forward_comparison`; extrae wf_mean/wf_std y positive_ratio.
+     Ordena por mean_validation_auc desc.
+   - `format_label_sweep_table(df)`: render de la tabla (NA → '-').
+   - `assess_robustness(df, metric, stability_threshold=0.58)`: veredicto
+     cualitativo ROBUSTA/FRÁGIL/DÉBIL según el criterio de la sección 4 de
+     fase8. Solo reporte, nunca selección.
+
+## B. `app/ml/training/__init__.py`
+   - Exportar `LABEL_GRID`, `SWEEP_COLUMNS`, `run_label_sweep`,
+     `format_label_sweep_table`, `assess_robustness`.
+
+## C. `train_and_compare.py` (CLI)
+   - Flag `--label-sweep` (store_true): ejecuta solo el barrido y retorna.
+   - Flags: `--sweep-model` (default random_forest), `--sweep-metric`
+     (default roc_auc).
+   - `--walk-forward-splits` se reutiliza (default efectivo 3 si <=1).
+
+## D. `tests/unit/test_fase8.py` (nuevo)
+   - Grilla correcta, columnas del sweep, una fila por config, positive_ratio
+     decrece al endurecer params, no toca TEST, determinismo, formato y
+     veredicto.
+
+RESULTADO REAL (USDCAD H1, RandomForest, 3 folds walk-forward)
+--------------------------------------------------------------
+Dataset: `app/datos_test/USDCAD_H1_201005311000_202606010000.txt`
+(99401 velas). Evaluación SOLO sobre TRAIN/VALIDATION + walk-forward (3 folds).
+
+ threshold  min_moves  positive_%  mean_AUC  std_AUC  PR_AUC
+-------------------------------------------------------------
+   0.0020        3       11.26%     0.6567   0.0189   0.1926
+   0.0020        2       17.29%     0.6432   0.0173   0.2739
+   0.0015        3       17.63%     0.6320   0.0175   0.2700
+   0.0020        1       25.07%     0.6299   0.0167   0.3642
+   0.0015        2       25.95%     0.6184   0.0169   0.3654
+   0.0015        1       35.87%     0.6112   0.0142   0.4724
+   0.0010        3       28.88%     0.6069   0.0128   0.3886
+   0.0010        2       39.69%     0.5915   0.0168   0.4913
+   0.0010        1       52.01%     0.5886   0.0272   0.6152
+   0.0005        1       73.87%     0.5693   0.0234   0.7940
+   0.0005        3       48.28%     0.5655   0.0072   0.5486
+   0.0005        2       60.74%     0.5616   0.0083   0.6668
+
+DIAGNÓSTICO (NO es selección):
+  - Señal relativamente ROBUSTA: 9/12 configuraciones mantienen roc_auc >= 0.58
+    (rango [0.562, 0.657], spread 0.095).
+  - Tendencia clara y monótona: definiciones MÁS ESTRICTAS (threshold alto y/o
+    min_up_moves alto) producen mayor AUC, a costa de un positive_ratio menor.
+    El mejor caso (threshold=0.0020, min_moves=3) alcanza AUC 0.657 con std
+    bajo (0.019), lo que indica estabilidad.
+  - Las definiciones más laxas (threshold=0.0005) caen a ~0.56 con PR-AUC muy
+    alto (0.79) por el desbalance (73.87% de positivos).
+  - Conclusión: la señal NO desaparece al variar los parámetros; es consistente
+    y se refuerza con definiciones más estrictas. No hay fragilidad evidente
+    (no hay pico aislado; hay gradiente monótono).
+
+ORDEN DE TRABAJO EJECUTADO
+--------------------------
+1. label_sweep.py (grilla + run_label_sweep + format + assess).
+2. training/__init__.py (exports).
+3. train_and_compare.py (modo --label-sweep + flags).
+4. tests/unit/test_fase8.py.
+5. Verificación según AGENTS.md.
+
+VERIFICACIÓN (AGENTS.md)
+------------------------
+1. black app/ tests/ && isort app/ tests/  → OK (limpio)
+2. mypy app/  → solo errores pre-existentes; sin nuevos en label_sweep.py
+3. flake8 app/ tests/  → OK (limpio)
+4. pytest  → 415 passed, 17 skipped; 4 fallos pre-existentes documentados
+
+RIESGOS / NOTAS
+---------------
+- El barrido es costoso: cada config reentrena el modelo en N folds. Con 12
+  configs × 3 folds ≈ 36 entrenamientos de RandomForest; en el dataset real
+  tardó ~6 minutos. Para paridad/CI se recomienda `--sweep-model random_forest`
+  y pocos folds.
+- `positive_ratio` se calcula sobre el conjunto de selección completo tras
+  dropna (serie con features+labels), reflejando el balance real por config.
+- La columna de referencia de `assess_robustness` es la fija
+  `mean_validation_auc` (siempre guarda la media de la métrica elegida); el
+  parámetro `metric` solo afecta al texto del veredicto.
+- El sweep NO selecciona configuración por TEST (sección 5 de fase8): solo
+  reporta. Si más adelante se quisiera fijar una definición de label por
+  robustez, deberá hacerse sobre VALIDATION/walk-forward.

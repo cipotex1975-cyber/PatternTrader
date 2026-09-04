@@ -28,9 +28,11 @@ class CatBoostModel(BaseMLModel):
         depth: int = 6,
         learning_rate: float = 0.1,
         random_seed: int = 42,
+        early_stopping_rounds: int = 0,
         **kwargs: Any,
     ) -> None:
         super().__init__()
+        self._early_stopping_rounds = early_stopping_rounds
         self._model = CatBoostClassifier(
             iterations=iterations,
             depth=depth,
@@ -53,17 +55,45 @@ class CatBoostModel(BaseMLModel):
         X: np.ndarray,
         y: np.ndarray,
         feature_names: list[str] | None = None,
+        X_val: np.ndarray | None = None,
+        y_val: np.ndarray | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         logger.info(f"Training CatBoost model with {X.shape[0]} samples")
-        self._model.fit(X, y)
+        has_validation = X_val is not None and y_val is not None
+        early_stopping_rounds = max(0, self._early_stopping_rounds)
+        if has_validation:
+            self._model.fit(
+                X,
+                y,
+                eval_set=(np.asarray(X_val), np.asarray(y_val)),
+                early_stopping_rounds=early_stopping_rounds,
+                use_best_model=True,
+                verbose=0,
+            )
+        else:
+            self._model.fit(X, y)
+
         self._is_trained = True
         self._feature_names = feature_names or []
 
         train_score = self._model.score(X, y)
         logger.info(f"Training accuracy: {train_score:.4f}")
 
-        return {"train_accuracy": train_score}
+        result: dict[str, Any] = {"train_accuracy": train_score, "early_stopping": False}
+        if has_validation:
+            val_score = self._model.score(np.asarray(X_val), np.asarray(y_val))
+            best_iteration = self._model.get_best_iteration()
+            result["validation_accuracy"] = float(val_score)
+            result["early_stopping"] = early_stopping_rounds > 0
+            if best_iteration is not None:
+                result["best_iteration"] = int(best_iteration)
+            logger.info(
+                f"Validation accuracy: {val_score:.4f}"
+                + (f" | best_iteration={int(best_iteration)}" if best_iteration is not None else "")
+            )
+
+        return result
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         return self._model.predict(X).astype(int)

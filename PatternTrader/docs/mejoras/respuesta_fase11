@@ -1,0 +1,125 @@
+FASE 11 — RESPUESTA: PROMOCIÓN SEGURA A PRODUCCIÓN
+==================================================
+
+ESTADO: IMPLEMENTADO (2026-09-04)
+FECHA: 2026-09-04
+
+OBJETIVO
+--------
+
+Cambiar la semántica de `--db` para que un entrenamiento experimental no
+reemplace automáticamente el modelo activo. Por defecto `--db` registra la fila
+en `ml_models` como INACTIVA (sin tocar el activo previo) y la promoción a
+producción solo ocurre con el nuevo flag `--promote` (`--db --promote`).
+Además, se mitiga el riesgo documentado por FASE 1.1 (deactivate-before-upsert
+no atómico) mediante una transacción única en el repositorio.
+
+====================================================================
+1. CAMBIOS DE CÓDIGO
+====================================================================
+
+## A. `app/database/repositories/mlmodel.py`
+   - Nuevo método `promote(name, symbol, model_type, version, path, metrics,
+     trained_at, metadata)` que ejecuta AMBAS operaciones (desactivar los activos
+     previos del símbolo + activar el nuevo) dentro de UNA sola transacción/
+     sesión (`get_async_session()`). Si la conexión falla, todo se revierte y el
+     símbolo conserva su modelo activo anterior (mitiga FASE 1.1).
+   - Se conservan intactos `upsert()`, `deactivate_by_symbol()` y `get_active()`
+     para no romper la API ni el `ScoringEngine`.
+
+## B. `train_and_compare.py`
+   - Nuevo flag `--promote` (`action="store_true"`).
+   - `register_in_db(..., *, promote=False)`:
+       * `promote=False` → `repo.upsert(is_active=False)` (registro INACTIVO; no
+         desactiva el previo, no toca el activo actual).
+       * `promote=True` → `repo.promote(...)` (atómico: desactiva previo +
+         activa nuevo).
+       * Mantiene el try/except de FASE 1.1 (SQLAlchemyError/ConnectionError/
+         OSError) → devuelve False sin propagar.
+   - `main()`: pasa `promote=args.promote` y amplía la salida del bloque DB:
+       * `--db` sin `--promote` → añade `DB promotion: SKIPPED (registered as
+         inactive; use --promote to activate)`.
+       * `--db --promote` (éxito) → añade `DB promotion: SUCCESS`,
+         `Previous active model: deactivated`, `New model: active`.
+   - Se mantiene `DB_REGISTRATION_STATUS ∈ {SKIPPED, SUCCESS, FAILED}` para no
+     romper scripts existentes.
+
+====================================================================
+2. TESTS
+====================================================================
+
+## tests/unit/test_repositories.py
+   - `test_ml_model_promote_activates_new_and_deactivates_previous`: promueve un
+     nuevo modelo del símbolo, verifica que queda activo y que el previo del
+     mismo símbolo queda inactivo.
+   - `test_ml_model_promote_does_not_touch_other_symbols`: la promoción de un
+     símbolo NO desactiva los modelos activos de otros símbolos.
+
+## tests/unit/test_ml_training.py (clase `TestDBRegistration`)
+   - `_patch_db_down` ahora parchea también `upsert`/`promote` (antes solo
+     `deactivate_by_symbol`) para que el path de Fase 11 falle correctamente.
+   - `test_training_success_and_db_available` → usa `--db --promote` y verifica
+     activación (`DB_REGISTRATION_STATUS=SUCCESS` + bloque `DB promotion: SUCCESS`).
+   - Nuevo `test_db_without_promote_registers_inactive`: con `--db` (sin
+     `--promote`) la fila queda INACTIVA (`is_active=False`), no aparece en
+     `get_active()` y se imprime `DB promotion: SKIPPED`.
+   - Los tests de fallo de DB se conservan (artefacto/summary sobreviven).
+
+## tests/integration/test_learning_integration.py (requiere Postgres)
+   - `test_register_in_db_activates_per_symbol` → usa `promote=True`.
+   - Nuevo `test_register_in_db_without_promote_stays_inactive`: con
+     `promote=False` la fila queda inactiva; luego con `promote=True` se activa.
+
+====================================================================
+3. VERIFICACIÓN (AGENTS.md)
+====================================================================
+
+1. black app/ tests/ && isort app/ tests/ → ✅ sin cambios.
+2. flake8 app/ tests/ → ✅ limpio (corregido un E501 en el help de `--promote`).
+3. mypy app/ → 112 errores PRE-EXISTENTES (0 nuevos; `mlmodel.py` tiene
+   `# mypy: ignore-errors`).
+4. pytest:
+   - `tests/unit/test_ml_training.py` (TestDBRegistration) → 5 passed.
+   - `tests/unit/test_repositories.py` → todos passed (incluye los 2 nuevos).
+   - Suite completa: **451 passed, 3 failed, 18 skipped**.
+   - Los 3 failed son PRE-EXISTENTES y NO relacionados con Fase 11:
+     `test_sequence_models_train_predict_evaluate[LSTMModel/TransformerModel/
+     CNNModel]` (test obsoleto de Fase 6: `train()` devuelve `train_loss`).
+   - El test por timing (`test_pipeline_health_recalculation_is_throttled`)
+     pasó en esta corrida (flaky conocido).
+
+====================================================================
+4. SALIDA DE CONSOLA (verificada)
+====================================================================
+
+Sin `--db`:
+    DB promotion: (no se imprime; solo `Database registration: SKIPPED`)
+
+Con `--db` (sin `--promote`):
+    Database registration:
+      SUCCESS
+    DB_REGISTRATION_STATUS=SUCCESS
+    DB promotion:
+      SKIPPED (registered as inactive; use --promote to activate)
+
+Con `--db --promote`:
+    Database registration:
+      SUCCESS
+    DB_REGISTRATION_STATUS=SUCCESS
+    DB promotion:
+      SUCCESS
+    Previous active model:
+      deactivated
+    New model:
+      active
+
+====================================================================
+5. NOTAS Y ALCANCE
+====================================================================
+
+- La promoción NO depende del TEST: `--db`/`--promote` no participan en la
+  selección del ganador.
+- No se cambiaron `upsert()`, `deactivate_by_symbol()` ni el esquema de DB
+  (misma convención `{modelo}_{symbol}`, columna `is_active`).
+- Riesgo FASE 1.1 resuelto: `promote()` agrupa "desactivar previo + activar
+  nuevo" en una única transacción → un fallo revierte todo y conserva el activo.

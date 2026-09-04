@@ -6,6 +6,10 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+# Versión del vector de features técnicas (FASE 9). Incrementar cuando cambie
+# el orden/set de FEATURE_NAMES para identificar modelos entrenados antes/después.
+FEATURE_VERSION = "1"
+
 # Vector de features técnicas usado por el entrenamiento multi-modelo.
 # El mismo orden lo comparte `app/ml/features.py` para el scoring en vivo.
 FEATURE_NAMES = [

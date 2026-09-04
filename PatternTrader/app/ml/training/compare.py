@@ -33,6 +33,46 @@ logger = get_logger("TrainAndCompare")
 # Métricas comparables entre todos los modelos (0-1).
 AVAILABLE_METRICS = ("accuracy", "precision", "recall", "f1", "roc_auc", "pr_auc")
 
+# Familias de modelos (FASE 7). Los anomaly detectors NO se comparan con modelos
+# supervisados en el ranking por defecto (se excluyen salvo `--include-anomaly-models`).
+SUPERVISED_MODELS = {
+    "random_forest",
+    "xgboost",
+    "lightgbm",
+    "catboost",
+    "lstm",
+    "transformer",
+    "cnn",
+}
+ANOMALY_MODELS = {"isolation_forest", "autoencoder"}
+
+# Thresholds candidatos para la optimización de classification threshold sobre VALIDATION.
+DEFAULT_THRESHOLD_CANDIDATES = [
+    0.20,
+    0.25,
+    0.30,
+    0.35,
+    0.40,
+    0.45,
+    0.50,
+    0.55,
+    0.60,
+    0.65,
+    0.70,
+    0.75,
+    0.80,
+]
+
+
+def model_family_label(model_type: str) -> str:
+    """Etiqueta de familia de modelo para output (FASE 7, sección 6)."""
+    if model_type == "classification":
+        return "supervised classification"
+    if model_type == "anomaly":
+        return "anomaly detection"
+    return model_type
+
+
 # Extensión del artefacto por familia de modelo (formato nativo de guardado).
 MODEL_EXTENSIONS: dict[str, str] = {
     "random_forest": ".pkl",
@@ -54,8 +94,14 @@ def _model_kwargs(
     epochs: int = 10,
     settings: Settings | None = None,
     hyperparams: dict[str, dict[str, Any]] | None = None,
+    patience: int = 5,
+    early_stop_rounds: int = 0,
 ) -> dict[str, Any]:
-    """Hiperparámetros por modelo: defaults → config YAML → override explícito."""
+    """Hiperparámetros por modelo: defaults → config YAML → override explícito.
+
+    FASE 6: ``patience`` va a los modelos secuenciales y ``early_stop_rounds`` a
+    los árboles (XGBoost/LightGBM/CatBoost) para activar early stopping real.
+    """
     n_features = len(feature_names) if feature_names else 1
 
     defaults: dict[str, Any] = {
@@ -112,10 +158,14 @@ def _model_kwargs(
         kwargs["epochs"] = epochs
         kwargs.setdefault("batch_size", 16)
         kwargs.setdefault("hidden_dim", 64)
+        kwargs["patience"] = patience
 
     if name == "autoencoder":
         kwargs["input_dim"] = n_features
         kwargs["epochs"] = epochs
+
+    if name in ("xgboost", "lightgbm", "catboost"):
+        kwargs["early_stopping_rounds"] = early_stop_rounds
 
     if hyperparams and name in hyperparams:
         kwargs.update(hyperparams[name])
@@ -175,10 +225,22 @@ def metrics_at_threshold(
     return metrics
 
 
-def evaluate_model(model: BaseMLModel, X: np.ndarray, y: np.ndarray) -> dict[str, float]:
-    """Métricas unificadas (0-1) para cualquier modelo de la plataforma."""
-    predictions = model.predict(X)
+def evaluate_model(
+    model: BaseMLModel,
+    X: np.ndarray,
+    y: np.ndarray,
+    classification_threshold: float = 0.50,
+) -> dict[str, float]:
+    """Métricas unificadas (0-1) para cualquier modelo de la plataforma.
+
+    FASE 7: la DECISIÓN binaria (accuracy/precision/recall/f1) se deriva SIEMPRE de
+    ``classify_with_threshold(predict_proba[:, 1], classification_threshold)`` en lugar de
+    ``model.predict()`` (que usaba el threshold interno de cada modelo). ROC-AUC/PR-AUC se
+    calculan con el score continuo (``predict_proba[:, 1]``) y son independientes del
+    threshold.
+    """
     probabilities = model.predict_proba(X)[:, 1]
+    predictions = classify_with_threshold(probabilities, classification_threshold)
     labels = np.asarray(y)
 
     metrics: dict[str, float] = {
@@ -191,6 +253,47 @@ def evaluate_model(model: BaseMLModel, X: np.ndarray, y: np.ndarray) -> dict[str
         metrics["roc_auc"] = float(roc_auc_score(labels, probabilities))
         metrics["pr_auc"] = float(average_precision_score(labels, probabilities))
     return metrics
+
+
+def optimize_classification_threshold(
+    y_true: np.ndarray,
+    probabilities: np.ndarray,
+    selection_metric: str = "f1",
+    candidate_thresholds: list[float] | None = None,
+) -> tuple[float, list[dict[str, float]]]:
+    """Optimiza el classification threshold sobre VALIDATION (FASE 7, sección 7).
+
+    Barre ``candidate_thresholds`` y, para cada uno, computa ``metrics_at_threshold``.
+    Devuelve ``(best_threshold, table)`` donde ``table`` es la lista completa de filas
+    (threshold + métricas) y ``best_threshold`` es el que maximiza ``selection_metric``.
+
+    NUNCA debe usarse el TEST FINAL aquí: esto sólo escala sobre el bloque de selección.
+    """
+    thresholds = candidate_thresholds or list(DEFAULT_THRESHOLD_CANDIDATES)
+    if selection_metric not in {"accuracy", "precision", "recall", "f1"}:
+        raise ValueError(
+            "selection_metric para threshold optimization debe ser una métrica "
+            "dependiente del threshold (accuracy/precision/recall/f1)."
+        )
+
+    table: list[dict[str, float]] = []
+    for t in thresholds:
+        row = metrics_at_threshold(y_true, probabilities, t)
+        row = {"threshold": float(t), **row}
+        table.append(row)
+
+    best = max(table, key=lambda r: float(r.get(selection_metric, float("-inf"))))
+    return float(best["threshold"]), table
+
+
+def _as_float(value: Any) -> float:
+    """Convierte un valor de métrica a float; ``None``/inválido → NaN (FASE 6)."""
+    if value is None:
+        return float("nan")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("nan")
 
 
 def build_eval_sequences(
@@ -249,17 +352,27 @@ def run_comparison(
     settings: Settings | None = None,
     hyperparams: dict[str, dict[str, Any]] | None = None,
     feature_scaling: str = "none",
-    # TODO(fase 3+): cablear early_stop_rounds/patience en el entrenamiento real y
-    # implementar validación walk-forward con walk_forward_splits. Hoy son placeholders.
     early_stop_rounds: int = 20,
     patience: int = 5,
     walk_forward_splits: int = 5,
+    classification_threshold: float = 0.50,
+    exclude_anomaly: bool = True,
 ) -> tuple[pd.DataFrame, dict[str, BaseMLModel]]:
     """Entrena todos los modelos solicitados sobre el mismo split y compara métricas.
 
     FASE 2: la comparación/selección usa EXCLUSIVAMENTE VALIDATION. El TEST
     FINAL no entra en esta función; se evalúa una sola vez después, con
     ``evaluate_winner_on_test()``.
+
+    FASE 6: ``X_val``/``y_val`` (el bloque VALIDATION ya construido) se pasa al
+    ``model.train()`` para early stopping real / eval_set; el TEST FINAL nunca
+    participa. ``patience`` aplica a secuenciales, ``early_stop_rounds`` a
+    árboles.
+
+    FASE 7: ``classification_threshold`` se aplica a accuracy/precision/recall/f1
+    via ``classify_with_threshold``; ROC-AUC/PR-AUC usan score continuo. ``exclude_anomaly``
+    quita del ranking a los anomaly detectors (IsolationForest/AutoEncoder) salvo que se
+    pidan explícitamente por nombre. Cada fila del summary lleva ``model_family``.
 
     Para modelos secuenciales (LSTM, CNN, Transformer), las primeras ventanas
     de la evaluación utilizan las últimas `sequence_length - 1` muestras del
@@ -277,6 +390,12 @@ def run_comparison(
 
     if not model_names or "all" in model_names:
         selected = sorted(registered)
+        if exclude_anomaly:
+            selected = [name for name in selected if name not in ANOMALY_MODELS]
+            logger.info(
+                "Anomaly detectors excluidos del ranking por defecto "
+                "(usa --include-anomaly-models para incluirlos)."
+            )
     else:
         selected = [name for name in model_names if name in registered]
 
@@ -348,6 +467,8 @@ def run_comparison(
                 epochs=epochs,
                 settings=settings,
                 hyperparams=hyperparams,
+                patience=patience,
+                early_stop_rounds=early_stop_rounds,
             )
 
             model = MLModelFactory.create_new(name, **kwargs)
@@ -355,12 +476,14 @@ def run_comparison(
                 model._scaler = scaler
 
             # ---------------------------------------------------------
-            # TRAIN
+            # TRAIN (FASE 6: early stopping real sobre VALIDATION)
             # ---------------------------------------------------------
             train_metrics = model.train(
                 X_tr,
                 y_tr,
                 feature_names=feature_names,
+                X_val=X_ev,
+                y_val=y_ev,
             )
 
             # ---------------------------------------------------------
@@ -370,16 +493,40 @@ def run_comparison(
                 model,
                 X_ev,
                 y_ev,
+                classification_threshold=classification_threshold,
             )
 
+            # FASE 7 — Optimización de classification threshold sobre VALIDATION.
+            # NUNCA se usa el TEST FINAL aquí; es sólo reporte de selección.
+            try:
+                val_probas = model.predict_proba(X_ev)[:, 1]
+                opt_threshold, opt_table = optimize_classification_threshold(
+                    y_ev, val_probas, selection_metric="f1"
+                )
+                opt_table_json: list[dict[str, float]] = [
+                    {k: float(v) for k, v in r.items()} for r in opt_table
+                ]
+            except Exception as oe:  # noqa: BLE001
+                logger.warning(f"{name}: no se pudo optimizar threshold: {oe}")
+                opt_threshold, opt_table_json = float("nan"), []
+
             train_acc = train_metrics.get("train_accuracy")
-            train_loss = train_metrics.get("loss")
+            train_loss = train_metrics.get("loss", train_metrics.get("train_loss"))
 
             row: dict[str, Any] = {
                 "model": name,
+                "model_family": model_family_label(model.model_type),
                 "status": "ok",
                 "train_accuracy": float(train_acc) if train_acc is not None else float("nan"),
                 "train_loss": float(train_loss) if train_loss is not None else float("nan"),
+                "validation_accuracy": _as_float(train_metrics.get("validation_accuracy")),
+                "validation_loss": _as_float(train_metrics.get("validation_loss")),
+                "best_epoch": _as_float(train_metrics.get("best_epoch")),
+                "best_validation_loss": _as_float(train_metrics.get("best_validation_loss")),
+                "best_iteration": _as_float(train_metrics.get("best_iteration")),
+                "early_stopping": bool(train_metrics.get("early_stopping", False)),
+                "opt_best_threshold": float(opt_threshold),
+                "threshold_table": opt_table_json,
                 "samples_train": int(X_tr.shape[0]),
                 "samples_validation": int(X_ev.shape[0]),
             }
@@ -395,7 +542,16 @@ def run_comparison(
             else:
                 train_repr = "train=n/a"
 
-            logger.info(f"{name}: " f"{train_repr} " f"{metric}={row.get(metric, 'n/a')}")
+            es_repr = ""
+            if row.get("early_stopping"):
+                es_repr = (
+                    f" ES(best_epoch={row['best_epoch']:.0f} "
+                    f"val_loss={row['best_validation_loss']:.4f})"
+                )
+            elif not math.isnan(row.get("best_epoch", float("nan"))):
+                es_repr = f" ES(val_loss={row['best_validation_loss']:.4f})"
+
+            logger.info(f"{name}: {train_repr} {metric}={row.get(metric, 'n/a')}{es_repr}")
 
         except Exception as e:  # noqa: BLE001
             logger.error(f"{name}: falló el entrenamiento: {e}")
@@ -432,6 +588,10 @@ def run_walk_forward_comparison(
     feature_scaling: str = "none",
     forward_periods: int = 5,
     min_train_size: int = 100,
+    early_stop_rounds: int = 20,
+    patience: int = 5,
+    classification_threshold: float = 0.50,
+    exclude_anomaly: bool = True,
 ) -> tuple[pd.DataFrame, dict[str, BaseMLModel]]:
     """Validación walk-forward (FASE 5): reentrena cada modelo en N folds expanding.
 
@@ -464,6 +624,12 @@ def run_walk_forward_comparison(
     registered = set(MLModelFactory.get_all())
     if not model_names or "all" in model_names:
         selected = sorted(registered)
+        if exclude_anomaly:
+            selected = [name for name in selected if name not in ANOMALY_MODELS]
+            logger.info(
+                "Anomaly detectors excluidos del ranking por defecto "
+                "(usa --include-anomaly-models para incluirlos)."
+            )
     else:
         selected = [name for name in model_names if name in registered]
     if not selected:
@@ -484,6 +650,7 @@ def run_walk_forward_comparison(
 
     per_fold: dict[str, list[dict[str, float]]] = {name: [] for name in selected}
     trained: dict[str, BaseMLModel] = {}
+    opt_by_model: dict[str, dict[str, Any]] = {}
 
     for name in selected:
         for fold in folds:
@@ -505,6 +672,8 @@ def run_walk_forward_comparison(
                 epochs=epochs,
                 settings=settings,
                 hyperparams=hyperparams,
+                patience=patience,
+                early_stop_rounds=early_stop_rounds,
             )
             model = MLModelFactory.create_new(name, **kwargs)
             if scaler is not None and hasattr(model, "_scaler"):
@@ -529,9 +698,30 @@ def run_walk_forward_comparison(
             if y_ev is None:
                 raise ValueError(f"{name}: no se pudieron formatear etiquetas de validation")
 
-            model.train(X_tr, y_tr, feature_names=feature_names)
-            fold_metrics = evaluate_model(model, X_ev, y_ev)
+            model.train(
+                X_tr,
+                y_tr,
+                feature_names=feature_names,
+                X_val=X_ev,
+                y_val=y_ev,
+            )
+            fold_metrics = evaluate_model(
+                model,
+                X_ev,
+                y_ev,
+                classification_threshold=classification_threshold,
+            )
             per_fold[name].append(fold_metrics)
+
+            # FASE 7 — Optimización de threshold sobre el ÚLTIMO fold (el más grande).
+            if fold.fold_index == len(folds) - 1:
+                opt_threshold_, opt_table_ = optimize_classification_threshold(
+                    y_ev, model.predict_proba(X_ev)[:, 1], selection_metric="f1"
+                )
+                opt_by_model[name] = {
+                    "opt_best_threshold": float(opt_threshold_),
+                    "threshold_table": [{k: float(v) for k, v in r.items()} for r in opt_table_],
+                }
 
             # Conservar la instancia entrenada en el fold más grande (el último).
             if fold.fold_index == len(folds) - 1:
@@ -549,14 +739,22 @@ def run_walk_forward_comparison(
     rows: list[dict[str, Any]] = []
     for name in selected:
         fold_list = per_fold[name]
+        trained_model = trained.get(name)
         row: dict[str, Any] = {
             "model": name,
+            "model_family": (
+                model_family_label(trained_model.model_type) if trained_model is not None else ""
+            ),
             "status": "ok" if fold_list else "error: sin folds evaluados",
             "train_accuracy": float("nan"),
             "train_loss": float("nan"),
             "samples_train": 0,
             "samples_validation": 0,
             "wf_folds": len(fold_list),
+            "opt_best_threshold": opt_by_model.get(name, {}).get(
+                "opt_best_threshold", float("nan")
+            ),
+            "threshold_table": opt_by_model.get(name, {}).get("threshold_table", []),
         }
         for m in wf_metrics:
             values = [f[m] for f in fold_list if m in f]
@@ -622,11 +820,15 @@ def evaluate_winner_on_test(
     X_test: np.ndarray,
     y_test: np.ndarray,
     sequence_length: int = 30,
+    classification_threshold: float = 0.50,
 ) -> dict[str, float]:
     """Evalúa al ganador UNA sola vez sobre el TEST FINAL (FASE 2, sección 8).
 
     El resultado NO debe volver a entrar en ``select_winner()`` ni en ninguna
     decisión de selección/threshold/tuning: es sólo reporte final.
+
+    FASE 7: ``classification_threshold`` se aplica a accuracy/precision/recall/f1;
+    ROC-AUC/PR-AUC usan score continuo e independiente del threshold.
     """
     model = trained.get(winner_name)
     if model is None:
@@ -658,7 +860,9 @@ def evaluate_winner_on_test(
         raise ValueError(f"{winner_name}: no se pudieron formatear las etiquetas de test")
 
     logger.info(f"Evaluación final del ganador {winner_name} sobre TEST FINAL")
-    return evaluate_model(model, X_final, y_final)
+    return evaluate_model(
+        model, X_final, y_final, classification_threshold=classification_threshold
+    )
 
 
 def _version() -> str:
@@ -672,6 +876,7 @@ def save_winner(
     symbol: str,
     metric: str = "roc_auc",
     final_test_metrics: dict[str, float] | None = None,
+    sidecar_context: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     """Persiste el artefacto ganador con nomenclatura por par y su sidecar.
 
@@ -679,6 +884,13 @@ def save_winner(
     (el sidecar permite al ScoringEngine rehidratar el modelo del par sin DB).
     Si se pasan ``final_test_metrics`` (evaluación única sobre TEST FINAL,
     FASE 2) quedan registrados en el sidecar con fines de trazabilidad.
+
+    El parámetro opcional ``sidecar_context`` (FASE 9) es un dict de bloques
+    ricos de reproducibilidad (dataset, features, label, training, software,
+    git, random_seed, etc.) producido por ``build_model_sidecar_context``; se
+    fusiona en el ``.meta.json``. Un modelo existente con scaler puede
+    sobreescribir el bloque ``preprocessing`` con el artefacto reproducible del
+    FASE 4.
     """
     model_name = winner["model"]
     model = trained.get(model_name)
@@ -710,6 +922,11 @@ def save_winner(
             for k, v in final_test_metrics.items()
             if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(float(v))
         }
+    # FASE 9 — Fusionar la metadata rica de reproducibilidad (dataset/features/
+    # label/training/software/git/random_seed). Si viene, sobreescribe las claves
+    # base que coincidan con el bloque de contexto.
+    if sidecar_context:
+        meta.update(sidecar_context)
     sidecar = Path(save_dir) / f"{model_name}_{symbol}.meta.json"
 
     # FASE 4 — Persistir el preprocessing reproducible. Si el ganador lleva un
@@ -766,7 +983,7 @@ def format_summary_table(summary: pd.DataFrame, metric: str = "roc_auc") -> str:
     ]
     header = (
         f"{'MODELO':<18} {'T.ACC':>7} {'LOSS':>7} {'ACC':>7} {'PREC':>7} {'REC':>7} "
-        f"{'F1':>7} {'AUC':>7} {'PR_AUC':>7}  ESTADO"
+        f"{'F1':>7} {'AUC':>7} {'PR_AUC':>7}  FAMILIA"
     )
     lines = [header, "-" * len(header)]
     for _, row in summary.iterrows():
@@ -774,8 +991,107 @@ def format_summary_table(summary: pd.DataFrame, metric: str = "roc_auc") -> str:
         for col in columns[1:]:
             val = row.get(col)
             cells.append(f"{val:>7.4f}" if isinstance(val, (int, float)) else f"{'-':>7}")
-        lines.append(f"{str(row.get('model', '')):<18} {' '.join(cells)}  {row.get('status', '')}")
+        family = str(row.get("model_family", "")) if "model_family" in summary else ""
+        lines.append(f"{str(row.get('model', '')):<18} {' '.join(cells)}  {family}")
     if metric in summary.columns:
         lines.append("")
         lines.append(f"Mejor según '{metric}': {select_winner(summary, metric)}")
     return "\n".join(lines)
+
+
+def format_walk_forward_table(summary: pd.DataFrame, metric: str = "roc_auc") -> str:
+    """Renderiza la tabla de VALIDATION walk-forward (FASE 10, sección VALIDATION).
+
+    Muestra por modelo su media de ROC-AUC, su desviación estándar y la media de
+    PR-AUC a partir de los agregados ``wf_*`` del summary. NA se renderiza como
+    ``-``. La tabla se ordena por la media de la métrica objetivo descendente
+    para resaltar el mejor.
+    """
+    mean_col = f"wf_mean_{metric}"
+    std_col = f"wf_std_{metric}"
+    header = f"{'MODEL':<12} {'MEAN_AUC':>10} {'STD_AUC':>9} {'MEAN_PR_AUC':>12}"
+    lines = [header, "-" * len(header)]
+
+    sort_col = mean_col if mean_col in summary.columns else "model"
+    view = summary.sort_values(sort_col, ascending=False) if sort_col != "model" else summary
+
+    for _, row in view.iterrows():
+        mean_auc = row.get(mean_col)
+        std_auc = row.get(std_col)
+        pr_auc = row.get("wf_mean_pr_auc")
+
+        def fmt(v: Any) -> str:
+            return f"{float(v):.4f}" if isinstance(v, (int, float)) else "-"
+
+        lines.append(
+            f"{str(row.get('model', '')):<12} {fmt(mean_auc):>10} "
+            f"{fmt(std_auc):>9} {fmt(pr_auc):>12}"
+        )
+    return "\n".join(lines)
+
+
+def classify_signal(
+    wf_mean_auc: float | None,
+    wf_std_auc: float | None,
+    wf_mean_pr_auc: float | None,
+    final_oos_auc: float | None,
+    positive_ratio: float | None = None,
+    *,
+    threshold_strong: float = 0.60,
+    threshold_possible: float = 0.55,
+    max_std_robust: float = 0.03,
+    oos_tolerance: float = 0.05,
+) -> str:
+    """Clasifica la señal según la sección CONCLUSIÓN de la FASE 10.
+
+    Reglas (umbrales fijos con defaults sensatos, config radio simple):
+    - ROBUST SIGNAL: media AUC alta (>= threshold_strong), std bajo
+      (<= max_std_robust), PR-AUC razonable (>= 1.5x positive_ratio si se conoce,
+      sino >= 0.10) y final OOS consistente (dentro de ``oos_tolerance`` de la
+      media, y >= threshold_possible).
+    - POSSIBLE SIGNAL: media AUC moderada (>= threshold_possible) o final OOS
+      dentro de tolerancia sin llegar a robusto.
+    - WEAK SIGNAL: hay pico/evidencia parcial pero inestable o colapso OOS.
+    - NO EVIDENCE: media AUC baja (< threshold_possible).
+
+    Devuelve solo la etiqueta (sin afirmar rentabilidad): el detalle se deja al
+    bloque de la comparación histórica.
+    """
+    if wf_mean_auc is None or not (isinstance(wf_mean_auc, (int, float))):
+        return "NO EVIDENCE"
+    if wf_mean_auc < threshold_possible:
+        return "NO EVIDENCE"
+
+    std = wf_std_auc if isinstance(wf_std_auc, (int, float)) else float("nan")
+    pr = wf_mean_pr_auc if isinstance(wf_mean_pr_auc, (int, float)) else float("nan")
+
+    def _nan(v: float) -> bool:
+        return v != v  # NaN
+
+    # Baseline PR-AUC: el de un clasificador aleatorio depende del positivos.
+    if isinstance(positive_ratio, (int, float)) and 0 <= positive_ratio <= 1:
+        pr_baseline = positive_ratio
+    else:
+        pr_baseline = 0.15
+
+    # Condiciones del caso robusto.
+    std_ok = not _nan(std) and std <= max_std_robust + 1e-9
+    pr_ok = (not _nan(pr)) and pr >= max(pr_baseline * 1.5, 0.10) - 1e-9
+    oos_ok = False
+    if isinstance(final_oos_auc, (int, float)):
+        oos_ok = (
+            abs(final_oos_auc - wf_mean_auc) <= oos_tolerance
+            and final_oos_auc >= threshold_possible
+        )
+
+    if wf_mean_auc >= threshold_strong and std_ok and pr_ok and oos_ok:
+        return "ROBUST SIGNAL"
+
+    if wf_mean_auc >= threshold_possible and oos_ok:
+        return "POSSIBLE SIGNAL"
+
+    if wf_mean_auc >= threshold_possible:
+        # Hay media razonable pero inestable o colapso OOS.
+        return "WEAK SIGNAL"
+
+    return "NO EVIDENCE"

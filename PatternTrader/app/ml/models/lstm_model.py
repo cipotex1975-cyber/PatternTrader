@@ -60,6 +60,9 @@ class LSTMModel(SequenceModel):
         self._learning_rate = config.get("learning_rate", self._learning_rate)
         self._batch_size = config.get("batch_size", self._batch_size)
         self._random_state = config.get("random_state", self._random_state)
+        self._patience = config.get("patience", self._patience)
+        self._best_epoch = config.get("best_epoch", self._best_epoch)
+        self._best_validation_loss = config.get("best_validation_loss", self._best_validation_loss)
         self._model = _SequenceClassifier(self._build_network())
         self._model.load_state_dict(state["state_dict"])
         self._is_trained = True

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import inspect
 import pickle
 from typing import Any
 
 import numpy as np
-from lightgbm import LGBMClassifier
+from lightgbm import LGBMClassifier, early_stopping
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -21,6 +22,13 @@ from app.ml.factory import MLModelFactory
 
 logger = get_logger("LightGBMModel")
 
+# LightGBM >=4.7 depreca `eval_set` en favor de `eval_X`/`eval_y`. Detectar la
+# API de la versión instalada para no inventar parámetros incompatibles (FASE 6).
+_LGBM_EVAL_XY_API = (
+    "eval_X" in inspect.signature(LGBMClassifier.fit).parameters
+    and "eval_y" in inspect.signature(LGBMClassifier.fit).parameters
+)
+
 
 class LightGBMModel(BaseMLModel):
     def __init__(
@@ -29,9 +37,11 @@ class LightGBMModel(BaseMLModel):
         max_depth: int = 8,
         learning_rate: float = 0.1,
         random_state: int = 42,
+        early_stopping_rounds: int = 0,
         **kwargs: Any,
     ) -> None:
         super().__init__()
+        self._early_stopping_rounds = early_stopping_rounds
         self._model = LGBMClassifier(
             n_estimators=n_estimators,
             max_depth=max_depth,
@@ -55,17 +65,50 @@ class LightGBMModel(BaseMLModel):
         X: np.ndarray,
         y: np.ndarray,
         feature_names: list[str] | None = None,
+        X_val: np.ndarray | None = None,
+        y_val: np.ndarray | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         logger.info(f"Training LightGBM model with {X.shape[0]} samples")
-        self._model.fit(X, y)
+        has_validation = X_val is not None and y_val is not None
+        early_stopping_rounds = max(0, self._early_stopping_rounds)
+        if has_validation:
+            assert X_val is not None and y_val is not None
+            callbacks: list[Any] = []
+            if early_stopping_rounds > 0:
+                callbacks.append(early_stopping(early_stopping_rounds, verbose=False))
+            fit_kwargs: dict[str, Any] = {}
+            if _LGBM_EVAL_XY_API:
+                fit_kwargs["eval_X"] = np.asarray(X_val)
+                fit_kwargs["eval_y"] = np.asarray(y_val)
+            else:
+                fit_kwargs["eval_set"] = [(np.asarray(X_val), np.asarray(y_val))]
+            if callbacks:
+                fit_kwargs["callbacks"] = callbacks
+            self._model.fit(X, y, **fit_kwargs)
+        else:
+            self._model.fit(X, y)
+
         self._is_trained = True
         self._feature_names = feature_names or []
 
         train_score = self._model.score(X, y)
         logger.info(f"Training accuracy: {train_score:.4f}")
 
-        return {"train_accuracy": train_score}
+        result: dict[str, Any] = {"train_accuracy": train_score, "early_stopping": False}
+        if has_validation:
+            val_score = self._model.score(np.asarray(X_val), np.asarray(y_val))
+            best_iteration = getattr(self._model, "best_iteration_", None)
+            result["validation_accuracy"] = float(val_score)
+            result["early_stopping"] = early_stopping_rounds > 0
+            if best_iteration is not None:
+                result["best_iteration"] = int(best_iteration)
+            logger.info(
+                f"Validation accuracy: {val_score:.4f}"
+                + (f" | best_iteration={int(best_iteration)}" if best_iteration is not None else "")
+            )
+
+        return result
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         return self._model.predict(X)

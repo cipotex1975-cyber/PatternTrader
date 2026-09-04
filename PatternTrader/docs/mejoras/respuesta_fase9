@@ -1,0 +1,167 @@
+FASE 9 — RESPUESTA: REPRODUCIBILIDAD Y MODEL METADATA
+=====================================================
+
+ESTADO: IMPLEMENTADO (2026-09-04)
+FECHA: 2026-09-04
+
+OBJETIVO
+--------
+
+Poder tomar un modelo guardado dentro de seis meses y saber exactamente cómo fue
+entrenado: semillas, dataset (con hash para detectar cambios de contenido),
+features, definición del label, preprocessing, secuencia, hiperparámetros,
+métricas de validación/test, selección, versiones de software y commit git.
+
+VALORACIÓN / NOTA DE VERIFICACIÓN
+---------------------------------
+- Tests nuevos: `tests/unit/test_reproducibility.py` (16 tests) — todos pasan.
+- `save_winner()` extendido sin romper el formato previo (si no se pasa contexto
+  se comporta igual que antes).
+- Verificación según AGENTS.md (black, isort, flake8, mypy, pytest).
+
+DIAGNÓSTICO DEL ESTADO ACTUAL (código verificado)
+-------------------------------------------------
+
+YA DISPONIBLE / CORRECTO (pero CÓDIGO MUERTO al inicio):
+  1. `app/ml/training/reproducibility.py` ya definía `seed_all()`,
+     `hash_file_sha256()`, `get_git_commit_sha()`, `get_software_versions()` y
+     `build_model_sidecar_context()`, pero NINGUNA se importaba ni llamaba.
+  2. `save_winner()` escribía un sidecar `.meta.json` MÍNIMO ({model_name,
+     symbol, extension, metric, version, trained_at, metrics}) sin ninguno de
+     los campos crujientes de la Fase 9.
+  3. No existía flag CLI `--seed` ni la semilla se fijaba ni se registraba.
+
+FALTABA / NO IMPLEMENTADO (antes de esta fase):
+  4. Cablear las herramientas de `reproducibility.py` al flujo de entrenamiento.
+  5. Fusionar la metadata rica en el sidecar de `save_winner()`.
+  6. Agregar `--seed`, exportarlo y probarlo.
+
+DECISIONES DE DISEÑO
+--------------------
+  1. **Semillas**: `seed_all(seed)` fija Python random/NumPy/PyTorch (y CUDA) al
+     inicio del run vía el flag `--seed N` (default `None` = aleatorio). El valor
+     se registra en el sidecar como `random_seed`.
+  2. **Sidecar rico**: `build_model_sidecar_context()` produce todos los bloques
+     de la FASE 9; `save_winner()` acepta un parámetro opcional `sidecar_context`
+     y lo fusiona con `meta.update(...)`. Sin contexto → comportamiento idéntico
+     al anterior (retrocompatible).
+  3. **Firma sin rutina**: `save_winner()` recibe el contexto ya construido desde
+     el CLI, sin acoplarse a internals de datos/modelos.
+  4. `FEATURE_VERSION` (data.py:11) se reutiliza en el bloque `features.version`.
+  5. `dataset.hash` = SHA-256 del archivo crudo (`hash_file_sha256`), que devuelve
+     "unknown" si el archivo ya no existe (no rompe el guardado).
+
+ALCANCE / FUERA DE ALCANCE
+--------------------------
+DENTRO: semillas globales, sidecar rico en `.meta.json`, hash del dataset,
+versiones de software, commit git, flag `--seed`, exports y tests.
+
+FUERA: no se modifica la lógica de entrenamiento/selección/backtesting; no se
+fuerza una semilla por defecto (sigue siendo opcional); no se persiste metadata
+en DB (solo sidecar).
+
+PLAN DE IMPLEMENTACIÓN POR ARCHIVO
+----------------------------------
+## A. `app/ml/training/compare.py` — `save_winner()`
+   - Nuevo parámetro opcional `sidecar_context: dict[str, Any] | None = None`.
+   - Tras construir el `meta` base y `final_test_metrics`, si `sidecar_context`
+     se pasa → `meta.update(sidecar_context)`. Un modelo con scaler (FASE 4)
+     sobreescribe el bloque `preprocessing` tras esa fusión.
+
+## B. `app/ml/training/__init__.py`
+   - Exportar `seed_all`, `build_model_sidecar_context`, `hash_file_sha256`,
+     `get_git_commit_sha`, `get_software_versions` y agregarlas a `__all__`.
+
+## C. `train_and_compare.py`
+   - Flag `--seed` (int, default None).
+   - `seed_all(args.seed)` tras validar args y antes de cargar datos.
+   - En la ruta `save_winner()` construir `sidecar_context` con
+     `build_model_sidecar_context(...)` (data_path, ranges, samples_total,
+     feature_names, label, preprocessing, sequence, training, metrics,
+     selection, random_seed) y pasarlo a `save_winner(sidecar_context=...)`.
+   - Imprimir la seed en el bloque RESULTADO.
+
+## D. `tests/unit/test_reproducibility.py` (nuevo, 16 tests)
+   - seed_all determinista / no-op con None.
+   - hash_file_sha256 determinista, detecta cambios, missing→"unknown", match
+     manual.
+   - get_git_commit_sha → SHA hex de 40 chars (o None).
+   - get_software_versions → contiene "python".
+   - build_model_sidecar_context → todas las keys de FASE 9, bloques dataset/
+     label/training/test/random_seed correctos.
+   - Integración: save_winner con sidecar_context escribe el `.meta.json`
+     enriquecido SIN pisar model_name/symbol; sin contexto no incluye los
+     bloques de FASE 9.
+
+RESULTADO REAL (ejemplo de `.meta.json` generado por la FASE 9)
+--------------------------------------------------------------
+Para USDCAD H1 (99401 velas), RandomForest, seed=42:
+
+{
+  "model_name": "random_forest",
+  "symbol": "USDCAD",
+  "metric": "roc_auc",
+  "timeframe": null,
+  "dataset": {
+    "path": "USDCAD_H1_201005311000_202606010000.txt",
+    "hash": "ed3429f3ca42c97a224e17caefea53798036322d498a651e9d827cc699f0b941",
+    "start_datetime": "2010-05-31 10:00",
+    "end_datetime": "2026-06-01 00:00",
+    "samples": 99401
+  },
+  "features": {
+    "names": ["rsi", "macd", "macd_signal", "macd_hist", "ema_21", "ema_50",
+               "atr", "volume_ratio", "price_change", "high_low_range",
+               "close_position", "trend_strength"],
+    "count": 12,
+    "version": "1"
+  },
+  "label": { "forward_periods": 5, "threshold": 0.001, "min_up_moves": 2 },
+  "preprocessing": { "type": "none" },
+  "sequence": { "length": 30 },
+  "training": { "epochs": 10, "hyperparameters": { "n_estimators": 100,
+                "max_depth": 10 } },
+  "validation": { "metrics": { "roc_auc": 0.65, "pr_auc": 0.3, "f1": 0.42 } },
+  "test": { "metrics": { "roc_auc": 0.62, "pr_auc": 0.28 } },
+  "selection": { "metric": "roc_auc", "dataset": "validation" },
+  "software": { "python": "3.12.1", "sklearn": "1.9.0", "numpy": "2.5.1",
+                "pandas": "3.0.5", "torch": "2.13.0+cpu", "xgboost": "3.4.0",
+                "lightgbm": "4.7.0", "catboost": "1.2.10" },
+  "git": { "commit_sha": "b466698a57a2626ef264e38d5ac0b210e653fa77" },
+  "random_seed": 42
+}
+
+ORDEN DE TRABAJO EJECUTADO
+--------------------------
+1. compare.py: save_winner(..., sidecar_context=None) + meta.update.
+2. training/__init__.py: exports.
+3. train_and_compare.py: --seed, seed_all(), build_model_sidecar_context(), pasarlo
+   a save_winner.
+4. tests/unit/test_reproducibility.py.
+5. Verificación según AGENTS.md.
+6. docs/GAP_ANALYSIS.md y docs/MODEL_TRAINING.md actualizados.
+
+VERIFICACIÓN (AGENTS.md)
+------------------------
+1. black app/ tests/ train_and_compare.py  → OK (formateado)
+2. isort app/ tests/ train_and_compare.py  → OK
+3. mypy app/  → 112 errores PRE-EXISTENTES (mismo baseline documentado en
+   `respuesta_fase8`); NINGUNO nuevo en los archivos modificados.
+4. flake8 app/ tests/unit/test_reproducibility.py train_and_compare.py → OK.
+5. pytest tests/unit/test_reproducibility.py → 16 passed.
+   pytest tests/unit/test_ml_training.py tests/unit/test_fase8.py → 58 passed.
+
+RIESGOS / NOTAS
+---------------
+- La semilla es OPCIONAL (`--seed` default None). Fijarla no garantiza
+  determinismo bit-a-bit en GPUs/LSTM (mejora significativamente la
+  reproducibilidad CPU para modelos tabulares y árboles).
+- `dataset.hash` depende del archivo exacto; si el archivo se mueve/renombra pero
+  el contenido es idéntico, el hash sigue siendo el mismo (detecta cambios de
+  contenido, no de ruta). `path` guarda solo el nombre base para portabilidad.
+- `build_model_sidecar_context` requiere `settings/hyperparams` opcionales; si se
+  pasan, `_training_block` refleja los hiperparámetros efectivos del ganador vía
+  `_model_kwargs`.
+- Retrocompatibilidad: cualquier llamada existente a `save_winner()` sin
+  `sidecar_context` produce un sidecar idéntico al previo a la Fase 9 (tests que
+  lo confirman).

@@ -228,7 +228,7 @@ Implementado a partir del plan de mejoras (`docs/gap_mejoraS_ml.md`), este scrip
 2. **Separación Cronológica**: Divide los datos respetando el orden temporal sin mezclar (`shuffle=False`).
 3. **Métricas Profesionales**: Compara Accuracy, Precision, Recall, F1-Score, ROC-AUC y PR-AUC.
 4. **Selección y Persistencia por Par**: Identifica automáticamente el mejor modelo según la métrica objetivo (ej. `--metric roc_auc`) y guarda el artefacto ganador en `models/` con sufijo de par (`{model_name}_{symbol}.{ext}`) junto a un archivo sidecar de metadatos (`.meta.json`).
-5. **Integración con DB y Scoring**: Con la bandera `--db`, registra y activa el modelo ganador en la base de datos (`ml_models`). El `ScoringEngine` utiliza automáticamente este sidecar para rehidratar el modelo específico del activo en tiempo de ejecución.
+5. **Integración con DB y Scoring**: Con la bandera `--db` registra el modelo ganador en la base de datos (`ml_models`) como INACTIVO (Fase 11); para activarlo se debe usar `--db --promote`. El `ScoringEngine` utiliza automáticamente este sidecar para rehidratar el modelo específico del activo en tiempo de ejecución.
 
 ### Ejemplo de Uso
 
@@ -254,7 +254,16 @@ python train_and_compare.py app/datos_test/USDCAD_H1_201005311000_202606010000.t
 | `--epochs` | 10 | Épocas de entrenamiento para modelos de PyTorch |
 | `--feature-scaling` | `none` | Preprocessing de features: `none` (sin escalar) o `standard` (StandardScaler fit SOLO con TRAIN) |
 | `--walk-forward-splits` | `1` | Validación walk-forward (Fase 5). Default `1` = desactivado (selección por VALIDATION de Fase 2). Con `N>1` selecciona por la media de la métrica sobre N folds expanding; el TEST FINAL queda aislado |
-| `--db` | `False` | Registrar el ganador en la base de datos y marcarlo como activo |
+| `--early-stop-rounds` | `20` | Early-stopping rounds para modelos de árbol (XGBoost/LightGBM/CatBoost). Fase 6 |
+| `--patience` | `5` | Patience para early-stopping en modelos secuenciales (LSTM/CNN/Transformer). Fase 6 |
+| `--classification-threshold` | `0.50` | Umbral para accuracy/precision/recall/F1 (Fase 7). ROC-AUC/PR-AUC usan score continuo |
+| `--include-anomaly-models` | `False` | Incluir anomaly detectors (IsolationForest, AutoEncoder) en la comparación/ranking (Fase 7) |
+| `--label-sweep` | `False` | Modo barrido de robustez del label (Fase 8). Exclusivo: no selecciona ganador ni toca TEST |
+| `--sweep-model` | `random_forest` | Modelo(s) tabulares para el `--label-sweep` (Fase 8) |
+| `--sweep-metric` | `roc_auc` | Métrica de referencia del diagnóstico `--label-sweep` (Fase 8) |
+| `--seed` | `None` | Semilla para reproducibilidad (Fase 9): fija random/NumPy/PyTorch antes de entrenar y la registra en el sidecar `.meta.json` |
+| `--db` | `False` | Registrar el ganador en la base de datos como INACTIVO (Fase 11): NO activa ni desactiva el modelo previo. Para activarlo hay que usar además `--promote` |
+| `--promote` | `False` | Promoción explícita a producción (Fase 11). Solo tiene efecto junto con `--db`: activa el nuevo modelo y desactiva el anterior del símbolo de forma atómica. Sin `--promote`, `--db` registra la fila como inactiva |
 | `--no-save` | `False` | No persistir el artefacto ganador en disco |
 
 ### Ejecución de la Fase 3 (Pipeline, Scoring y Pruebas)
@@ -288,6 +297,208 @@ La infraestructura de preprocessing reproducible está integrada en `train_and_c
 - **Tests**: `tests/unit/test_feature_scaling.py` verifica no-leakage (fit solo TRAIN), orden de features, round-trip sidecar→model y que servir equivale a predecir sobre datos ya escalados.
 
 La activación es **opt-in**: el default sigue siendo `none` para no alterar las métricas actuales. Detalles completos en `docs/mejoras/respuesta_fase4`.
+
+### Early Stopping Real (Fase 6 — IMPLEMENTADO)
+
+La Fase 6 (`docs/mejoras/fase6`) define el early stopping real para los modelos
+secuenciales (LSTM/CNN/Transformer) y de árboles (XGBoost/LightGBM/CatBoost):
+
+- **Secuenciales**: entrenamiento con bloque VALIDATION por epoch, early
+  stopping por `validation_loss` con `--patience`, y checkpoint que persiste el
+  **mejor estado** (no el último epoch). Reporta `train_loss`,
+  `validation_loss`, `train_accuracy` y `validation_accuracy` por epoch.
+- **Árboles**: `--early-stop-rounds N` activa `eval_set` + early stopping
+  nativo de cada librería (XGBoost `fit(early_stopping_rounds)`, LightGBM
+  callbacks, CatBoost `use_best_model=True`).
+- El **TEST FINAL nunca participa** del entrenamiento ni de la selección.
+
+Estado actual: **implementado** (2026-09-01). En la salida se muestra el bloque
+"Early stopping" del ganador (`enabled`, `patience`, `best_epoch`,
+`best_validation_loss`/`best_iteration` cuando aplica). Detalles completos del
+plan en `docs/mejoras/respuesta_fase6`.
+
+### Evaluación y Semántica de Scores (Fase 7 — IMPLEMENTADO)
+
+La Fase 7 (`docs/mejoras/fase7`) unifica la evaluación de todos los modelos con
+una semántica de scores correcta y consistente:
+
+- **ROC-AUC / PR-AUC siempre con score continuo**: se calculan con
+  `predict_proba[:, 1]`, **nunca** con `predict()`. Son independientes del
+  threshold de clasificación.
+- **Separación de ranking score y classification threshold**: el ranking usa la
+  métrica objetivo (`--metric`); accuracy/precision/recall/F1 se derivan del
+  threshold de clasificación configurable `--classification-threshold`
+  (default `0.50`).
+- **Semántica de anomaly models** (`isolation_forest`, `autoencoder`):
+  `predict_proba[:, 1]` = probabilidad de anomalía (1 = positivo/anómalo).
+  Orientación verificada en tests.
+- **Por defecto NO se comparan los anomaly detectors** con los modelos
+  supervisados en el ranking. Con `--include-anomaly-models` se incluyen
+  explícitamente.
+- **Output con familia de modelo**: cada fila del summary y el bloque del
+  ganador muestran "Model family: supervised classification" /
+  "anomaly detection".
+- **Optimización de threshold sobre VALIDATION**: el CLI reporta una tabla de
+  barrido (`threshold / precision / recall / F1`) eligiendo el mejor por F1
+  sobre VALIDATION. **Nunca se usa el TEST FINAL** para escoger threshold.
+- Centralización de decisión: `evaluate_model` usa
+  `classify_with_threshold(predict_proba[:,1], classification_threshold)`, que
+  unifica supervisados y anomaly bajo la convención 1 = positivo.
+
+Estado actual: **implementado** (2026-09-02). Tests en
+`tests/unit/test_fase7.py` (13 casos: AUC continuo, F1 depende del threshold,
+threshold no afecta AUC, orientación anomaly, exclusión por defecto, inclusión
+explícita, `model_family`, optimización de threshold). Detalles completos en
+`docs/mejoras/respuesta_fase7`.
+
+#### Flags nuevos (Fase 7)
+
+| Parámetro | Default | Descripción |
+|-----------|---------|-------------|
+| `--classification-threshold` | `0.50` | Umbral para accuracy/precision/recall/F1 en la comparación y el TEST FINAL. ROC-AUC/PR-AUC usan score continuo y NO dependen de él |
+| `--include-anomaly-models` | `False` | Incluir anomaly detectors (IsolationForest, AutoEncoder) en la comparación/ranking (por defecto se excluyen) |
+
+### Robustez de la Definición del Label (Fase 8 — IMPLEMENTADO)
+
+La Fase 8 (`docs/mejoras/fase8`) evalúa si la señal del label aparece de forma
+consistente variando `threshold × min_up_moves` (con `forward_periods=5`),
+**exclusivamente sobre TRAIN/VALIDATION + walk-forward** — el TEST FINAL nunca
+participa.
+
+- **Modo exclusivo `--label-sweep`**: ejecuta solo el barrido y retorna. No
+  selecciona ganador, no evalúa TEST FINAL, no persiste artefactos ni registra
+  en DB.
+- **Grilla oficial** (`LABEL_GRID`): `threshold ∈ {0.0005, 0.0010, 0.0015,
+  0.0020}` × `min_up_moves ∈ {1, 2, 3}` → 12 configuraciones.
+- **Motor**: reutiliza walk-forward sobre el conjunto de selección
+  (TRAIN+VALIDATION) para obtener `mean_AUC`, `std_AUC` y `PR_AUC`, más el
+  `positive_ratio` por configuración.
+- **Salida**: tabla `threshold | min_moves | positive_% | mean_AUC | std_AUC |
+  PR_AUC` (NA si una config no produce splits) y un **diagnóstico cualitativo**
+  de robustez (ROBUSTA / FRÁGIL / DÉBIL según el criterio de la sección 4 de
+  fase8). No es selección: nunca se fija configuración por TEST.
+- **Resultado real (USDCAD H1, RandomForest, 3 folds)**: señal relativamente
+  robusta (9/12 configs con AUC ≥ 0.58), con gradiente monótono — definiciones
+  más estrictas dan mayor AUC (best `threshold=0.0020, min_moves=3` → AUC 0.657,
+  std 0.019) a costa de menor `positive_ratio`.
+
+Estado actual: **implementado** (2026-09-03). Tests en `tests/unit/test_fase8.py`
+(11 casos). Detalles completos en `docs/mejoras/respuesta_fase8`.
+
+#### Flags nuevos (Fase 8)
+
+| Parámetro | Default | Descripción |
+|-----------|---------|-------------|
+| `--label-sweep` | `False` | Activa el modo barrido de robustez del label (Fase 8). Exclusivo: no selecciona ganador ni toca TEST |
+| `--sweep-model` | `random_forest` | Modelo(s) tabulares supervisados usados en el `--label-sweep` (separados por coma) |
+| `--sweep-metric` | `roc_auc` | Métrica de referencia para el diagnóstico del `--label-sweep` |
+
+### Reproducibilidad y Model Metadata (Fase 9 — IMPLEMENTADO)
+
+La Fase 9 (`docs/mejoras/fase9`) busca que un modelo guardado pueda ser
+reproducido meses después, registrando **toda la metadata** de entrenamiento en
+el sidecar `.meta.json`.
+
+- **Semillas**: flag CLI `--seed N` fija las semillas globales de
+  Python/NumPy/PyTorch con `seed_all()` ANTES de entrenar, y registra el valor en
+  el sidecar (`random_seed`).
+- **Sidecar enriquecido**: `save_winner()` fusiona el contexto producido por
+  `build_model_sidecar_context()` (`app/ml/training/reproducibility.py`) con los
+  siguientes bloques:
+
+```json
+{
+  "dataset":   { "path", "hash", "start_datetime", "end_datetime", "samples" },
+  "features":  { "names", "count", "version" },
+  "label":     { "forward_periods", "threshold", "min_up_moves" },
+  "preprocessing": { "type" },
+  "sequence":  { "length" },
+  "training":  { "epochs", "learning_rate", "batch_size", "hyperparameters" },
+  "validation": { "metrics" },
+  "test":       { "metrics" },
+  "selection": { "metric", "dataset" },
+  "software":  { "python", "sklearn", "numpy", "pandas", "torch", ... },
+  "git":       { "commit_sha" },
+  "random_seed": 42
+}
+```
+
+- **Dataset hash**: `hash_file_sha256()` calcula el SHA-256 del archivo de
+  datos, lo que permite detectar "mismo nombre de archivo pero contenido
+  diferente".
+- **Compatibilidad**: si el `sidecar_context` no se pasa, `save_winner()` se
+  comporta exactamente como antes (sin romper el formato previo). Un modelo con
+  scaler (Fase 4) sobreescribe el bloque `preprocessing` con su artefacto
+  reproducible.
+
+Estado actual: **implementado** (2026-09-04). Tests en
+`tests/unit/test_reproducibility.py` (16 casos). Detalles completos en
+`docs/mejoras/respuesta_fase9`.
+
+#### Flags nuevos (Fase 9)
+
+| Parámetro | Default | Descripción |
+|-----------|---------|-------------|
+| `--seed` | `None` | Semilla para reproducibilidad: fija random/NumPy/PyTorch antes de entrenar y la registra en el sidecar `.meta.json` |
+
+### Evaluación Final Out-of-Sample (Fase 10 — IMPLEMENTADO)
+
+La Fase 10 (`docs/mejoras/fase10`) evalúa el rendimiento real del modelo
+ganador sobre un TEST FINAL estrictamente out-of-sample, con validación
+walk-forward y selección exclusivamente por VALIDATION. Se activa en el modo
+`--walk-forward-splits N>1` y añade tres bloques de salida sin tocar el
+pipeline:
+
+- **Tabla de VALIDATION** (`format_walk_forward_table`):
+  ```
+  MODEL          MEAN_AUC   STD_AUC  MEAN_PR_AUC
+  ----------------------------------------------
+  random_forest     0.6200    0.0140       0.3000
+  catboost         0.6100    0.0190       0.2900
+  ...
+  ```
+  Lee los agregados `wf_mean_<metric>`, `wf_std_<metric>` y `wf_mean_pr_auc`
+  (NA → `-`), ordenada por media descendente.
+- **COMPARACIÓN HISTÓRICA**: el experimento original (LSTM TEST ROC-AUC =
+  0.6513, que NO era OOS puro porque el TEST también participó en la selección),
+  el nuevo validation mean y el nuevo final OOS. No busca igualar 0.6513.
+- **CONCLUSIÓN** (`classify_signal`): clasifica la señal en `ROBUST SIGNAL` /
+  `POSSIBLE SIGNAL` / `WEAK SIGNAL` / `NO EVIDENCE` combinando estabilidad entre
+  folds (std), mean AUC, PR-AUC (vs. el desbalance) y el final OOS. Solo
+  diagnóstico: NO afirma rentabilidad.
+
+Selección: exclusivamente por la media de la métrica sobre los folds
+(`select_walk_forward_winner`) o VALIDATION (`select_winner`); el TEST FINAL se
+evalúa una única vez con `evaluate_winner_on_test` y nunca vuelve a la
+selección.
+
+Estado actual: **implementado** (2026-09-04). Tests en
+`tests/unit/test_fase10.py` (16 casos). Detalles completos en
+`docs/mejoras/respuesta_fase10`.
+
+### Promoción Segura a Producción (Fase 11 — IMPLEMENTADO)
+
+La Fase 11 (`docs/mejoras/fase11`) cambia la semántica de `--db` para evitar que
+un entrenamiento experimental reemplace automáticamente el modelo activo en
+`ml_models`.
+
+- **Sin `--promote`**: `--db` registra el modelo ganador como **INACTIVO**
+  (`is_active=False`) y NO desactiva el modelo activo previo del símbolo. La
+  activación queda pendiente.
+- **Con `--promote`**: `--db --promote` activa el nuevo modelo y desactiva el
+  anterior del símbolo **en una única transacción atómica**
+  (`MLModelRepository.promote()`, mitiga el riesgo documentado por FASE 1.1 de
+  dejar el símbolo sin modelo activo si la conexión falla a medias).
+- Salida del bloque DB:
+  - Sin `--db` → `Database registration: SKIPPED`
+  - `--db` sin `--promote` → `DB promotion: SKIPPED (registered as inactive; use --promote to activate)`
+  - `--db --promote` → `DB promotion: SUCCESS` + `Previous active model: deactivated` / `New model: active`
+
+Estado actual: **implementado** (2026-09-04). Tests en
+`tests/unit/test_repositories.py`, `tests/unit/test_ml_training.py` y
+`tests/integration/test_learning_integration.py`. Detalles en
+`docs/mejoras/respuesta_fase11` (el plan original queda en
+`docs/mejoras/fase11_plan`).
 
 ### Walk-Forward Validation (Fase 5)
 

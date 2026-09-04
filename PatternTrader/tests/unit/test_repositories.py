@@ -290,6 +290,64 @@ async def test_ml_model_upsert_and_list(sync_db):
 
 
 @pytest.mark.asyncio
+async def test_ml_model_promote_activates_new_and_deactivates_previous(sync_db):
+    repo = MLModelRepository()
+
+    await repo.upsert(name="random_forest_USDCAD", is_active=True)
+    await repo.upsert(
+        name="xgboost_USDCAD",
+        model_type="classification",
+        version="1.0",
+        path="/tmp/xgboost.pkl",
+        metrics={"roc_auc": 0.8},
+    )
+
+    await repo.promote(
+        name="xgboost_USDCAD",
+        symbol="USDCAD",
+        model_type="classification",
+        version="2.0",
+        path="/tmp/xgboost_v2.pkl",
+        metrics={"roc_auc": 0.85},
+    )
+
+    new = await repo.get("xgboost_USDCAD")
+    assert new is not None
+    assert new["is_active"] is True
+    assert new["version"] == "2.0"
+    assert new["metrics"]["roc_auc"] == 0.85
+
+    old = await repo.get("random_forest_USDCAD")
+    assert old is not None
+    assert old["is_active"] is False
+
+    active = await repo.get_active()
+    assert [m["name"] for m in active] == ["xgboost_USDCAD"]
+
+
+@pytest.mark.asyncio
+async def test_ml_model_promote_does_not_touch_other_symbols(sync_db):
+    repo = MLModelRepository()
+
+    await repo.upsert(name="random_forest_USDCAD", is_active=True)
+    await repo.upsert(name="random_forest_EURUSD", is_active=True)
+
+    await repo.promote(name="xgboost_EURUSD", symbol="EURUSD")
+
+    other = await repo.get("random_forest_USDCAD")
+    assert other is not None
+    assert other["is_active"] is True
+
+    old = await repo.get("random_forest_EURUSD")
+    assert old is not None
+    assert old["is_active"] is False
+
+    new = await repo.get("xgboost_EURUSD")
+    assert new is not None
+    assert new["is_active"] is True
+
+
+@pytest.mark.asyncio
 async def test_prediction_add_persists(sync_db):
     repo = PredictionRepository()
     await repo.add(

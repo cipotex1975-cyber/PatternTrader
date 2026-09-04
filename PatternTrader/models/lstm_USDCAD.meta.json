@@ -3,35 +3,31 @@
   "symbol": "USDCAD",
   "extension": ".pt",
   "metric": "roc_auc",
-  "version": "20260825_185433",
-  "trained_at": "2026-08-25T18:54:33.157342+00:00",
+  "version": "20260903_174120",
+  "trained_at": "2026-09-03T17:41:20.785322+00:00",
   "metrics": {
-    "train_loss": 6.540471580128104,
+    "train_accuracy": 0.6258594401772101,
+    "train_loss": 0.6454891324715301,
+    "validation_accuracy": 0.6174239881871266,
+    "validation_loss": 0.6563520449745297,
+    "best_epoch": 8.0,
+    "best_validation_loss": 0.6531880575635914,
+    "opt_best_threshold": 0.3,
     "samples_train": 69522,
     "samples_validation": 14899,
-    "accuracy": 0.61198738170347,
-    "precision": 0.5454545454545454,
-    "recall": 0.4351034814695973,
-    "f1": 0.48406961178045516,
-    "roc_auc": 0.6332842594724024,
-    "pr_auc": 0.5326201320778836
+    "accuracy": 0.6101080609436875,
+    "precision": 0.5570813139472267,
+    "recall": 0.3319428846462378,
+    "f1": 0.4160048255755504,
+    "roc_auc": 0.6332120668009277,
+    "pr_auc": 0.5309687957950884
   },
   "final_test_metrics": {
-    "accuracy": 0.6495370991547028,
-    "precision": 0.40567864056786407,
-    "recall": 0.43386243386243384,
-    "f1": 0.4192974655402401,
-    "roc_auc": 0.6380208110362069,
-    "pr_auc": 0.4010814632203045
-  },
-  "decision_threshold": 0.35,
-  "threshold_selection": {
-    "dataset": "validation",
-    "metric": "f1",
-    "range": [
-      0.2,
-      0.8
-    ],
-    "step": 0.01
+    "accuracy": 0.6742922313162485,
+    "precision": 0.4295227524972253,
+    "recall": 0.35610766045548653,
+    "f1": 0.38938498302100366,
+    "roc_auc": 0.6402788733666575,
+    "pr_auc": 0.4054331377717867
   }
 }

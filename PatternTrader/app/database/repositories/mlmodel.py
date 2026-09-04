@@ -41,6 +41,46 @@ class MLModelRepository:
                 orm.metadata_json = metadata
             await session.flush()
 
+    async def promote(
+        self,
+        name: str,
+        symbol: str,
+        model_type: str = "",
+        version: str = "",
+        path: str = "",
+        metrics: Optional[dict[str, Any]] = None,
+        trained_at: Optional[datetime] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Promueve un modelo a activo y desactiva el anterior del símbolo.
+
+        FASE 11: ambas operaciones (desactivar los activos previos del símbolo y
+        activar el nuevo) se ejecutan dentro de UNA sola transacción, de modo que
+        si la conexión falla se revierte todo y el símbolo conserva su modelo
+        activo anterior (mitiga el riesgo documentado por FASE 1.1).
+        """
+        async with get_async_session() as session:
+            all_models = await session.execute(select(MLModelORM))
+            for orm in all_models.scalars():
+                if orm.name.endswith(f"_{symbol}"):
+                    orm.is_active = False
+
+            result = await session.execute(select(MLModelORM).where(MLModelORM.name == name))
+            orm = result.scalar_one_or_none()
+            if orm is None:
+                orm = MLModelORM(name=name)
+                session.add(orm)
+            orm.model_type = model_type
+            orm.version = version
+            orm.path = path
+            orm.metrics = metrics or {}
+            orm.is_active = True
+            if trained_at is not None:
+                orm.trained_at = trained_at
+            if metadata is not None:
+                orm.metadata_json = metadata
+            await session.flush()
+
     async def get(self, name: str) -> Optional[dict[str, Any]]:
         async with get_async_session() as session:
             result = await session.execute(select(MLModelORM).where(MLModelORM.name == name))

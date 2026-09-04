@@ -193,7 +193,7 @@ class TestComparison:
         assert np.isfinite(row["train_accuracy"])
         assert np.isnan(row["train_loss"])
 
-    def test_sequence_models_report_train_loss_without_accuracy(self):
+    def test_sequence_models_report_train_and_validation_metrics(self):
         X, y = _make_matrix(n=80, features=12)
         summary, _ = run_comparison(
             X[:60],
@@ -207,8 +207,12 @@ class TestComparison:
             hyperparams={"cnn": {"hidden_dim": 4, "kernel_size": 3}},
         )
         row = summary.iloc[0]
-        assert np.isnan(row["train_accuracy"])
+        # FASE 6: ahora también se reportan accuracy y métricas de VALIDATION.
+        assert np.isfinite(row["train_accuracy"])
         assert np.isfinite(row["train_loss"]) and row["train_loss"] > 0
+        assert np.isfinite(row["validation_loss"])
+        assert np.isfinite(row["validation_accuracy"])
+        assert row["best_epoch"] in (1.0, 2.0)
 
 
 class TestEvaluateAndSave:
@@ -363,10 +367,37 @@ class TestDBRegistration:
         async def unavailable(*args, **kwargs):
             raise SQLAlchemyError("PostgreSQL unavailable at localhost:5432")
 
+        monkeypatch.setattr(MLModelRepository, "upsert", unavailable)
+        monkeypatch.setattr(MLModelRepository, "promote", unavailable)
         monkeypatch.setattr(MLModelRepository, "deactivate_by_symbol", unavailable)
 
     @pytest.mark.asyncio
     async def test_training_success_and_db_available(self, sync_db, tmp_path, capsys):
+        from app.database.repositories import MLModelRepository
+        from train_and_compare import main
+
+        data_file = self._data_file(tmp_path)
+        await main(
+            [
+                data_file,
+                "--model",
+                "random_forest",
+                "--save-dir",
+                str(tmp_path / "models"),
+                "--db",
+                "--promote",
+            ]
+        )
+
+        out = capsys.readouterr().out
+        assert "DB_REGISTRATION_STATUS=SUCCESS" in out
+        assert "DB promotion:\n  SUCCESS" in out
+
+        active = await MLModelRepository().get_active()
+        assert any(m["name"] == "random_forest_USDCAD" for m in active)
+
+    @pytest.mark.asyncio
+    async def test_db_without_promote_registers_inactive(self, sync_db, tmp_path, capsys):
         from app.database.repositories import MLModelRepository
         from train_and_compare import main
 
@@ -384,9 +415,14 @@ class TestDBRegistration:
 
         out = capsys.readouterr().out
         assert "DB_REGISTRATION_STATUS=SUCCESS" in out
+        assert "DB promotion:\n  SKIPPED" in out
+
+        item = await MLModelRepository().get("random_forest_USDCAD")
+        assert item is not None
+        assert item["is_active"] is False
 
         active = await MLModelRepository().get_active()
-        assert any(m["name"] == "random_forest_USDCAD" for m in active)
+        assert all(m["name"] != "random_forest_USDCAD" for m in active)
 
     @pytest.mark.asyncio
     async def test_training_success_db_unavailable_no_traceback(

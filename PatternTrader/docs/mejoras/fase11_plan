@@ -1,0 +1,222 @@
+FASE 11 — PLAN: PROMOCIÓN SEGURA A PRODUCCIÓN
+=============================================
+
+ESTADO: PLAN (2026-09-04) — pendiente de implementar
+FECHA: 2026-09-04
+
+OBJETIVO
+--------
+
+Cambiar la semántica de `--db`: por defecto un entrenamiento se guarda y genera
+reportes pero NO se promueve automáticamente a producción. La activación de un
+modelo debe ser una acción EXPLÍCITA con un nuevo flag `--promote`
+(`--db --promote`). Además, mitigar el riesgo documentado por FASE 1.1
+(deactivate-before-upsert no atómico) mediante una transacción única que agrupe
+la desactivación del modelo previo y el alta/activación del nuevo.
+
+====================================================================
+1. PROBLEMA ACTUAL (verificado en el código)
+====================================================================
+
+`train_and_compare.py::register_in_db()` (línea 152) hace actualmente:
+
+    await repo.deactivate_by_symbol(symbol)     # marca inactivos los {modelo}_{symbol}
+    await repo.upsert(..., is_active=True)      # da de alta el nuevo como ACTIVO
+
+Consecuencia: cualquier entrenamiento experimental (incluso sin supervisión) que
+use `--db` reemplaza automáticamente el modelo activo del símbolo.
+
+Riesgo (FASE 1.1): `deactivate_by_symbol()` y `upsert()` se ejecutan en
+sesiones/transacciones SEPARADAS (`get_async_session()` abre su propio commit por
+método, ver `app/database/base.py:80-91`). Si la conexión falla tras desactivar
+pero antes del upsert, la tabla `ml_models` queda SIN modelo activo para el
+símbolo.
+
+====================================================================
+2. NUEVO COMPORTAMIENTO DESEADO
+====================================================================
+
+| Flag                 | Comportamiento DB                                   |
+|----------------------|-----------------------------------------------------|
+| (sin --db)           | No registra nada (status SKIPPED).                  |
+| `--db`               | Registra/actualiza la fila como INACTIVO; NO desactiva el activo existente. La promoción queda pendiente. |
+| `--db --promote`     | En UNA transacción: desactiva el activo previo del símbolo y activa el nuevo. |
+
+Ejemplo sin `--promote`:
+
+    DB promotion:
+      SKIPPED (modelo registrado como inactivo)
+
+Ejemplo con `--db --promote`:
+
+    DB promotion:
+      SUCCESS
+    Previous active model:
+      deactivated
+    New model:
+      active
+
+====================================================================
+3. DISEÑO DE LA TRANSACCIÓN ÚNICA (mitigación FASE 1.1)
+====================================================================
+
+`register_in_db` debe ejecutar `deactivate` + `upsert(active)` de forma ATÓMICA.
+
+Opciones:
+
+**Opción A (recomendada): repositorio con un método de promoción atómico** en
+`MLModelRepository` (p. ej. `promote(symbol, payload)` o
+`deactivate_and_upsert(symbol, ...)`) que abra UNA sola sesión/transacción y
+realice ambas operaciones dentro de un único `commit()`. De esta forma, si la
+transacción falla, todo se revierte (rollback) y el activo existente se
+conserva.
+
+**Opción B:** envolver en `register_in_db` una única sesión compartida. Requiere
+reestructurar `MLModelRepository` para aceptar/inyectar una sesión compartida.
+
+Se elige la **Opción A**: es la más limpia y acota el cambio a un solo método del
+repositorio, preservando la interfaz pública existente (`upsert`, `get_active`,
+etc.) para el resto del sistema (API, ScoringEngine).
+
+Detalle propuesto del método atómico:
+
+    async def promote(self, *, name, symbol, model_type, version, path,
+                       metrics, trained_at, metadata) -> None:
+        async with get_async_session() as session:      # UNA transacción
+            # 1) desactivar los activos del símbolo (sufijo _{symbol})
+            for orm in (await session.execute(select(MLModelORM))).scalars():
+                if orm.name.endswith(f"_{symbol}"):
+                    orm.is_active = False
+            # 2) upsert del nuevo como activo
+            result = await session.execute(select(MLModelORM)
+                                           .where(MLModelORM.name == name))
+            orm = result.scalar_one_or_none()
+            if orm is None:
+                orm = MLModelORM(name=name)
+                session.add(orm)
+            orm.model_type = model_type
+            orm.version = version
+            orm.path = path
+            orm.metrics = metrics or {}
+            orm.is_active = True
+            if trained_at is not None:
+                orm.trained_at = trained_at
+            if metadata is not None:
+                orm.metadata_json = metadata
+            await session.flush()                        # commit al salir del ctx
+
+Nota: en PRÁCTICA el commit/rollback lo gestiona `get_async_session()`
+(`app/database/base.py`). La clave es que ambas operaciones compartan la misma
+sesión, de modo que un fallo revierte ambas (mitiga el riesgo de dejar el
+símbolo sin activo).
+
+Se CONSERVA `deactivate_by_symbol()` y `upsert()` tal cual para no romper otros
+consumidores (API/Scoring); `register_in_db` usará el nuevo método de promoción.
+
+====================================================================
+4. CAMBIOS POR ARCHIVO
+====================================================================
+
+## A. `app/database/repositories/mlmodel.py`
+   - Añadir método atómico `promote(...)` (ver diseño en sección 3).
+   - Mantener `upsert(...)`, `deactivate_by_symbol(...)`, `get_active()` sin
+     cambios.
+
+## B. `train_and_compare.py`
+   - Añadir flag `--promote` (`action="store_true"`).
+   - Cambiar `register_in_db()`:
+       * Nueva firma: `register_in_db(symbol, timeframe, winner, artifact_path,
+         metric, *, promote=False) -> bool`.
+       * Si `promote=False`: SOLO `repo.upsert(..., is_active=False)` (no
+         desactiva el previo, no toca el activo actual).
+       * Si `promote=True`: `repo.promote(...)` (atómico, desactiva previo +
+         activa nuevo).
+       * Mantener try/except SQLAlchemyError/ConnectionError/OSError (FASE 1.1).
+   - En `main()`:
+       * Pasar `promote=args.promote` a `register_in_db`.
+       * Actualizar el bloque RESULTADO/DB para reflejar el estado de promoción:
+         - Sin `--db`                      → `DB promotion: SKIPPED`
+         - `--db` sin `--promote`          → `DB promotion: SKIPPED (inactivo)`
+         - `--db --promote`                → `DB promotion: SUCCESS` + líneas
+           "Previous active model: deactivated" / "New model: active"
+       * Mantener `DB_REGISTRATION_STATUS` pero renombrar el concepto a
+         "promotion" en la salida (o mantener ambos para compatibilidad de
+         scripts que parsean `DB_REGISTRATION_STATUS`).
+
+## C. `tests/integration/test_learning_integration.py`
+   - `test_register_in_db_activates_per_symbol`: ajustar para usar
+     `promote=True` (ya que activar el nuevo es el caso con promoción).
+   - Añadir test: con `promote=False` la fila queda INACTIVA y NO se desactiva el
+     modelo activo previo.
+
+## D. `tests/unit/test_ml_training.py`
+   - Clase `TestDBRegistration`:
+       * `test_training_success_and_db_available`: actualizar para `--db
+         --promote` si se quiere verificar activación; o verificar que `--db`
+         solo deja inactivo.
+       * Nuevo test: `--db` sin `--promote` → fila inactiva, sin promoción
+         (assert `is_active=False`), `DB_REGISTRATION_STATUS=SKIPPED` (o el
+         nuevo status de promoción).
+       * Nuevo test: `--db --promote` → fila activa, previo desactivado,
+         `SUCCESS`.
+       * Tests de fallo de DB (artefacto sobrevive, summary sobrevive) se
+         mantienen: capturar tanto para `--db` y `--db --promote`.
+
+====================================================================
+5. SALIDA DE CONSOLA PROPUESTA
+====================================================================
+
+Sin `--db`:
+    DB promotion:
+      SKIPPED
+
+Con `--db` (sin `--promote`):
+    DB promotion:
+      SKIPPED (registered as inactive; use --promote to activate)
+    Model registered (inactive): random_forest_USDCAD
+
+Con `--db --promote`:
+    DB promotion:
+      SUCCESS
+    Previous active model:
+      deactivated
+    New model:
+      active
+
+Variable de salida para scripts: `DB_REGISTRATION_STATUS` se mantiene con
+valores `SKIPPED | SUCCESS | FAILED` (semántica: promoción de DB). Se puede
+añadir `DB_PROMOTION` si se desea más granularidad, pero NO es obligatorio.
+
+====================================================================
+6. CRITERIOS DE ACEPTACIÓN
+====================================================================
+
+1. `--db` por defecto NUNCA activa un modelo ni desactiva el activo previo.
+2. `--db --promote` activa el nuevo y desactiva el previo, atómicamente.
+3. Si la promoción falla (DB caída o error), todo se revierte y el artefacto en
+   disco sigue intacto (sin traceback, exit code 0 implícito).
+4. La promoción NO depende del TEST (igual que antes, `--db`/`--promote` no tocan
+   la selección).
+5. La interfaz pública de `MLModelRepository` para API/Scoring no se rompe.
+
+====================================================================
+7. ORDEN DE TRABAJO SUGERIDO
+====================================================================
+
+1. A: `MLModelRepository.promote(...)` (transacción única) + su test unitario.
+2. B: `register_in_db(promote=...)` + flag `--promote` + salida en `main()`.
+3. C/D: actualizar tests de integración y unitarios.
+4. Verificación (AGENTS.md): black, isort, flake8, mypy, pytest.
+5. Documentación: `respuesta_fase11`, `GAP_ANALYSIS.md`, `MODEL_TRAINING.md`,
+   `README.md` (si se menciona `--db`).
+6. Ejecutar suite completa y documentar resultado.
+
+====================================================================
+8. FUERA DE ALCANCE
+====================================================================
+
+- No se modifica la lógica de entrenamiento/selección/test.
+- No se añade un mecanismo de "rollback del modelo activo" más allá de que la
+  promoción sea atómica (conserva el activo anterior si falla).
+- No se cambia el esquema de DB (una fila por `{modelo}_{symbol}`, misma
+  convención de nombres, columna `is_active`).

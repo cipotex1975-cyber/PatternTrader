@@ -1,0 +1,170 @@
+FASE 10 — RESPUESTA: EVALUACIÓN FINAL OUT-OF-SAMPLE
+==================================================
+
+ESTADO: IMPLEMENTADO (2026-09-04)
+FECHA: 2026-09-04
+
+OBJETIVO
+--------
+
+Evaluar el rendimiento real del modelo ganador sobre un TEST FINAL estrictamente
+out-of-sample, con validación walk-forward (5 folds) y selección exclusivamente
+por la media de ROC-AUC sobre VALIDATION (o la métrica CLI elegida). Reportar la
+tabla de VALIDATION, la evaluación FINAL OOS única y una comparación histórica
+frente al experimento original (LSTM TEST ROC-AUC = 0.6513), y clasificar la
+señal (ROBUST/POSSIBLE/WEAK/NO EVIDENCE) SIN afirmar rentabilidad.
+
+CUMPLIMIENTO DE LAS RESTRICCIONES DE LA FASE
+--------------------------------------------
+- NO se modifica el pipeline después de iniciar la fase: solo se añade reporte
+  a la salida del modo walk-forward existente.
+- NO se optimiza después de mirar TEST: el TEST FINAL se evalúa una única vez y
+  su resultado nunca vuelve a la selección.
+- La selección se hace EXCLUSIVAMENTE por la media de la métrica sobre los folds
+  walk-forward (select_walk_forward_winner) o VALIDATION (select_winner).
+
+VALORACIÓN / NOTA DE VERIFICACIÓN
+---------------------------------
+- Tests nuevos: `tests/unit/test_fase10.py` (16 tests) — todos pasan.
+- Verificación completa del repo: 447 passed, 17 skipped, 4 fallos
+  PRE-EXISTENTES y NO relacionados (documentados en `respuesta_fase8`):
+  · `test_sequence_models_train_predict_evaluate[LSTM/Transformer/CNN]`: test
+    obsoleto de Fase 6 (train() devuelve `train_loss`).
+  · `test_pipeline_health_recalculation_is_throttled`: falla por timing.
+- flake8 limpio en los archivos modificados. black/isort limpios.
+- mypy: 112 errores PRE-EXISTENTES (mismo baseline de respuestas previas); sin
+  errores nuevos en `compare.py` ni `train_and_compare.py`.
+
+DIAGNÓSTICO DEL ESTADO ACTUAL (código verificado)
+-------------------------------------------------
+
+YA DISPONIBLE (de fases previas) / REUTILIZADO:
+  1. `run_walk_forward_comparison` (FASE 5): folds expanding, agrega
+     wf_mean_*/wf_std_* por métrica y conserva el modelo del último fold.
+  2. `select_walk_forward_winner` (FASE 5): selección por media de la métrica.
+  3. `evaluate_winner_on_test` (FASE 2): evaluación única del ganador sobre
+     TEST FINAL (roc_auc, pr_auc, accuracy, precision, recall, f1).
+  4. Los 6 modelos objetivo (LSTM, CNN, CatBoost, LightGBM, XGBoost, RF) se
+     comparan por defecto; los anomaly detectors quedan fuera del ranking
+     principal (ANOMALY_MODELS excluidos por defecto).
+
+FALTABA / NO IMPLEMENTADO (antes de esta fase):
+  5. Tabla de VALIDATION walk-forward (MODEL | MEAN_AUC | STD_AUC | MEAN_PR_AUC):
+     `format_summary_table` solo renderiza columnas de Fase 2 (roc_auc, acc, ...)
+     que en modo walk-forward son NaN → la tabla de validación salía vacía.
+  6. Bloque COMPARACIÓN HISTÓRICA (experimento original vs. nuevo validation vs.
+     nuevo final OOS) con la aclaración de que 0.6513 no era OOS puro.
+  7. Bloque CONCLUSIÓN con la clasificación ROBUST/POSSIBLE/WEAK/NO EVIDENCE.
+
+DECISIONES DE DISEÑO (confirmadas con el usuario)
+------------------------------------------------
+  1. **Orquestación** en `train_and_compare.py`: el reporte Fase 10 se añade a la
+     salida del modo `--walk-forward-splits N>1`, sin tocar el pipeline.
+  2. **Umbrales fijos** con defaults sensatos (config radio simple), documentados,
+     no expuestos por flag CLI:
+     - threshold_strong = 0.60 (ROBUST)
+     - threshold_possible = 0.55
+     - max_std_robust = 0.03
+     - oos_tolerance = 0.05
+     - PR-AUC plausible >= max(1.5×positive_ratio, 0.10)
+  3. **Clasificación** (`classify_signal`): combina estabilidad entre folds
+     (std), mean AUC, PR-AUC (vs. baseline del desbalance) y final OOS
+     (consistente dentro de tolerancia). Solo etiqueta: NO afirma rentabilidad.
+
+ALCANCE / FUERA DE ALCANCE
+--------------------------
+DENTRO: tabla de VALIDATION walk-forward, comparación histórica, clasificación de
+la señal, exports y tests.
+
+FUERA: no se modifica la lógica de entrenamiento/selección/test; no se persiste
+nuevo artefacto; no se afirma rentabilidad; no se cambian los umbrales por CLI.
+
+PLAN DE IMPLEMENTACIÓN POR ARCHIVO
+----------------------------------
+## A. `app/ml/training/compare.py`
+   - `format_walk_forward_table(summary, metric)`: renderiza la tabla FASE 10 a
+     partir de `wf_mean_<metric>`, `wf_std_<metric>` y `wf_mean_pr_auc`. NA → "-".
+     Ordena por la media de la métrica descendente.
+   - `classify_signal(wf_mean_auc, wf_std_auc, wf_mean_pr_auc, final_oos_auc,
+     positive_ratio, *, umbrales...)`: devuelve ROBUST/POSSIBLE/WEAK/NO EVIDENCE.
+
+## B. `app/ml/training/__init__.py`
+   - Exportar `format_walk_forward_table` y `classify_signal`.
+
+## C. `train_and_compare.py`
+   - En el modo walk-forward: imprimir la tabla de VALIDATION con
+     `format_walk_forward_table` (en vez de `format_summary_table`, que no aplica).
+   - Tras la evaluación final: `_print_fase10_report(...)` que imprime la
+     COMPARACIÓN HISTÓRICA (LSTM TEST 0.6513 + aclaración, nuevo validation mean,
+     nuevo final OOS) y la CONCLUSIÓN con `classify_signal`.
+
+## D. `tests/unit/test_fase10.py` (nuevo, 16 tests)
+   - Tabla: header, valores, NA→"-", orden, manejo de floats.
+   - Clasificación: ROBUST (todos los factores), POSSIBLE (moderado/PR bajo),
+     WEAK (colapso OOS / std alto), NO EVIDENCE (media baja / None), y que la
+     etiqueta no afirma rentabilidad.
+   - Integración: winner por media de folds (no TEST), summary con wf_*,
+     salida CLI contiene VALIDATION (walk-forward folds), COMPARACIÓN HISTÓRICA
+     y la referencia 0.6513.
+
+RESULTADO REAL / SALIDA DE EJEMPLO
+----------------------------------
+Tabla de VALIDATION (walk-forward folds):
+
+ MODEL          MEAN_AUC   STD_AUC  MEAN_PR_AUC
+ ----------------------------------------------
+ random_forest     0.6200    0.0140       0.3000
+ catboost         0.6100    0.0190       0.2900
+ xgboost          0.6000    0.0200       0.2800
+ ...
+
+COMPARACIÓN HISTÓRICA:
+  Original experiment:
+    LSTM TEST ROC-AUC = 0.6513
+    Nota: 0.6513 NO era una evaluación OOS pura porque el TEST FINAL también se
+    utilizó para seleccionar el ganador en la fase original.
+  Nuevo validation (media de folds walk-forward):
+    {winner} mean ROC-AUC = ...
+  Nuevo final OOS (evaluación única sobre TEST FINAL):
+    {winner} ROC-AUC = ...
+  IMPORTANTE: este reporte NO intenta maximizar el resultado para coincidir con
+  0.6513.
+
+CONCLUSIÓN:
+  Clasificación de la señal: POSSIBLE SIGNAL (p. ej.)
+  (Solo diagnóstico de la señal; NO se afirma rentabilidad todavía.)
+
+CÓMO EJECUTAR
+-------------
+python train_and_compare.py app/datos_test/USDCAD_H1_201005311000_202606010000.txt \
+  --symbol USDCAD --timeframe H1 --walk-forward-splits 5 --seed 42 --model \
+  lstm,cnn,catboost,lightgbm,xgboost,random_forest
+
+ORDEN DE TRABAJO EJECUTADO
+--------------------------
+1. compare.py: format_walk_forward_table + classify_signal.
+2. training/__init__.py: exports.
+3. train_and_compare.py: tabla de VALIDATION + _print_fase10_report (comparación
+   histórica + conclusión).
+4. tests/unit/test_fase10.py.
+5. Verificación según AGENTS.md.
+6. docs/GAP_ANALYSIS.md y docs/MODEL_TRAINING.md actualizados.
+
+VERIFICACIÓN (AGENTS.md)
+------------------------
+1. black app/ tests/ train_and_compare.py  → OK
+2. isort app/ tests/ train_and_compare.py  → OK
+3. mypy app/  → 112 errores PRE-EXISTENTES; sin nuevos.
+4. flake8 app/ tests/  → OK en los archivos modificados.
+5. pytest tests/unit/test_fase10.py → 16 passed.
+   pytest (suite completa) → 447 passed, 17 skipped, 4 fallos pre-existentes.
+
+RIESGOS / NOTAS
+---------------
+- Los umbrales de `classify_signal` son heurísticos y configurados con defaults
+  sensatos; son solo diagnóstico, no selección. No se afirma rentabilidad.
+- 0.6513 es la cifra documentada del experimento original (fase1/fase1.1) donde
+  el TEST participaba en la selección; se incluye únicamente como referencia
+  histórica y NO se persigue igualarlo.
+- El modo requiere `--walk-forward-splits N>1`; con el default (1) la salida
+  Fase 10 no se activa (se mantienen los bloques de Fase 2).
