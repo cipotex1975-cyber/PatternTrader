@@ -240,7 +240,7 @@ pipeline resuelve el proveedor por símbolo en cada ciclo. Ver
 **Notas**:
 - `MetaTrader5` e `ib_async` son dependencias opcionales: instálalas solo si vas a usar esos proveedores (`pip install MetaTrader5`, `pip install ib_async`).
 - La normalización de símbolos depende del proveedor: `BTCUSDT` → `BTC/USDT` (Bybit), `BTC-USD` (Yahoo crypto), `EURUSD=X` (Yahoo forex), `X:BTCUSDT` (Polygon), `BTC` + `USDT` (AlphaVantage crypto), `BTCUSDT` (MT5/IB).
-- Yahoo Finance **no soporta el timeframe `4h`** y su historial intraday está limitado a ~60 días; usa `1h`/`1d` para símbolos enrutados a Yahoo.
+- Yahoo Finance **no ofrece el timeframe `4h` nativamente**: el provider lo resuelve agregando velas de `1h` (agrupación de 4). Su historial intraday está limitado a ~60 días; usa `1h`/`1d` para datos largos.
 - AlphaVantage free tier limita a 25 requests/día; Polygon free tier ~5 requests/min.
 
 ### Market
@@ -301,15 +301,30 @@ patterns:
   # Configuración de lifecycle / pipeline
   lifecycle:
     enabled: true                 # Ejecuta el pipeline al iniciar la API
-    check_interval_seconds: 5     # Intervalo de verificación
+    check_interval_seconds: 5     # Intervalo mínimo de validación (s)
+    polling_checks_per_candle: 60 # Validaciones por vela (1h->60s, 4h->240s)
     max_patterns_per_symbol: 50   # Máximo de patrones por símbolo
     timeframes: ["15m", "1h", "4h"]  # Timeframes del pipeline
     candle_limit: 500             # Velas por símbolo en cada ciclo
-  
+
   # Configuración de health
   health:
     recalculate_interval_seconds: 10  # Intervalo de recálculo
 ```
+
+#### Cadencia de validación y descargas
+
+- El scheduler crea **una tarea por símbolo × timeframe**. Su intervalo es
+  `max(check_interval_seconds, vela / polling_checks_per_candle)`:
+  `15m`→15s, `1h`→60s, `4h`→240s (con los valores por defecto).
+- El pipeline **solo descarga datos cuando se espera una vela nueva**: guarda
+  el timestamp de la última vela por (símbolo, timeframe) y salta la descarga
+  mientras la vela actual siga abierta. La detección/revalidación continúa
+  entre ciclos usando las velas en caché.
+- Trade-off: la confirmación de breakout se evalúa con la vela que se está
+  **cerrando** (sin re-descargar la vela en curso), lo que evita falsas
+  rupturas intravela. Si se detecta una vela nueva se vuelve a descargar de
+  inmediato.
 
 ### Strategies
 

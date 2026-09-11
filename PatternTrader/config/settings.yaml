@@ -75,6 +75,9 @@ patterns:
   lifecycle:
     enabled: true
     check_interval_seconds: 5
+    # Validaciones por vela: el scheduler corre cada vela/N (15m->15s, 1h->60s,
+    # 4h->240s) y solo descarga datos cuando se espera una vela nueva.
+    polling_checks_per_candle: 60
     max_patterns_per_symbol: 50
     timeframes: ["15m", "1h", "4h"]
     candle_limit: 500

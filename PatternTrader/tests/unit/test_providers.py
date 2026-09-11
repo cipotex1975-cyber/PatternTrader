@@ -75,7 +75,7 @@ class TestYahooProvider:
 
     def test_unsupported_timeframe_raises(self):
         with pytest.raises(DataProviderError):
-            YahooProvider._map_interval("4h")
+            YahooProvider._map_interval("2h")
 
     async def test_get_history(self):
         df = pd.DataFrame(
@@ -93,6 +93,38 @@ class TestYahooProvider:
         assert candles[0].close == 100.5
         assert candles[0].volume == 1000.0
         assert candles[0].timestamp.tzinfo is not None
+
+    async def test_get_history_4h_aggregates_from_1h(self):
+        timestamps = pd.date_range("2024-01-02 00:00:00", periods=6, freq="h", tz="UTC")
+        df = pd.DataFrame(
+            {
+                "Open": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                "High": [1.5, 2.5, 3.5, 4.5, 5.5, 6.5],
+                "Low": [0.5, 1.5, 2.5, 3.5, 4.5, 5.5],
+                "Close": [1.2, 2.2, 3.2, 4.2, 5.2, 6.2],
+                "Volume": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+            },
+            index=timestamps,
+        )
+        ticker_mock = MagicMock()
+        ticker_mock.history.return_value = df
+
+        with patch("app.data.providers.yahoo.provider.yf.Ticker", return_value=ticker_mock):
+            provider = YahooProvider()
+            candles = await provider.get_history("EURUSD", "4h", limit=10)
+
+        assert len(candles) == 2
+        assert candles[0].open == 1.0
+        assert candles[0].high == 4.5
+        assert candles[0].low == 0.5
+        assert candles[0].close == 4.2
+        assert candles[0].volume == 100.0
+        assert candles[1].open == 5.0
+        assert candles[1].high == 6.5
+        assert candles[1].low == 4.5
+        assert candles[1].close == 6.2
+        assert candles[1].volume == 110.0
+        ticker_mock.history.assert_called_once_with(interval="1h", auto_adjust=False, period="10d")
 
     async def test_order_book_not_supported(self):
         provider = YahooProvider()

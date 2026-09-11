@@ -8,7 +8,7 @@ from app.data.providers.base import IDataProvider
 from app.data.providers.factory import DataProviderFactory
 from app.database.repositories import LifecycleRepository, SignalRepository, TradeRepository
 from app.execution.engine import ExecutionEngine
-from app.patterns.pipeline import PatternPipeline
+from app.patterns.pipeline import PatternPipeline, timeframe_to_seconds
 from app.risk.engine import RiskEngine
 from app.scheduler.main import Scheduler
 from app.strategy.manager import StrategyManager
@@ -53,6 +53,7 @@ class PatternService:
         lifecycle_settings = settings.patterns.lifecycle
         self._enabled = lifecycle_settings.enabled
         self._interval_seconds = lifecycle_settings.check_interval_seconds
+        self._checks_per_candle = lifecycle_settings.polling_checks_per_candle
         self._symbols = settings.market.default_symbols
         self._timeframes = lifecycle_settings.timeframes
         self._candle_limit = lifecycle_settings.candle_limit
@@ -108,7 +109,7 @@ class PatternService:
                 await self._scheduler.add_interval(
                     name=f"pattern_pipeline_{symbol}_{timeframe}",
                     func=self._pipeline.process_symbol,
-                    interval_seconds=self._interval_seconds,
+                    interval_seconds=self._task_interval_seconds(timeframe),
                     symbol=symbol,
                     timeframe=timeframe,
                 )
@@ -132,6 +133,13 @@ class PatternService:
 
     def get_scheduler_tasks(self) -> list[str]:
         return self._scheduler.get_tasks()
+
+    def _task_interval_seconds(self, timeframe: str) -> int:
+        """Intervalo de validación adaptado al timeframe (vela/N)."""
+        if self._checks_per_candle <= 0:
+            return self._interval_seconds
+        per_candle = max(timeframe_to_seconds(timeframe) // self._checks_per_candle, 1)
+        return max(self._interval_seconds, per_candle)
 
     def _resolver(self, symbol: str, timeframe: str) -> IDataProvider | None:
         name = self._provider_route.get(symbol)

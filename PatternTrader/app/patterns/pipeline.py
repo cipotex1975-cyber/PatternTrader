@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 import inspect
 import re
 import time
@@ -135,6 +136,8 @@ class PatternPipeline:
         self._max_patterns_per_symbol = settings.patterns.lifecycle.max_patterns_per_symbol
         self._health_interval_seconds = settings.patterns.health.recalculate_interval_seconds
         self._last_health_calc: dict[UUID, float] = {}
+        self._candle_cache: dict[tuple[str, str], list[Candle]] = {}
+        self._last_candle_ts: dict[tuple[str, str], float] = {}
 
     @property
     def lifecycle(self) -> LifecycleEngine:
@@ -196,16 +199,26 @@ class PatternPipeline:
         if provider is None:
             return []
 
+        key = (symbol, timeframe)
+        last_ts = self._last_candle_ts.get(key)
+        if last_ts is not None and time.time() < last_ts + timeframe_to_seconds(timeframe):
+            return list(self._candle_cache.get(key, []))
+
         try:
             raw = await provider.get_history(
                 symbol=symbol,
                 timeframe=timeframe,
                 limit=self._max_candles,
             )
-            return [ohlcv_to_candle(r, symbol, timeframe) for r in raw]
+            candles = [ohlcv_to_candle(r, symbol, timeframe) for r in raw]
         except Exception as e:
             logger.error(f"Failed to fetch candles for {symbol} {timeframe}: {e}")
             return []
+
+        if candles:
+            self._candle_cache[key] = list(candles)
+            self._last_candle_ts[key] = calendar.timegm(candles[-1].data.timestamp.utctimetuple())
+        return candles
 
     def _resolve_provider(self, symbol: str, timeframe: str) -> IDataProvider | None:
         if self._provider_resolver is not None:
@@ -299,7 +312,9 @@ class PatternPipeline:
         latest_indicators: dict[str, float],
     ) -> None:
         for pattern_id in list(self._tracked.keys()):
-            tracked = self._tracked[pattern_id]
+            tracked = self._tracked.get(pattern_id)
+            if tracked is None:
+                continue
             result = tracked.result
             detector = tracked.detector
 

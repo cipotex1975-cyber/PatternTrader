@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.data.providers.base import OHLCV
 from app.patterns.pipeline import PatternPipeline
 from app.patterns.service import (
     PatternService,
@@ -61,6 +63,54 @@ async def test_pipeline_falls_back_to_single_provider_without_resolver():
     provider.get_history.assert_awaited_once_with(
         symbol="BTCUSDT", timeframe="1h", limit=pipeline._max_candles
     )
+
+
+def _ohlcv(ts: datetime) -> list[OHLCV]:
+    return [
+        OHLCV(
+            timestamp=ts + timedelta(hours=i),
+            open=100.0,
+            high=101.0,
+            low=99.0,
+            close=100.5,
+            volume=1000.0,
+        )
+        for i in range(2)
+    ]
+
+
+async def test_pipeline_skips_fetch_within_same_candle():
+    provider = MagicMock()
+    candle_ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    candle_epoch = candle_ts.timestamp()
+    provider.get_history = AsyncMock(return_value=_ohlcv(candle_ts))
+    pipeline = PatternPipeline(provider=provider)
+
+    with patch("app.patterns.pipeline.time.time", return_value=candle_epoch + 60.0):
+        first = await pipeline._fetch_candles("BTCUSDT", "1h")
+    assert len(first) == 2
+
+    with patch("app.patterns.pipeline.time.time", return_value=candle_epoch + 60.0):
+        cached = await pipeline._fetch_candles("BTCUSDT", "1h")
+    assert len(cached) == 2
+    assert cached[-1].data.timestamp == first[-1].data.timestamp
+    provider.get_history.assert_awaited_once()
+
+    with patch("app.patterns.pipeline.time.time", return_value=candle_epoch + 7200.0):
+        refetched = await pipeline._fetch_candles("BTCUSDT", "1h")
+    assert len(refetched) == 2
+    provider.get_history.assert_awaited()
+
+
+def test_service_task_interval_is_timeframe_adaptive():
+    service = PatternService()
+    assert service._task_interval_seconds("15m") == 15
+    assert service._task_interval_seconds("1h") == 60
+    assert service._task_interval_seconds("4h") == 240
+    assert service._task_interval_seconds("1d") >= service._interval_seconds
+
+    service._checks_per_candle = 0
+    assert service._task_interval_seconds("1h") == service._interval_seconds
 
 
 def test_service_resolver_returns_connected_provider_per_symbol():

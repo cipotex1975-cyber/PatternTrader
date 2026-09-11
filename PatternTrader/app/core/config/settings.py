@@ -223,6 +223,7 @@ class PatternScoringSettings(BaseSettings):
 class PatternLifecycleSettings(BaseSettings):
     enabled: bool = True
     check_interval_seconds: int = 5
+    polling_checks_per_candle: int = 60
     max_patterns_per_symbol: int = 50
     timeframes: list[str] = ["15m", "1h", "4h"]
     candle_limit: int = 1200

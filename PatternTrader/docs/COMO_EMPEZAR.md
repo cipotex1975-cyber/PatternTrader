@@ -112,6 +112,12 @@ curl http://localhost:8000/api/v1/patterns/
 
 Los logs se escriben en `logs/` (app y errores) y en pantalla.
 
+> **Cadencia de validación**: el scheduler crea una tarea por símbolo ×
+> timeframe. Cada tarea valida `vela / polling_checks_per_candle` (`1h`→60s,
+> `4h`→240s por defecto) y el pipeline **solo descarga datos cuando hay una
+> vela nueva**, reutilizando la caché entre ciclos. Ajustable en
+> `patterns.lifecycle` de `config/settings.yaml` (ver [CONFIGURATION.md](CONFIGURATION.md)).
+
 ---
 
 ## 6. Comandos auxiliares
@@ -172,11 +178,10 @@ Funcionamiento:
 
 ## 8. Limitaciones a tener en cuenta
 
-- **Yahoo Finance no soporta el timeframe `4h`** (ni `2h`/`30m` no está en el
-  mapa de intervalos de 1m/2m/…). El timeline global del pipeline está en
-  `patterns.lifecycle.timeframes` (por defecto `["15m", "1h", "4h"]`).
-  - Si usas proveedores con soporte limitado (p. ej. Yahoo), ajusta los
-    timeframes globales a algo común como `["1h"]` o `["15m", "1h"]`.
+- **Yahoo Finance** no ofrece el timeframe `4h` nativamente; el provider lo
+  resuelve **agregando velas de `1h`** (agrupación de 4), así que puedes rutear
+  forex a Yahoo y usar `4h` sin errores. Timeframes nativos soportados:
+  `1m`, `2m`, `5m`, `15m`, `30m`, `1h`, `1d`, `1w`, `1M`.
 - **Yahoo Finance intraday** solo ofrece historial de los últimos ~60 días.
   Para datos largos usa `1d`.
 - **Yahoo no tiene order book** ni listing de símbolos (falla
@@ -195,8 +200,8 @@ Funcionamiento:
 - Revisa `alembic current` y aplica migraciones (`alembic upgrade head`).
 
 **Los símbolos de forex no devuelven datos (Yahoo)**
-- Usa `1h`/`1d` (no `4h`) y confirma que el símbolo esté mapeado a `yahoo` en
-  `symbol_providers`.
+- Confirma que el símbolo esté mapeado a `yahoo` en `symbol_providers` (el
+  timeframe `4h` ya funciona: se agrega desde `1h`).
 - Comprueba el log: `tail -f logs/errors_$(date +%F).log`.
 
 **ModuleNotFoundError: No module named 'app'**

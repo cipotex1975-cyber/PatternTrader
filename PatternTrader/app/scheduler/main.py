@@ -31,7 +31,7 @@ class Scheduler:
                 try:
                     await func(*args, **kwargs)
                 except Exception as e:
-                    logger.error(f"Error in task {name}: {e}")
+                    logger.exception(f"Error in task {name}: {e}")
                 await asyncio.sleep(interval_seconds)
 
         task = asyncio.create_task(_run_periodically())
@@ -61,7 +61,7 @@ class Scheduler:
                 try:
                     await func(*args, **kwargs)
                 except Exception as e:
-                    logger.error(f"Error in task {name}: {e}")
+                    logger.exception(f"Error in task {name}: {e}")
 
         task = asyncio.create_task(_run_daily())
         self._tasks[name] = task
