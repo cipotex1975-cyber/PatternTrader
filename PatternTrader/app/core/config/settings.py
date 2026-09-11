@@ -191,6 +191,7 @@ class MarketStructureSettings(BaseSettings):
 class MarketSettings(BaseSettings):
     default_timeframes: list[str] = ["1m", "5m", "15m", "1h", "4h", "1d"]
     default_symbols: list[str] = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
+    symbol_providers: dict[str, str] = Field(default_factory=dict)
     indicators: IndicatorSettings = Field(default_factory=IndicatorSettings)
     structure: MarketStructureSettings = Field(default_factory=MarketStructureSettings)
 
@@ -224,7 +225,7 @@ class PatternLifecycleSettings(BaseSettings):
     check_interval_seconds: int = 5
     max_patterns_per_symbol: int = 50
     timeframes: list[str] = ["15m", "1h", "4h"]
-    candle_limit: int = 500
+    candle_limit: int = 1200
 
 
 class PatternHealthSettings(BaseSettings):

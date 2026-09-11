@@ -442,6 +442,7 @@ Ver [CONFIGURATION.md](docs/CONFIGURATION.md) para más detalles.
 |-----------|-------------|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arquitectura y diseño del sistema |
 | [INSTALLATION.md](docs/INSTALLATION.md) | Guía de instalación detallada |
+| [COMO_EMPEZAR.md](docs/COMO_EMPEZAR.md) | Guía rápida de activación y multi-proveedor (binance + yahoo) |
 | [API.md](docs/API.md) | Documentación completa de la API REST |
 | [PATTERNS.md](docs/PATTERNS.md) | Guía de detección de patrones |
 | [MACHINE_LEARNING.md](docs/MACHINE_LEARNING.md) | Guía de modelos ML |

@@ -3,8 +3,8 @@
   "symbol": "USDCAD",
   "extension": ".pt",
   "metric": "roc_auc",
-  "version": "20260903_174120",
-  "trained_at": "2026-09-03T17:41:20.785322+00:00",
+  "version": "20260909_181125",
+  "trained_at": "2026-09-09T18:11:25.506673+00:00",
   "metrics": {
     "train_accuracy": 0.6258594401772101,
     "train_loss": 0.6454891324715301,
@@ -29,5 +29,103 @@
     "f1": 0.38938498302100366,
     "roc_auc": 0.6402788733666575,
     "pr_auc": 0.4054331377717867
+  },
+  "timeframe": null,
+  "dataset": {
+    "path": "USDCAD_H1_201005311000_202606010000.txt",
+    "hash": "ed3429f3ca42c97a224e17caefea53798036322d498a651e9d827cc699f0b941",
+    "start_datetime": "2010-05-31T00:00:00",
+    "end_datetime": "2026-05-29T00:00:00",
+    "samples": 99366
+  },
+  "features": {
+    "names": [
+      "rsi",
+      "macd",
+      "macd_signal",
+      "macd_hist",
+      "ema_21",
+      "ema_50",
+      "atr",
+      "volume_ratio",
+      "price_change",
+      "high_low_range",
+      "close_position",
+      "trend_strength"
+    ],
+    "count": 12,
+    "version": "1"
+  },
+  "label": {
+    "forward_periods": 5,
+    "threshold": 0.001,
+    "min_up_moves": 2
+  },
+  "preprocessing": {
+    "type": "none"
+  },
+  "sequence": {
+    "length": 30
+  },
+  "training": {
+    "epochs": 10,
+    "hyperparameters": {
+      "num_layers": 2,
+      "hidden_dim": 128,
+      "sequence_length": 30,
+      "feature_dim": 12,
+      "epochs": 10,
+      "batch_size": 16,
+      "patience": 5
+    },
+    "batch_size": 16
+  },
+  "validation": {
+    "metrics": {
+      "train_accuracy": 0.6258594401772101,
+      "train_loss": 0.6454891324715301,
+      "validation_accuracy": 0.6174239881871266,
+      "validation_loss": 0.6563520449745297,
+      "best_epoch": 8.0,
+      "best_validation_loss": 0.6531880575635914,
+      "best_iteration": NaN,
+      "opt_best_threshold": 0.3,
+      "samples_train": 69522.0,
+      "samples_validation": 14899.0,
+      "accuracy": 0.6101080609436875,
+      "precision": 0.5570813139472267,
+      "recall": 0.3319428846462378,
+      "f1": 0.4160048255755504,
+      "roc_auc": 0.6332120668009277,
+      "pr_auc": 0.5309687957950884
+    }
+  },
+  "selection": {
+    "metric": "roc_auc",
+    "dataset": "validation"
+  },
+  "software": {
+    "python": "3.12.1",
+    "sklearn": "1.9.0",
+    "numpy": "2.5.1",
+    "pandas": "3.0.5",
+    "torch": "2.13.0+cpu",
+    "xgboost": "3.4.0",
+    "lightgbm": "4.7.0",
+    "catboost": "1.2.10"
+  },
+  "git": {
+    "commit_sha": "135de8759290c6259b8055a9f3723ba27103b801"
+  },
+  "random_seed": null,
+  "test": {
+    "metrics": {
+      "accuracy": 0.6742922313162485,
+      "precision": 0.4295227524972253,
+      "recall": 0.35610766045548653,
+      "f1": 0.38938498302100366,
+      "roc_auc": 0.6402788733666575,
+      "pr_auc": 0.4054331377717867
+    }
   }
 }

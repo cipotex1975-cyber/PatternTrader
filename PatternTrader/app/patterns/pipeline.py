@@ -39,6 +39,7 @@ from app.telegram.notifier import TelegramNotifier
 logger = get_logger("PatternPipeline")
 
 DataSource = Callable[[str, str], Awaitable[list[Candle]] | list[Candle]]
+ProviderResolver = Callable[[str, str], Optional[IDataProvider]]
 
 _TIMEFRAME_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 
@@ -93,6 +94,7 @@ class PatternPipeline:
         self,
         data_source: Optional[DataSource] = None,
         provider: IDataProvider | None = None,
+        provider_resolver: Optional[ProviderResolver] = None,
         max_candles: int = 500,
         strategies: Optional[list[str]] = None,
         strategy_params: Optional[dict] = None,
@@ -104,6 +106,7 @@ class PatternPipeline:
     ) -> None:
         self._data_source = data_source
         self._provider = provider
+        self._provider_resolver = provider_resolver
         self._max_candles = max_candles
 
         self._indicator_calculator = IndicatorCalculator()
@@ -148,6 +151,10 @@ class PatternPipeline:
     def attach_provider(self, provider: IDataProvider) -> None:
         self._provider = provider
 
+    def set_provider_resolver(self, resolver: ProviderResolver | None) -> None:
+        """Configura un resolver que elige el proveedor de datos por símbolo/timeframe."""
+        self._provider_resolver = resolver
+
     async def process_symbol(
         self,
         symbol: str,
@@ -185,11 +192,12 @@ class PatternPipeline:
                 return await result
             return result
 
-        if self._provider is None:
+        provider = self._resolve_provider(symbol, timeframe)
+        if provider is None:
             return []
 
         try:
-            raw = await self._provider.get_history(
+            raw = await provider.get_history(
                 symbol=symbol,
                 timeframe=timeframe,
                 limit=self._max_candles,
@@ -198,6 +206,11 @@ class PatternPipeline:
         except Exception as e:
             logger.error(f"Failed to fetch candles for {symbol} {timeframe}: {e}")
             return []
+
+    def _resolve_provider(self, symbol: str, timeframe: str) -> IDataProvider | None:
+        if self._provider_resolver is not None:
+            return self._provider_resolver(symbol, timeframe)
+        return self._provider
 
     async def _emit_candle_update(self, symbol: str, timeframe: str, candles: list[Candle]) -> None:
         if not candles:

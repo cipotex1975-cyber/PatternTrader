@@ -201,6 +201,30 @@ ALPHAVANTAGE_API_KEY=tu_api_key
 Al igual que la base de datos y Telegram, NO se configuran en el YAML (los
 valores del YAML pisarían el `.env`).
 
+### Routing por símbolo (varios proveedores activos)
+
+Cada símbolo puede usar un proveedor distinto mediante `market.symbol_providers`
+en `config/settings.yaml`. Los símbolos sin entrada usan `DATA_PROVIDERS_DEFAULT`:
+
+```yaml
+market:
+  default_symbols:
+    - "BTCUSDT"
+    - "ETHUSDT"
+    - "EURUSD"
+    - "USDJPY"
+
+  symbol_providers:
+    BTCUSDT: binance
+    ETHUSDT: binance
+    EURUSD: yahoo
+    USDJPY: yahoo
+```
+
+`PatternService` conecta una sola vez cada proveedor distinto del mapeo y el
+pipeline resuelve el proveedor por símbolo en cada ciclo. Ver
+[COMO_EMPEZAR.md](COMO_EMPEZAR.md) para más detalles.
+
 ### Proveedores Disponibles
 
 | Proveedor | Clave | Fuente de datos | Dependencia |
@@ -215,7 +239,8 @@ valores del YAML pisarían el `.env`).
 
 **Notas**:
 - `MetaTrader5` e `ib_async` son dependencias opcionales: instálalas solo si vas a usar esos proveedores (`pip install MetaTrader5`, `pip install ib_async`).
-- La normalización de símbolos depende del proveedor: `BTCUSDT` → `BTC/USDT` (Bybit), `BTC-USD` (Yahoo), `X:BTCUSDT` (Polygon), `BTC` + `USDT` (AlphaVantage crypto), `BTCUSDT` (MT5/IB).
+- La normalización de símbolos depende del proveedor: `BTCUSDT` → `BTC/USDT` (Bybit), `BTC-USD` (Yahoo crypto), `EURUSD=X` (Yahoo forex), `X:BTCUSDT` (Polygon), `BTC` + `USDT` (AlphaVantage crypto), `BTCUSDT` (MT5/IB).
+- Yahoo Finance **no soporta el timeframe `4h`** y su historial intraday está limitado a ~60 días; usa `1h`/`1d` para símbolos enrutados a Yahoo.
 - AlphaVantage free tier limita a 25 requests/día; Polygon free tier ~5 requests/min.
 
 ### Market

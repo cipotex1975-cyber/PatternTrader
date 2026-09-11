@@ -6,18 +6,19 @@ from app.api.main import create_app
 from app.core.config.settings import get_settings
 from app.core.logger import get_logger, setup_logger
 
+app = create_app()
+
 
 def main() -> None:
     setup_logger()
     logger = get_logger("Main")
 
     settings = get_settings()
-    app = create_app()
 
     logger.info(f"Starting {settings.application.name} v{settings.application.version}")
 
     uvicorn.run(
-        app,
+        "app.main:app",
         host=settings.server.host,
         port=settings.server.port,
         workers=settings.server.workers,

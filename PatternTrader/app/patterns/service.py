@@ -16,6 +16,28 @@ from app.strategy.manager import StrategyManager
 logger = get_logger("PatternService")
 
 
+def resolve_provider_names(
+    symbols: list[str],
+    symbol_providers: dict[str, str],
+    default_provider: str,
+) -> list[str]:
+    """Devuelve la lista ordenada y sin duplicados de proveedores necesarios."""
+    names: list[str] = []
+    for symbol in symbols:
+        name = symbol_providers.get(symbol, default_provider)
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def resolve_symbol_provider(
+    symbol: str,
+    symbol_providers: dict[str, str],
+    default_provider: str,
+) -> str:
+    return symbol_providers.get(symbol, default_provider)
+
+
 class PatternService:
     """Ejecuta el pipeline de patrones de forma periódica para cada símbolo/timeframe."""
 
@@ -27,6 +49,7 @@ class PatternService:
         trade_repository: Optional[object] = None,
     ) -> None:
         settings = get_settings()
+        self._settings = settings
         lifecycle_settings = settings.patterns.lifecycle
         self._enabled = lifecycle_settings.enabled
         self._interval_seconds = lifecycle_settings.check_interval_seconds
@@ -34,7 +57,8 @@ class PatternService:
         self._timeframes = lifecycle_settings.timeframes
         self._candle_limit = lifecycle_settings.candle_limit
 
-        self._provider: IDataProvider | None = None
+        self._providers: dict[str, IDataProvider] = {}
+        self._provider_route: dict[str, str] = {}
         self._risk = RiskEngine(
             symbol_sectors=settings.risk.symbol_sectors,
             correlations=settings.risk.correlations,
@@ -74,13 +98,7 @@ class PatternService:
 
         await self._execution.start()
 
-        try:
-            self._provider = DataProviderFactory.create()
-            await self._provider.connect()
-            self._pipeline.attach_provider(self._provider)
-        except Exception as e:
-            logger.error(f"Failed to connect data provider: {e}")
-            self._provider = None
+        await self._connect_providers()
 
         await self._rehydrate_lifecycle()
         await self._scheduler.start()
@@ -103,15 +121,50 @@ class PatternService:
     async def stop(self) -> None:
         await self._scheduler.stop()
         await self._execution.stop()
-        if self._provider is not None:
+        for name, provider in list(self._providers.items()):
             try:
-                await self._provider.disconnect()
+                await provider.disconnect()
             except Exception as e:
-                logger.error(f"Failed to disconnect provider: {e}")
+                logger.error(f"Failed to disconnect provider '{name}': {e}")
+        self._providers.clear()
+        self._provider_route.clear()
         logger.info("PatternService stopped")
 
     def get_scheduler_tasks(self) -> list[str]:
         return self._scheduler.get_tasks()
+
+    def _resolver(self, symbol: str, timeframe: str) -> IDataProvider | None:
+        name = self._provider_route.get(symbol)
+        if name is None:
+            return None
+        return self._providers.get(name)
+
+    async def _connect_providers(self) -> None:
+        symbol_providers = self._settings.market.symbol_providers
+        default_provider = self._settings.data_providers.default
+
+        names = resolve_provider_names(self._symbols, symbol_providers, default_provider)
+        self._provider_route = {
+            symbol: resolve_symbol_provider(symbol, symbol_providers, default_provider)
+            for symbol in self._symbols
+        }
+
+        for name in names:
+            try:
+                provider = DataProviderFactory.create(name)
+                await provider.connect()
+                self._providers[name] = provider
+                logger.info(f"Data provider connected: {name}")
+            except Exception as e:
+                logger.error(f"Failed to connect data provider '{name}': {e}")
+                self._provider_route = {
+                    symbol: provider_name
+                    for symbol, provider_name in self._provider_route.items()
+                    if provider_name != name
+                }
+
+        if self._providers:
+            self._pipeline.set_provider_resolver(self._resolver)
 
     async def _rehydrate_lifecycle(self) -> None:
         await self._pipeline.lifecycle.rehydrate_from_db()

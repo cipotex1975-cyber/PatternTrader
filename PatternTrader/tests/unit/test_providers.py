@@ -63,6 +63,10 @@ class TestBybitProvider:
 class TestYahooProvider:
     def test_normalize_symbol(self):
         assert YahooProvider._normalize_symbol("BTCUSDT") == "BTC-USD"
+        assert YahooProvider._normalize_symbol("ETHUSDT") == "ETH-USD"
+        assert YahooProvider._normalize_symbol("EURUSD") == "EURUSD=X"
+        assert YahooProvider._normalize_symbol("GBPUSD") == "GBPUSD=X"
+        assert YahooProvider._normalize_symbol("USDJPY") == "USDJPY=X"
         assert YahooProvider._normalize_symbol("AAPL") == "AAPL"
 
     def test_map_interval(self):
