@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 
 from app.database.base import get_async_session
 from app.database.models import Signal as SignalORM
@@ -37,6 +37,32 @@ class SignalRepository:
             if sent_at is not None:
                 orm.sent_at = sent_at
 
+    async def mark_expired(self, signal_id: UUID) -> None:
+        """Marca la señal como EXPIRED sin borrarla (conserva el historial)."""
+        async with get_async_session() as session:
+            await session.execute(
+                update(SignalORM)
+                .where(SignalORM.signal_uuid == str(signal_id))
+                .values(status=SignalStatus.EXPIRED.value)
+            )
+
+    async def expire_overdue(self) -> int:
+        """Expira en lote las señales PENDING cuyo TTL (expires_at) ya venció.
+
+        Devuelve el número de señales actualizadas.
+        """
+        async with get_async_session() as session:
+            result = await session.execute(
+                update(SignalORM)
+                .where(
+                    SignalORM.status == SignalStatus.PENDING.value,
+                    SignalORM.expires_at.is_not(None),
+                    SignalORM.expires_at < datetime.utcnow(),
+                )
+                .values(status=SignalStatus.EXPIRED.value)
+            )
+            return result.rowcount or 0
+
     async def get(self, signal_uuid: str) -> Optional[Signal]:
         async with get_async_session() as session:
             result = await session.execute(
@@ -50,6 +76,7 @@ class SignalRepository:
         status: Optional[SignalStatus] = None,
         priority: Optional[SignalPriority] = None,
         symbol: Optional[str] = None,
+        data_source: Optional[str] = None,
         limit: int = 100,
     ) -> list[Signal]:
         async with get_async_session() as session:
@@ -60,8 +87,17 @@ class SignalRepository:
                 stmt = stmt.where(SignalORM.priority == priority.value)
             if symbol is not None:
                 stmt = stmt.where(SignalORM.symbol == symbol)
+            if data_source is not None:
+                stmt = stmt.where(SignalORM.data_source == data_source)
             result = await session.execute(stmt)
             return [self._to_model(orm) for orm in result.scalars()]
+
+    async def delete(self, signal_id: UUID) -> int:
+        async with get_async_session() as session:
+            result = await session.execute(
+                delete(SignalORM).where(SignalORM.signal_uuid == str(signal_id))
+            )
+            return result.rowcount or 0
 
     @staticmethod
     def _to_orm(signal: Signal) -> SignalORM:
@@ -84,6 +120,7 @@ class SignalRepository:
             created_at=signal.created_at,
             sent_at=signal.sent_at,
             expires_at=signal.expires_at,
+            data_source=signal.data_source,
             metadata_json=signal.metadata,
         )
 
@@ -108,5 +145,6 @@ class SignalRepository:
             created_at=orm.created_at,
             sent_at=orm.sent_at,
             expires_at=orm.expires_at,
+            data_source=orm.data_source or "live",
             metadata=orm.metadata_json or {},
         )

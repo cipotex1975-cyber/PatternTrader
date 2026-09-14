@@ -388,6 +388,17 @@ cada estrategia quedan en `result.metadata["strategy_decisions"]`. Tras el
 envío, el pipeline confirma la entrega (`mark_delivered`) o la marca como
 fallida (`mark_failed`), cerrando así el ciclo señal → envío → confirmación.
 
+Cada señal se etiqueta con un **`data_source`** que indica su origen:
+
+| Valor | Fuente | Cómo se genera |
+|-------|--------|----------------|
+| `live` | Servidor API (`python -m app.main`) | `PatternService` construye el pipeline con `signal_data_source="live"` (datos de Yahoo Finance / Binance) |
+| `simulation` | `simulate_pipeline.py` | El script pasa `signal_data_source="simulation"` (archivos históricos) |
+
+La API `GET /api/v1/signals/` solo muestra señales `live` por defecto;
+`?data_source=all` devuelve todas y `?data_source=simulation` solo las de
+simulación.
+
 ### Flujo de Eventos
 
 ```

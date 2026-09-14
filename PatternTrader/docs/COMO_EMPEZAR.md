@@ -95,7 +95,7 @@ python -m app.main
 La aplicación:
 1. Ejecuta `init_db()` (crea el esquema si no existe).
 2. Arranca el bus de eventos, el servicio de aprendizaje y el `PatternService`.
-3. Conecta los proveedores de datos configurados.
+3. Conecta los proveedores de datos configurados (Yahoo Finance para forex, Binance para cripto).
 4. Programa el pipeline de patrones para cada símbolo × timeframe.
 
 La API queda disponible en **http://localhost:8000**:
@@ -111,6 +111,15 @@ curl http://localhost:8000/api/v1/patterns/
 ```
 
 Los logs se escriben en `logs/` (app y errores) y en pantalla.
+
+> **Modo live (datos en vivo)**: el servidor API usa **Yahoo Finance** (y otros
+> proveedores configurados) para obtener velas en tiempo real. Las señales que
+> genera el pipeline en vivo se etiquetan como `data_source="live"`.
+> **NO** usa archivos históricos; el archivo `app/datos_test/*.txt` solo se usa
+> para backtests y simulaciones (`python run_backtest.py`, `python
+> simulate_pipeline.py`). Las señales de simulación se etiquetan como
+> `data_source="simulation"` y no aparecen en `GET /api/v1/signals/` por
+> defecto (usa `?data_source=all` para verlas).
 
 > **Cadencia de validación**: el scheduler crea una tarea por símbolo ×
 > timeframe. Cada tarea valida `vela / polling_checks_per_candle` (`1h`→60s,

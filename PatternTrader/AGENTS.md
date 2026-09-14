@@ -23,6 +23,7 @@ When making code changes, run verification in this order:
 - **ML Training & Per-Pair Selection**: `train_and_compare.py` trains all 9 models, compares metrics, saves the winner as `{model_name}_{symbol}.{ext}` in `models/` with a corresponding `.meta.json` sidecar.
 - **Scoring & ML Integration**: `ScoringEngine` (`app/scoring/engine.py`) automatically loads per-symbol models via sidecar rehydration.
 - **ML Factory**: Use `MLModelFactory.create("name")` for cached singletons (API) and `MLModelFactory.create_new("name", **kwargs)` for independent instances (training).
+- **Data Source Separation**: Signals carry `data_source`. Live API server (`python -m app.main`) tags signals `data_source="live"` (Yahoo Finance/Binance); `simulate_pipeline.py` tags them `data_source="simulation"` (historical files). The API `GET /api/v1/signals/` filters to `live` by default; use `?data_source=all|simulation` for others. Never mix historical-file data into the live pipeline.
 
 ## Revisión de documentación
 - revisar documentacion ubicada en docs/

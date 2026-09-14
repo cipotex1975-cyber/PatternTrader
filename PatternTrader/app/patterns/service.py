@@ -45,7 +45,7 @@ class PatternService:
         self,
         learning_service: Optional[object] = None,
         lifecycle_repository: Optional[object] = None,
-        signal_repository: Optional[object] = None,
+        signal_repository: Optional[SignalRepository] = None,
         trade_repository: Optional[object] = None,
     ) -> None:
         settings = get_settings()
@@ -60,6 +60,7 @@ class PatternService:
 
         self._providers: dict[str, IDataProvider] = {}
         self._provider_route: dict[str, str] = {}
+        self._signal_repository: SignalRepository = signal_repository or SignalRepository()
         self._risk = RiskEngine(
             symbol_sectors=settings.risk.symbol_sectors,
             correlations=settings.risk.correlations,
@@ -69,9 +70,10 @@ class PatternService:
             max_candles=self._candle_limit,
             learning_service=learning_service,
             lifecycle_repository=lifecycle_repository or LifecycleRepository(),
-            signal_repository=signal_repository or SignalRepository(),
+            signal_repository=self._signal_repository,
             risk_engine=self._risk,
             strategy_manager=self._strategy_manager,
+            signal_data_source="live",
         )
         self._execution = ExecutionEngine(
             lifecycle=self._pipeline.lifecycle,
@@ -102,6 +104,9 @@ class PatternService:
         await self._connect_providers()
 
         await self._rehydrate_lifecycle()
+        await self._invalidate_orphan_timeframes()
+        await self._cleanup_stale_signals()
+        await self._expire_overdue_signals()
         await self._scheduler.start()
 
         for symbol in self._symbols:
@@ -113,6 +118,12 @@ class PatternService:
                     symbol=symbol,
                     timeframe=timeframe,
                 )
+
+        await self._scheduler.add_interval(
+            name="expire_overdue_signals",
+            func=self._expire_overdue_signals,
+            interval_seconds=900,
+        )
 
         logger.info(
             f"PatternService started: {len(self._symbols)} symbols x "
@@ -176,3 +187,86 @@ class PatternService:
 
     async def _rehydrate_lifecycle(self) -> None:
         await self._pipeline.lifecycle.rehydrate_from_db()
+
+    async def _invalidate_orphan_timeframes(self) -> None:
+        """Invalida lifecycles activos de timeframes retirados del pipeline.
+
+        En ciertos casos un timeframe suele resolverse a través de ``market.default_timeframes``
+        (velas de tamaño distinto) que no coinciden con ``patterns.lifecycle.timeframes``.
+        Para evitar falsas señales, estos lifecycles se invalidan en el arranque.
+        """
+        try:
+            count = await self._pipeline.lifecycle.invalidate_orphans(
+                set(self._timeframes),
+                reason="timeframe no longer in patterns.lifecycle.timeframes",
+            )
+        except Exception as e:
+            logger.error(f"Failed to invalidate orphan lifecycles: {e}")
+            return
+        if count:
+            logger.info(
+                f"Invalidated {count} active lifecycle(s) on timeframes not in pipeline: "
+                f"{sorted(set(self._timeframes))}"
+            )
+
+    async def _cleanup_stale_signals(self) -> None:
+        """Elimina señales live cuyo entry_price no corresponde al mercado actual.
+
+        Limpieza one-time para señales creadas antes de la separación de fuentes
+        (data_source): su entry_price proviene de datos históricos y se desvía
+        más de ``max_price_deviation`` del último cierre del proveedor live.
+        """
+        max_deviation = self._settings.patterns.lifecycle.max_price_deviation
+        try:
+            signals = await self._signal_repository.list(data_source="live", limit=500)
+        except Exception as e:
+            logger.error(f"Failed to load signals for stale cleanup: {e}")
+            return
+        if not signals:
+            return
+
+        deleted = 0
+        for signal in signals:
+            if not signal.entry_price:
+                continue
+            provider = self._resolver(signal.symbol, signal.timeframe)
+            if provider is None:
+                continue
+            try:
+                raw = await provider.get_history(
+                    symbol=signal.symbol,
+                    timeframe=signal.timeframe,
+                    limit=1,
+                )
+            except Exception as e:
+                logger.debug(f"Failed to fetch live close for {signal.symbol}: {e}")
+                continue
+            if not raw:
+                continue
+            live_close = float(raw[-1].close)
+            deviation = abs(live_close - signal.entry_price) / live_close
+            if deviation > max_deviation:
+                await self._signal_repository.delete(signal.id)
+                deleted += 1
+                logger.info(
+                    f"Removed stale signal {signal.id} for {signal.symbol}: "
+                    f"entry {signal.entry_price:.4f} vs live close "
+                    f"{live_close:.4f} (deviation {deviation:.1%})"
+                )
+
+        if deleted:
+            logger.info(f"Stale signal cleanup: removed {deleted} signal(s)")
+
+    async def _expire_overdue_signals(self) -> None:
+        """Marca como EXPIRED las señales PENDING cuyo TTL (expires_at) ya venció.
+
+        Corre al arranque y periódicamente vía Scheduler para que las señales
+        vencidas no queden eternamente como PENDING (accionables).
+        """
+        try:
+            count = await self._signal_repository.expire_overdue()
+        except Exception as e:
+            logger.error(f"Failed to expire overdue signals: {e}")
+            return
+        if count:
+            logger.info(f"Expired {count} overdue signal(s)")

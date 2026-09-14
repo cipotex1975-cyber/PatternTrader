@@ -142,3 +142,27 @@ async def test_lifecycle_rehydrate_from_db(sync_db):
     assert restored.id == lifecycle.id
     assert restored.symbol == "BTCUSDT"
     assert restored.current_state == LifecycleState.DETECTED
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_invalidate_orphans_marks_orphan_timeframes():
+    engine = LifecycleEngine()
+
+    active_h1 = await engine.register(create_test_pattern())  # timeframe="1h"
+    orphan_4h = await engine.register(
+        PatternResult(
+            pattern_name="double_top",
+            pattern_type=PatternType.REVERSAL,
+            symbol="BTCUSDT",
+            timeframe="4h",
+            confidence=0.85,
+        )
+    )
+
+    count = await engine.invalidate_orphans({"1h", "1d"})
+
+    assert count == 1
+    assert active_h1.current_state == LifecycleState.DETECTED
+    assert orphan_4h.current_state == LifecycleState.INVALIDATED
+    assert orphan_4h.current_state == LifecycleState.INVALIDATED
+    assert any(t.to_state == LifecycleState.INVALIDATED for t in orphan_4h.transitions)

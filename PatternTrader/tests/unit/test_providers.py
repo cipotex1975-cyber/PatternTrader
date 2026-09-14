@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -125,6 +126,67 @@ class TestYahooProvider:
         assert candles[1].close == 6.2
         assert candles[1].volume == 110.0
         ticker_mock.history.assert_called_once_with(interval="1h", auto_adjust=False, period="10d")
+
+    async def test_get_history_4h_aggregates_multiple_days(self):
+        timestamps = pd.to_datetime(
+            ["2024-01-02 10:00:00", "2024-01-03 10:00:00", "2024-01-04 10:00:00"]
+        ).tz_localize("UTC")
+        df = pd.DataFrame(
+            {
+                "Open": [1.40, 1.42, 1.44],
+                "High": [1.41, 1.43, 1.45],
+                "Low": [1.39, 1.41, 1.43],
+                "Close": [1.405, 1.425, 1.445],
+                "Volume": [10.0, 20.0, 30.0],
+            },
+            index=timestamps,
+        )
+        ticker_mock = MagicMock()
+        ticker_mock.history.return_value = df
+
+        with patch("app.data.providers.yahoo.provider.yf.Ticker", return_value=ticker_mock):
+            provider = YahooProvider()
+            candles = await provider.get_history("USDCAD", "4h", limit=10)
+
+        assert len(candles) == 3
+        assert candles[0].open == 1.40
+        assert candles[0].close == 1.405
+        assert candles[1].open == 1.42
+        assert candles[1].close == 1.425
+        assert candles[2].open == 1.44
+        assert candles[2].close == 1.445
+        assert candles[1].timestamp == datetime(2024, 1, 3, 8, tzinfo=timezone.utc)
+
+    async def test_get_history_serializes_yfinance_calls(self):
+        df = pd.DataFrame(
+            {"Open": [1.0], "High": [1.1], "Low": [0.9], "Close": [1.05], "Volume": [10.0]},
+            index=pd.to_datetime(["2024-01-02"]).tz_localize("UTC"),
+        )
+        ticker_mock = MagicMock()
+        ticker_mock.history.return_value = df
+
+        active = 0
+        peak = 0
+
+        async def fake_to_thread(func, *args, **kwargs):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.01)
+            try:
+                result = func(*args, **kwargs)
+            finally:
+                active -= 1
+            return result
+
+        with patch("app.data.providers.yahoo.provider.yf.Ticker", return_value=ticker_mock):
+            with patch("app.data.providers.yahoo.provider.asyncio.to_thread", new=fake_to_thread):
+                provider = YahooProvider()
+                await asyncio.gather(
+                    *[provider.get_history(f"PAIR{i}", "1d", limit=10) for i in range(10)]
+                )
+
+        assert peak <= 1
 
     async def test_order_book_not_supported(self):
         provider = YahooProvider()

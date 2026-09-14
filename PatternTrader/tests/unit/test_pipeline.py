@@ -128,7 +128,9 @@ async def test_pipeline_sends_telegram_for_critical():
         sent.append(signal)
         return True
 
-    async def fake_create(pattern, score_result, ml_probability=0.0, strategy_signal=None):
+    async def fake_create(
+        pattern, score_result, ml_probability=0.0, strategy_signal=None, data_source="live"
+    ):
         signal = Signal(
             symbol=pattern.symbol,
             timeframe=pattern.timeframe,
@@ -216,7 +218,9 @@ async def test_pipeline_signal_sent_event_is_enriched():
         async def fake_send(signal, candles=None, pattern=None):
             return True
 
-        async def fake_create(pattern, score_result, ml_probability=0.0, strategy_signal=None):
+        async def fake_create(
+            pattern, score_result, ml_probability=0.0, strategy_signal=None, data_source="live"
+        ):
             signal = Signal(
                 symbol=pattern.symbol,
                 timeframe=pattern.timeframe,
@@ -298,7 +302,9 @@ async def test_pipeline_rejects_signal_when_risk_unacceptable():
     async def fake_send(signal, candles=None, pattern=None):
         return True
 
-    async def fake_create(pattern, score_result, ml_probability=0.0, strategy_signal=None):
+    async def fake_create(
+        pattern, score_result, ml_probability=0.0, strategy_signal=None, data_source="live"
+    ):
         return Signal(
             symbol=pattern.symbol,
             timeframe=pattern.timeframe,
@@ -335,7 +341,9 @@ async def test_pipeline_cancels_pending_signal_on_deformation():
     async def fake_send(signal, candles=None, pattern=None):
         return True
 
-    async def fake_create(pattern, score_result, ml_probability=0.0, strategy_signal=None):
+    async def fake_create(
+        pattern, score_result, ml_probability=0.0, strategy_signal=None, data_source="live"
+    ):
         return Signal(
             symbol=pattern.symbol,
             timeframe=pattern.timeframe,
@@ -461,7 +469,9 @@ async def test_pipeline_sends_when_priority_meets_min_priority():
             sent.append(signal)
             return True
 
-        async def fake_create(pattern, score_result, ml_probability=0.0, strategy_signal=None):
+        async def fake_create(
+            pattern, score_result, ml_probability=0.0, strategy_signal=None, data_source="live"
+        ):
             signal = Signal(
                 symbol=pattern.symbol,
                 timeframe=pattern.timeframe,
@@ -489,3 +499,93 @@ async def test_pipeline_sends_when_priority_meets_min_priority():
         assert sent[0].priority == SignalPriority.HIGH
     finally:
         settings.telegram.min_priority = original
+
+
+def test_validate_price_levels_accepts_in_range():
+    candles = build_candles([50000, 50500])
+    pattern = PatternResult(
+        pattern_name="double_top",
+        pattern_type=PatternType.REVERSAL,
+        symbol="BTCUSDT",
+        timeframe="1h",
+        direction=TradeDirection.SHORT,
+        confidence=0.8,
+        entry_price=50000,
+    )
+    pipeline = PatternPipeline(data_source=lambda symbol, timeframe: [])
+
+    assert pipeline._validate_price_levels(pattern, candles) is True
+
+
+def test_validate_price_levels_rejects_out_of_range():
+    candles = build_candles([50000, 50500])
+    pattern = PatternResult(
+        pattern_name="double_top",
+        pattern_type=PatternType.REVERSAL,
+        symbol="BTCUSDT",
+        timeframe="1h",
+        direction=TradeDirection.SHORT,
+        confidence=0.8,
+        entry_price=100000,
+    )
+    pipeline = PatternPipeline(data_source=lambda symbol, timeframe: [])
+
+    assert pipeline._validate_price_levels(pattern, candles) is False
+
+
+def test_validate_price_levels_skips_when_no_price_or_candles():
+    pipeline = PatternPipeline(data_source=lambda symbol, timeframe: [])
+    pattern = PatternResult(
+        pattern_name="double_top",
+        pattern_type=PatternType.REVERSAL,
+        symbol="BTCUSDT",
+        timeframe="1h",
+        direction=TradeDirection.SHORT,
+        confidence=0.8,
+    )
+
+    assert pipeline._validate_price_levels(pattern, []) is True
+    assert pipeline._validate_price_levels(pattern, build_candles([50000])) is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_invalidates_pattern_with_stale_price():
+    holder = {"candles": build_double_top_candles()}
+    pipeline = PatternPipeline(data_source=lambda symbol, timeframe: holder["candles"])
+
+    await pipeline.process_symbol("BTCUSDT", "1h")
+    assert any(t.result.pattern_name == "double_top" for t in pipeline.tracked.values())
+
+    holder["candles"] = build_candles([1000] * 30)
+    await pipeline.process_symbol("BTCUSDT", "1h")
+
+    assert not any(t.result.pattern_name == "double_top" for t in pipeline.tracked.values())
+    invalidated = pipeline.lifecycle.get_by_state(LifecycleState.INVALIDATED)
+    assert len(invalidated) >= 1
+
+
+def test_pipeline_sanitize_drops_corrupt_tail_candle():
+    """La guardia ``max_bar_deviation`` descarta la última barra si su cierre salta
+    abruptamente (p. ej. el cierre cruzado de otro par) contra la barra previa."""
+    closes = [1.382, 1.385, 1.390, 1.395, 1.398]
+    candles = build_candles(closes)
+    corrupt_tail = Candle(
+        symbol="USDCAD",
+        timeframe="1d",
+        data=CandleData(
+            timestamp=candles[-1].data.timestamp + timedelta(days=1),
+            open=1.399,
+            high=155.0,
+            low=1.398,
+            close=154.28,
+            volume=1000,
+        ),
+    )
+    prev = build_candles([1.376, 1.380, 1.382, 1.385, 1.390, 1.395, 1.398])
+
+    sanitized = PatternPipeline(data_source=lambda symbol, timeframe: prev)._sanitize_candles(
+        candles + [corrupt_tail], symbol="USDCAD", timeframe="1d", previous=prev
+    )
+
+    assert len(sanitized) == len(candles)
+    assert sanitized[-1].data.close == pytest.approx(1.398)

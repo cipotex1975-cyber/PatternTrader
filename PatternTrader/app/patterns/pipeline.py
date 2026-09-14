@@ -104,8 +104,10 @@ class PatternPipeline:
         signal_repository: Optional[object] = None,
         risk_engine: Optional[RiskEngine] = None,
         strategy_manager: Optional[StrategyManager] = None,
+        signal_data_source: str = "live",
     ) -> None:
         self._data_source = data_source
+        self._signal_data_source = signal_data_source
         self._provider = provider
         self._provider_resolver = provider_resolver
         self._max_candles = max_candles
@@ -134,6 +136,8 @@ class PatternPipeline:
 
         settings = get_settings()
         self._max_patterns_per_symbol = settings.patterns.lifecycle.max_patterns_per_symbol
+        self._max_price_deviation = settings.patterns.lifecycle.max_price_deviation
+        self._max_bar_deviation = settings.patterns.lifecycle.max_bar_deviation
         self._health_interval_seconds = settings.patterns.health.recalculate_interval_seconds
         self._last_health_calc: dict[UUID, float] = {}
         self._candle_cache: dict[tuple[str, str], list[Candle]] = {}
@@ -211,6 +215,9 @@ class PatternPipeline:
                 limit=self._max_candles,
             )
             candles = [ohlcv_to_candle(r, symbol, timeframe) for r in raw]
+            candles = self._sanitize_candles(
+                candles, symbol, timeframe, self._candle_cache.get(key)
+            )
         except Exception as e:
             logger.error(f"Failed to fetch candles for {symbol} {timeframe}: {e}")
             return []
@@ -218,6 +225,47 @@ class PatternPipeline:
         if candles:
             self._candle_cache[key] = list(candles)
             self._last_candle_ts[key] = calendar.timegm(candles[-1].data.timestamp.utctimetuple())
+        return candles
+
+    def _sanitize_candles(
+        self,
+        candles: list[Candle],
+        symbol: str,
+        timeframe: str,
+        previous: list[Candle] | None = None,
+    ) -> list[Candle]:
+        """Descarta barras finales corruptas (p. ej. último cierre cruzado de otro
+        símbolo) que invalidarían todos los patrones del ciclo.
+
+        Detecta un salto anómalo (> ``max_bar_deviation``) del último cierre contra
+        la barra anterior en la misma serie y lo elimina. Esta corrupción se ha
+        observado como una única barra final con el precio de otro par.
+        """
+        dropped = 0
+        while len(candles) >= 2 and candles[-2].data.close > 0:
+            prev_close = candles[-2].data.close
+            last_close = candles[-1].data.close
+            if abs(last_close - prev_close) / prev_close <= self._max_bar_deviation:
+                break
+            candles = candles[:-1]
+            dropped += 1
+
+        if dropped:
+            logger.warning(
+                f"Dropped {dropped} anomalous tail candle(s) for {symbol}:{timeframe} "
+                f"(close jumped > {self._max_bar_deviation:.0%} vs previous bar)"
+            )
+
+        if previous and candles and previous[-1].data.close > 0:
+            reference = previous[-1].data.close
+            new_last = candles[-1].data.close
+            deviation = abs(new_last - reference) / reference
+            if deviation > self._max_bar_deviation:
+                logger.warning(
+                    f"{symbol}:{timeframe} last close {new_last:.4f} deviates "
+                    f"{deviation:.0%} from cached close {reference:.4f}"
+                )
+
         return candles
 
     def _resolve_provider(self, symbol: str, timeframe: str) -> IDataProvider | None:
@@ -321,6 +369,16 @@ class PatternPipeline:
             detector.update(result, candles)
 
             self._prepare_price_levels(result)
+
+            if not self._validate_price_levels(result, candles):
+                detector.invalidate(result, reason="price deviation vs live data")
+                await self._lifecycle.update_pattern_status(
+                    result,
+                    PatternStatus.INVALIDATED,
+                    "entry price deviates too much from live market data",
+                )
+                self._forget(pattern_id, result)
+                continue
 
             now = time.monotonic()
             last_calc = self._last_health_calc.get(pattern_id, 0.0)
@@ -451,6 +509,7 @@ class PatternPipeline:
             score_result,
             ml_probability,
             strategy_signal=best.signal if best else None,
+            data_source=self._signal_data_source,
         )
         if signal is None:
             return
@@ -523,6 +582,32 @@ class PatternPipeline:
         self._tracked.pop(pattern_id, None)
         self._active_keys.discard((result.symbol, result.timeframe, result.pattern_name))
         self._last_health_calc.pop(pattern_id, None)
+
+    def _validate_price_levels(self, result: PatternResult, candles: list[Candle]) -> bool:
+        """Rechaza patrones cuyo entry_price se desvía demasiado de la última vela.
+
+        Protege el pipeline live de señales generadas con datos históricos
+        (ej: simulate_pipeline.py) cuyo precio ya no corresponde al mercado actual.
+        """
+        if result.entry_price is None or result.entry_price <= 0:
+            return True
+        if not candles:
+            return True
+        latest_close = candles[-1].data.close
+        if not latest_close:
+            return True
+
+        deviation = abs(latest_close - result.entry_price) / latest_close
+        if deviation <= self._max_price_deviation:
+            return True
+
+        logger.info(
+            f"Pattern {result.pattern_name} on {result.symbol}:{result.timeframe} "
+            f"invalidated: entry {result.entry_price:.4f} vs live close "
+            f"{latest_close:.4f} (deviation {deviation:.1%} > "
+            f"{self._max_price_deviation:.1%})"
+        )
+        return False
 
     def _prepare_price_levels(self, result: PatternResult) -> None:
         if (

@@ -209,6 +209,7 @@ async def run_simulation(
             learning_service=learning_service,
             lifecycle_repository=repos["lifecycle"],
             signal_repository=repos["signal"],
+            signal_data_source="simulation",
         )
 
         total = len(candles)
@@ -283,13 +284,17 @@ def _format_report(report: dict[str, Any]) -> str:
     lines.append(sep)
     lines.append(f"Archivo:     {report['data_file']}")
     lines.append(f"Velas:       {report['total_candles']}")
-    lines.append(f"Warmup:      {report['warmup']} | Step: {report['step']} | Ticks: {report['ticks']}")
+    lines.append(
+        f"Warmup:      {report['warmup']} | Step: {report['step']} | Ticks: {report['ticks']}"
+    )
     lines.append(f"Duración:    {report['elapsed_seconds']}s")
     lines.append(f"Persistencia: {'PostgreSQL (DB)' if report['use_db'] else 'Memoria'}")
     lines.append(f"Aprendizaje: {'SÍ' if report['learning'] else 'no'}")
     lines.append(f"Estrategias: {', '.join(report['strategies'])}")
     lines.append(f"Modelo dir:  {report['model_dir']}")
-    lines.append(f"Telegram:    {'activado' if report['telegram_enabled'] else 'desactivado (no-op)'}")
+    lines.append(
+        f"Telegram:    {'activado' if report['telegram_enabled'] else 'desactivado (no-op)'}"
+    )
 
     if report["ml_models"]:
         lines.append("Modelos ML por símbolo:")
@@ -348,19 +353,51 @@ def build_parser() -> argparse.ArgumentParser:
         description="Simula el flujo completo del pipeline (detección → señal → Telegram) "
         "sobre un archivo OHLCV histórico."
     )
-    parser.add_argument("data_file", type=str, help="Archivo OHLCV (tab o coma), ej: app/datos_test/USDCAD_H1_*.txt")
-    parser.add_argument("--symbol", type=str, default=None, help="Símbolo (default: derivado del nombre)")
-    parser.add_argument("--timeframe", type=str, default=None, help="Timeframe (default: derivado del nombre)")
-    parser.add_argument("--warmup", type=int, default=200, help="Velas iniciales antes del replay (default: 200)")
-    parser.add_argument("--step", type=int, default=50, help="Velas nuevas por tick del replay (default: 50)")
-    parser.add_argument("--max-candles", type=int, default=500, help="Ventana máxima por tick (default: 500)")
-    parser.add_argument("--speed", type=float, default=0.0, help="Pausa en segundos entre ticks (default: 0)")
-    parser.add_argument("--memory", action="store_true", help="Ejecuta en memoria sin persistir en PostgreSQL")
-    parser.add_argument("--learning", action="store_true", help="Activa el aprendizaje continuo (LearningService)")
-    parser.add_argument("--strategy", type=str, default=None, help="Estrategias separadas por coma (default: settings)")
-    parser.add_argument("--model-dir", type=str, default=None, help="Directorio de modelos ML (default: settings.ml.model_path)")
-    parser.add_argument("--telegram", action="store_true", help="Fuerza el envío de notificaciones por Telegram")
-    parser.add_argument("--quiet", action="store_true", help="Suprime logs de componentes (solo reporte final)")
+    parser.add_argument(
+        "data_file", type=str, help="Archivo OHLCV (tab o coma), ej: app/datos_test/USDCAD_H1_*.txt"
+    )
+    parser.add_argument(
+        "--symbol", type=str, default=None, help="Símbolo (default: derivado del nombre)"
+    )
+    parser.add_argument(
+        "--timeframe", type=str, default=None, help="Timeframe (default: derivado del nombre)"
+    )
+    parser.add_argument(
+        "--warmup", type=int, default=200, help="Velas iniciales antes del replay (default: 200)"
+    )
+    parser.add_argument(
+        "--step", type=int, default=50, help="Velas nuevas por tick del replay (default: 50)"
+    )
+    parser.add_argument(
+        "--max-candles", type=int, default=500, help="Ventana máxima por tick (default: 500)"
+    )
+    parser.add_argument(
+        "--speed", type=float, default=0.0, help="Pausa en segundos entre ticks (default: 0)"
+    )
+    parser.add_argument(
+        "--memory", action="store_true", help="Ejecuta en memoria sin persistir en PostgreSQL"
+    )
+    parser.add_argument(
+        "--learning", action="store_true", help="Activa el aprendizaje continuo (LearningService)"
+    )
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        default=None,
+        help="Estrategias separadas por coma (default: settings)",
+    )
+    parser.add_argument(
+        "--model-dir",
+        type=str,
+        default=None,
+        help="Directorio de modelos ML (default: settings.ml.model_path)",
+    )
+    parser.add_argument(
+        "--telegram", action="store_true", help="Fuerza el envío de notificaciones por Telegram"
+    )
+    parser.add_argument(
+        "--quiet", action="store_true", help="Suprime logs de componentes (solo reporte final)"
+    )
     return parser
 
 

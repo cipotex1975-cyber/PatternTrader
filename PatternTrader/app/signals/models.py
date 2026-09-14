@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 from uuid import UUID, uuid4
@@ -42,15 +42,20 @@ class Signal(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     sent_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
+    data_source: str = "live"
     metadata: dict = Field(default_factory=dict)
 
     model_config = {"arbitrary_types_allowed": True}
 
     @property
     def is_expired(self) -> bool:
-        if self.expires_at:
-            return datetime.utcnow() > self.expires_at
-        return False
+        if self.expires_at is None:
+            return False
+        if self.expires_at.tzinfo is not None:
+            now = datetime.now(timezone.utc)
+        else:
+            now = datetime.utcnow()
+        return now > self.expires_at
 
     @property
     def priority_score(self) -> float:

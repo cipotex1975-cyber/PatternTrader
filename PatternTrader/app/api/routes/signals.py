@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.dependencies import get_signal_repository
 from app.database.repositories import SignalRepository
-from app.signals.models import SignalPriority, SignalStatus
+from app.signals.models import Signal, SignalPriority, SignalStatus
 
 router = APIRouter()
 
@@ -14,9 +14,17 @@ async def list_signals(
     status: Optional[SignalStatus] = None,
     priority: Optional[SignalPriority] = None,
     symbol: Optional[str] = None,
+    data_source: Optional[str] = None,
+    include_expired: bool = False,
     repo: SignalRepository = Depends(get_signal_repository),
 ):
-    signals = await repo.list(status=status, priority=priority, symbol=symbol)
+    if data_source is None:
+        data_source = "live"
+    signals = await repo.list(
+        status=status, priority=priority, symbol=symbol, data_source=data_source
+    )
+    if not include_expired:
+        signals = [s for s in signals if not _is_stale_pending(s)]
     return {
         "signals": [
             {
@@ -30,11 +38,17 @@ async def list_signals(
                 "entry_price": s.entry_price,
                 "stop_loss": s.stop_loss,
                 "take_profit": s.take_profit,
+                "data_source": s.data_source,
                 "created_at": s.created_at.isoformat(),
             }
             for s in signals
         ]
     }
+
+
+def _is_stale_pending(signal: Signal) -> bool:
+    """True si la señal sigue PENDING pero su TTL (expires_at) ya venció."""
+    return signal.status == SignalStatus.PENDING and signal.is_expired
 
 
 @router.get("/{signal_id}")
@@ -62,5 +76,6 @@ async def get_signal(
         "health": signal.health,
         "ml_probability": signal.ml_probability,
         "reasons": signal.reasons,
+        "data_source": signal.data_source,
         "created_at": signal.created_at.isoformat(),
     }

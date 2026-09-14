@@ -52,6 +52,32 @@ class LifecycleEngine:
         )
         return lifecycle
 
+    async def invalidate_orphans(self, active_timeframes: set[str], reason: str = "") -> int:
+        """Invalida lifecycles activos cuyo timeframe ya no forma parte del pipeline.
+
+        Evita que patrones persistidos de timeframes retirados de la configuración
+        (p. ej. ``4h``/``15m`` tras un cambio de ``patterns.lifecycle.timeframes``)
+        queden activos para siempre sin que ninguna tarea los vuelva a evaluar.
+        """
+        count = 0
+        for lifecycle in list(self._lifecycles.values()):
+            if not lifecycle.is_active or lifecycle.timeframe in active_timeframes:
+                continue
+            await self.transition(
+                lifecycle.id,
+                LifecycleState.INVALIDATED,
+                reason or f"timeframe {lifecycle.timeframe} removed from pipeline",
+            )
+            count += 1
+            logger.warning(
+                f"Invalidated orphan lifecycle {lifecycle.id} for {lifecycle.symbol}:"
+                f"{lifecycle.timeframe} ({lifecycle.pattern_name}) - timeframe no "
+                f"longer in pipeline: {sorted(active_timeframes)}"
+            )
+        if count:
+            logger.info(f"Invalidated {count} orphan lifecycle(s) from retired timeframes")
+        return count
+
     async def transition(
         self,
         lifecycle_id: UUID,

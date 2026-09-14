@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -28,7 +28,7 @@ from app.database.repositories import (
 from app.lifecycle.models import LifecycleEvent, LifecycleState, LifecycleTransition
 from app.ml.base import MLPrediction
 from app.patterns.base_pattern import PatternResult, PatternType
-from app.signals.models import Signal, SignalPriority
+from app.signals.models import Signal, SignalPriority, SignalStatus
 
 
 @pytest.mark.asyncio
@@ -183,6 +183,43 @@ async def test_signal_list_filters(sync_db):
     assert len(await repo.list(priority=SignalPriority.HIGH)) == 1
     assert len(await repo.list(symbol="ETHUSDT")) == 1
     assert len(await repo.list()) == 2
+
+
+@pytest.mark.asyncio
+async def test_signal_expire_overdue_marks_only_expired_pending(sync_db):
+    repo = SignalRepository()
+    stale = make_signal(
+        created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        expires_at=datetime(2020, 1, 2, tzinfo=timezone.utc),
+    )
+    fresh = make_signal(expires_at=datetime.utcnow() + timedelta(days=1))
+    sent = make_signal(
+        status=SignalStatus.SENT,
+        created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        expires_at=datetime(2020, 1, 2, tzinfo=timezone.utc),
+    )
+    await repo.add(stale)
+    await repo.add(fresh)
+    await repo.add(sent)
+
+    count = await repo.expire_overdue()
+    assert count == 1
+
+    assert (await repo.get(str(stale.id))).status == SignalStatus.EXPIRED
+    assert (await repo.get(str(fresh.id))).status == SignalStatus.PENDING
+    assert (await repo.get(str(sent.id))).status == SignalStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_signal_mark_expired(sync_db):
+    repo = SignalRepository()
+    signal = make_signal()
+    await repo.add(signal)
+
+    await repo.mark_expired(signal.id)
+    loaded = await repo.get(str(signal.id))
+    assert loaded is not None
+    assert loaded.status == SignalStatus.EXPIRED
 
 
 @pytest.mark.asyncio

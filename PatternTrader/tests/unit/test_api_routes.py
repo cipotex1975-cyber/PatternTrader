@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -151,6 +151,38 @@ async def test_signals_list_and_get(sync_api_app, seeded_signal):
     detail = sync_api_app.get(f"/signals/{seeded_signal.id}")
     assert detail.status_code == 200
     assert detail.json()["symbol"] == "BTCUSDT"
+
+
+@pytest.mark.asyncio
+async def test_signals_list_hides_expired_pending(sync_api_app):
+    repo = SignalRepository()
+    stale = Signal(
+        symbol="USDCAD",
+        timeframe="1h",
+        pattern_name="double_top",
+        direction="SHORT",
+        priority=SignalPriority.LOW,
+        entry_price=1.04212,
+        stop_loss=1.057,
+        take_profit=1.012,
+        risk_reward_ratio=2.0,
+        score=70.0,
+        health=80.0,
+        expires_at=datetime.utcnow() - timedelta(days=1),
+        data_source="live",
+    )
+    await repo.add(stale)
+
+    resp = sync_api_app.get("/signals/")
+    assert resp.status_code == 200
+    assert resp.json()["signals"] == []
+
+    resp_expired = sync_api_app.get("/signals/?include_expired=true")
+    assert resp_expired.status_code == 200
+    body = resp_expired.json()
+    assert len(body["signals"]) == 1
+    assert body["signals"][0]["symbol"] == "USDCAD"
+    assert body["signals"][0]["status"] == "PENDING"
 
 
 def test_signals_get_unknown_404(sync_api_app):

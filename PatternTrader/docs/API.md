@@ -166,11 +166,22 @@ Lista señales con filtros opcionales.
 | status | string | Filtrar por estado (PENDING, SENT, DELIVERED, FAILED) |
 | priority | string | Filtrar por prioridad (LOW, MEDIUM, HIGH, CRITICAL) |
 | symbol | string | Filtrar por símbolo |
+| data_source | string | Filtrar por origen: `live` (API), `simulation`, `all` (default: `live`) |
+| include_expired | bool | `true` para incluir señales `PENDING` cuyo TTL venció (default: `false`) |
+
+> **Importante**: por defecto solo se devuelven señales **`live`** (generadas
+> por el servidor API con datos de Yahoo Finance / Binance). Las señales de
+> `simulate_pipeline.py` (a partir de archivos históricos) se marcan como
+> `simulation` y **no** aparecen en la respuesta estándar. Usa
+> `?data_source=all` para ver todas o `?data_source=simulation` solo las de
+> simulación. Las señales `PENDING` cuyo `expires_at` ya pasó (TTL
+> `signal_ttl_hours`, 24h por defecto) se ocultan; usa `?include_expired=true`
+> para inspeccionarlas.
 
 **Ejemplo**:
 
 ```bash
-# Todas las señales
+# Solo señales live (por defecto)
 curl http://localhost:8000/api/v1/signals/
 
 # Solo señales CRITICAL
@@ -178,6 +189,15 @@ curl "http://localhost:8000/api/v1/signals/?priority=CRITICAL"
 
 # Señales de BTCUSDT
 curl "http://localhost:8000/api/v1/signals/?symbol=BTCUSDT"
+
+# Todas las señales (live + simulation)
+curl "http://localhost:8000/api/v1/signals/?data_source=all"
+
+# Solo señales de simulación
+curl "http://localhost:8000/api/v1/signals/?data_source=simulation"
+
+# Incluir señales PENDING vencidas
+curl "http://localhost:8000/api/v1/signals/?include_expired=true"
 ```
 
 **Respuesta**:
@@ -196,6 +216,7 @@ curl "http://localhost:8000/api/v1/signals/?symbol=BTCUSDT"
       "entry_price": 52000.0,
       "stop_loss": 53000.0,
       "take_profit": 49000.0,
+      "data_source": "live",
       "created_at": "2024-01-15T10:30:00Z"
     }
   ]

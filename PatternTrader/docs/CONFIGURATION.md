@@ -225,6 +225,12 @@ market:
 pipeline resuelve el proveedor por símbolo en cada ciclo. Ver
 [COMO_EMPEZAR.md](COMO_EMPEZAR.md) para más detalles.
 
+> **Símbolos live vs simulación**: las señales generadas por el servidor API
+> (con proveedores en vivo como Yahoo Finance) llevan `data_source="live"`.
+> Las generadas por `simulate_pipeline.py` sobre archivos históricos llevan
+> `data_source="simulation"`. La API `GET /api/v1/signals/` filtra a `live`
+> por defecto; usa `?data_source=all|simulation` para ver otras.
+
 ### Proveedores Disponibles
 
 | Proveedor | Clave | Fuente de datos | Dependencia |
@@ -302,10 +308,13 @@ patterns:
   lifecycle:
     enabled: true                 # Ejecuta el pipeline al iniciar la API
     check_interval_seconds: 5     # Intervalo mínimo de validación (s)
-    polling_checks_per_candle: 60 # Validaciones por vela (1h->60s, 4h->240s)
+    polling_checks_per_candle: 60 # Validaciones por vela (1h->60s, 1d->1440s)
     max_patterns_per_symbol: 50   # Máximo de patrones por símbolo
-    timeframes: ["15m", "1h", "4h"]  # Timeframes del pipeline
+    timeframes: ["1h", "1d"]  # Timeframes del pipeline
     candle_limit: 500             # Velas por símbolo en cada ciclo
+    max_price_deviation: 0.20     # Máx. desviación del cierre del pipeline vs. velas de trabajo
+    max_bar_deviation: 0.50       # Máx. salto del último cierre vs. barra previa para descartar
+                                  # una barra final corrupta (guardia de cruce de pares)
 
   # Configuración de health
   health:
@@ -316,7 +325,7 @@ patterns:
 
 - El scheduler crea **una tarea por símbolo × timeframe**. Su intervalo es
   `max(check_interval_seconds, vela / polling_checks_per_candle)`:
-  `15m`→15s, `1h`→60s, `4h`→240s (con los valores por defecto).
+  `1h`→60s, `1d`→1440s (con los valores por defecto).
 - El pipeline **solo descarga datos cuando se espera una vela nueva**: guarda
   el timestamp de la última vela por (símbolo, timeframe) y salta la descarga
   mientras la vela actual siga abierta. La detección/revalidación continúa

@@ -79,7 +79,14 @@ patterns:
     # 4h->240s) y solo descarga datos cuando se espera una vela nueva.
     polling_checks_per_candle: 60
     max_patterns_per_symbol: 50
-    timeframes: ["15m", "1h", "4h"]
+    # Desviación máxima del entry_price del patrón vs la última vela del proveedor
+    # live (fracción, ej: 0.20 = 20%). Si se supera, el patrón se invalida porque
+    # proviene de datos históricos y ya no es operables.
+    max_price_deviation: 0.20
+    # Salto máximo (fracción) del último cierre vs la barra anterior para descartar
+    # la barra final como corrupta (p. ej. close cruzado de otro símbolo por yfinance).
+    max_bar_deviation: 0.50
+    timeframes: ["1h", "1d"]
     candle_limit: 500
   health:
     recalculate_interval_seconds: 10

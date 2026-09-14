@@ -36,6 +36,7 @@ class SignalEngine:
         score: ScoreResult,
         ml_probability: Optional[float] = None,
         strategy_signal: Optional[StrategySignalModel] = None,
+        data_source: str = "live",
     ) -> Optional[Signal]:
         signal_key = f"{pattern.symbol}:{pattern.pattern_name}:{pattern.timeframe}"
 
@@ -96,6 +97,7 @@ class SignalEngine:
             ml_probability=ml_probability,
             reasons=reasons,
             expires_at=datetime.utcnow() + timedelta(hours=self._scoring_config.signal_ttl_hours),
+            data_source=data_source,
             metadata=metadata,
         )
 

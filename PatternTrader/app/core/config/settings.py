@@ -225,7 +225,9 @@ class PatternLifecycleSettings(BaseSettings):
     check_interval_seconds: int = 5
     polling_checks_per_candle: int = 60
     max_patterns_per_symbol: int = 50
-    timeframes: list[str] = ["15m", "1h", "4h"]
+    max_price_deviation: float = 0.20
+    max_bar_deviation: float = 0.50
+    timeframes: list[str] = ["1h", "1d"]
     candle_limit: int = 1200
 
 

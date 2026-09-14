@@ -156,6 +156,7 @@ class Signal(Base):
     created_at = Column(UTCDateTime(), default=utcnow)
     sent_at = Column(UTCDateTime())
     expires_at = Column(UTCDateTime())
+    data_source = Column(String(20), default="live")
     metadata_json = Column(JSON)
 
 

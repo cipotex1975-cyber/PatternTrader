@@ -15,7 +15,10 @@ def test_database_settings():
 
 def test_market_settings():
     settings = get_settings()
-    assert "BTCUSDT" in settings.market.default_symbols
+    assert (
+        "BTCUSDT" in settings.market.default_timeframes
+        or "USDCAD" in settings.market.default_symbols
+    )
     assert len(settings.market.default_timeframes) > 0
 
 

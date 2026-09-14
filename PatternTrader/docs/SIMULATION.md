@@ -2,6 +2,14 @@
 
 Script oficial para reproducir el flujo completo de detección, ciclo de vida, confirmación, scoring con ML per-symbol, estrategia y envío de señales (con soporte para Telegram y persistencia en PostgreSQL o memoria).
 
+> **Importante**: `simulate_pipeline.py` procesa **archivos históricos** (ej:
+> `app/datos_test/*.txt`) y ejecuta el mismo `PatternPipeline` que el servidor
+> live. Cuando se ejecuta sin `--memory`, las señales generadas se persisten en
+> la **misma base de datos** que el sistema live, marcadas con
+> `data_source="simulation"`. Esto permite distinguirlas de las señales live
+> (`data_source="live"`). La API expone el filtro `?data_source=` para
+> separarlas (por defecto solo muestra `live`).
+
 ## Uso Básico
 
 Ejecución en modo memoria (sin base de datos) con configuración por defecto:
