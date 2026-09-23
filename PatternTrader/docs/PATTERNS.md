@@ -604,6 +604,12 @@ class BullFlagPattern(BasePattern):
         return 12
 ```
 
+Los patrones expiran por **velas**, no por ciclos de polling. `BasePattern.update()`
+cuenta la vela de detección como vela 1 y suma 1 por cada vela nueva con timestamp
+posterior a la última vista (`last_candle_ts`). El contador y el último timestamp
+se persisten en `metadata["confirmation_count"]` y `metadata["last_candle_ts"]`,
+por lo que el conteo sobrevive a reinicios del proceso.
+
 `BasePattern.update()` incrementa el contador de velas y transiciona a `EXPIRED`
 cuando se alcanza el máximo.
 

@@ -10,6 +10,11 @@ from pydantic import BaseModel, Field
 
 from app.market.candles.models import Candle
 
+# Claves reservadas en ``PatternResult.metadata`` para el conteo de velas del
+# patrón (persistidas junto al resto del metadata en la base de datos).
+LAST_CANDLE_TS = "last_candle_ts"
+CONFIRMATION_COUNT = "confirmation_count"
+
 
 class PatternType(str, Enum):
     REVERSAL = "reversal"
@@ -123,9 +128,27 @@ class BasePattern(ABC):
         ...
 
     def update(self, pattern: PatternResult, candles: list[Candle]) -> PatternResult:
-        """Update pattern state with new candles."""
-        pattern.current_candle_count += 1
+        """Update pattern state with new candles.
+
+        ``current_candle_count`` se incrementa por vela nueva del timeframe, no por
+        ciclo de polling: se guarda en ``metadata["last_candle_ts"]`` (epoch s) el
+        timestamp del último candle contado y se suman las velas estrictamente
+        posteriores a ese valor ("delta"). La vela en la que se detecta el patrón
+        cuenta como vela 1. El contador se refleja en ``metadata["confirmation_count"]``
+        para poder persistirlo en la base de datos.
+        """
         pattern.updated_at = datetime.utcnow()
+
+        if candles:
+            last_ts = pattern.metadata.get(LAST_CANDLE_TS)
+            if last_ts is None:
+                delta = 1
+            else:
+                delta = sum(1 for c in candles if c.data.timestamp.timestamp() > last_ts)
+            if delta > 0:
+                pattern.current_candle_count += delta
+                pattern.metadata[LAST_CANDLE_TS] = candles[-1].data.timestamp.timestamp()
+                pattern.metadata[CONFIRMATION_COUNT] = pattern.current_candle_count
 
         if pattern.current_candle_count >= pattern.max_confirmation_candles:
             pattern.transition(PatternStatus.EXPIRED)

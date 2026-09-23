@@ -112,6 +112,42 @@ curl http://localhost:8000/api/v1/patterns/
 
 Los logs se escriben en `logs/` (app y errores) y en pantalla.
 
+### Monitorear patrones y señales en vivo
+
+Cuando el sistema detecta un patrón (p. ej. `USDJPY` en formación), puedes
+verlo en tiempo real con curl:
+
+```bash
+# Patrón detectado: estado en memoria del servidor (lifecycle)
+curl "http://localhost:8000/api/v1/lifecycle/?symbol=USDJPY"                # todo el par
+curl "http://localhost:8000/api/v1/lifecycle/?symbol=USDJPY&state=FORMING"  # en formación
+curl "http://localhost:8000/api/v1/lifecycle/?symbol=USDJPY&state=CONFIRMED"
+curl "http://localhost:8000/api/v1/lifecycle/?symbol=USDJPY&active=true"
+
+# Vista resumida (dashboard)
+curl "http://localhost:8000/api/v1/dashboard/by-symbol/USDJPY"
+curl "http://localhost:8000/api/v1/dashboard/by-state/FORMING"
+
+# Señal ya generada: persiste en PostgreSQL (confirmación + scoring + estrategia)
+curl "http://localhost:8000/api/v1/signals/?symbol=USDJPY"
+curl "http://localhost:8000/api/v1/signals/?symbol=USDJPY&status=PENDING"
+```
+
+- `/api/v1/lifecycle/*` y `/api/v1/dashboard/*` leen el estado **en memoria**
+  del proceso (rehidratado desde la BD al arrancar y actualizado en cada ciclo).
+  Aquí ves la evolución `DETECTED` → `FORMING` → `WAITING_BREAKOUT` →
+  `CONFIRMED`.
+- `/api/v1/signals/*` lee la tabla `signals` **persistida**: solo hay señales
+  cuando el patrón se confirmó y superó scoring + estrategia. Si un patrón está
+  `FORMING`/`CONFIRMED` pero no ves señal, es porque aún no pasó esos filtros.
+- `/api/v1/patterns/*` es solo el catálogo de clases de patrones, **no** las
+  instancias detectadas.
+- Al reiniciar la API, los patrones persistidos (incluido su contador de velas
+  de expiración) se rehidratan y el pipeline continúa actualizándolos con los
+  datos en vivo.
+
+Más detalle y respuestas de ejemplo en [API.md](API.md).
+
 > **Modo live (datos en vivo)**: el servidor API usa **Yahoo Finance** (y otros
 > proveedores configurados) para obtener velas en tiempo real. Las señales que
 > genera el pipeline en vivo se etiquetan como `data_source="live"`.

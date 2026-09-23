@@ -3,6 +3,13 @@ from datetime import datetime, timezone
 import numpy as np
 
 from app.market.candles.models import Candle, CandleData
+from app.patterns.base_pattern import (
+    CONFIRMATION_COUNT,
+    LAST_CANDLE_TS,
+    PatternResult,
+    PatternType,
+    TradeDirection,
+)
 from app.patterns.continuation.bull_flag import BullFlagPattern
 from app.patterns.neutral.ascending_triangle import AscendingTrianglePattern
 from app.patterns.neutral.broadening import BroadeningPattern
@@ -279,3 +286,77 @@ def test_triple_bottom_detects():
     assert result is not None
     assert result.direction.value == "LONG"
     assert {"trough1", "trough2", "trough3"} <= set(result.key_levels)
+
+
+def _candles_until_hour(hour):
+    candles = []
+    for i in range(9, hour + 1):
+        candles.append(
+            Candle(
+                symbol="BTCUSDT",
+                timeframe="1h",
+                data=CandleData(
+                    timestamp=datetime(2024, 1, 2, hour=i, tzinfo=timezone.utc),
+                    open=100.0,
+                    high=101.0,
+                    low=99.0,
+                    close=100.0,
+                    volume=1000,
+                ),
+            )
+        )
+    return candles
+
+
+def _make_counting_pattern(**overrides):
+    return PatternResult(
+        pattern_name="double_top",
+        pattern_type=PatternType.REVERSAL,
+        symbol="BTCUSDT",
+        timeframe="1h",
+        direction=TradeDirection.SHORT,
+        confidence=0.8,
+        **overrides,
+    )
+
+
+def test_update_counts_detection_candle_once_and_no_op_on_same_candle():
+    detector = DoubleTopPattern()
+    pattern = _make_counting_pattern()
+    candles = _candles_until_hour(10)
+
+    detector.update(pattern, candles)
+    assert pattern.current_candle_count == 1
+    assert pattern.metadata[CONFIRMATION_COUNT] == 1
+    assert pattern.metadata[LAST_CANDLE_TS] == candles[-1].data.timestamp.timestamp()
+
+    detector.update(pattern, candles)
+    assert pattern.current_candle_count == 1
+
+
+def test_update_counts_new_candles_including_delta_jumps():
+    detector = DoubleTopPattern()
+    pattern = _make_counting_pattern()
+
+    detector.update(pattern, _candles_until_hour(10))
+    assert pattern.current_candle_count == 1
+
+    detector.update(pattern, _candles_until_hour(11))
+    assert pattern.current_candle_count == 2
+
+    detector.update(pattern, _candles_until_hour(13))
+    assert pattern.current_candle_count == 4
+
+
+def test_update_expires_after_max_confirmation_candles():
+    detector = DoubleTopPattern()
+    pattern = _make_counting_pattern(max_confirmation_candles=2)
+
+    detector.update(pattern, _candles_until_hour(10))
+    assert pattern.current_candle_count == 1
+    assert pattern.status.value == "DETECTED"
+
+    detector.update(pattern, _candles_until_hour(11))
+    assert pattern.current_candle_count == 2
+    assert pattern.status.value == "EXPIRED"
+    assert pattern.expires_at is not None

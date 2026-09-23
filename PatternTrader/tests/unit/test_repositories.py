@@ -27,7 +27,7 @@ from app.database.repositories import (
 )
 from app.lifecycle.models import LifecycleEvent, LifecycleState, LifecycleTransition
 from app.ml.base import MLPrediction
-from app.patterns.base_pattern import PatternResult, PatternType
+from app.patterns.base_pattern import PatternResult, PatternStatus, PatternType
 from app.signals.models import Signal, SignalPriority, SignalStatus
 
 
@@ -263,6 +263,30 @@ async def test_lifecycle_list_rehydrates_pattern_and_lifecycle(sync_db):
     assert restored_lifecycle.symbol == "ETHUSDT"
     assert restored_lifecycle.current_state == LifecycleState.CONFIRMED
     assert len(restored_lifecycle.transitions) == 3
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_update_pattern_persists_confirm_count(sync_db):
+    repo = LifecycleRepository()
+    pattern = make_pattern()
+    lifecycle = make_lifecycle(pattern)
+    await repo.register_pattern(pattern, lifecycle)
+
+    pattern.current_candle_count = 7
+    pattern.metadata["last_candle_ts"] = 1700000000.0
+    pattern.metadata["confirmation_count"] = 7
+    pattern.health = 66.0
+    pattern.status = PatternStatus.FORMING
+    await repo.update_pattern(pattern)
+
+    entries = await repo.list()
+    assert len(entries) == 1
+    restored, _ = entries[0]
+    assert restored.current_candle_count == 7
+    assert restored.metadata["confirmation_count"] == 7
+    assert restored.metadata["last_candle_ts"] == 1700000000.0
+    assert restored.health == 66.0
+    assert restored.status == PatternStatus.FORMING
 
 
 @pytest.mark.asyncio

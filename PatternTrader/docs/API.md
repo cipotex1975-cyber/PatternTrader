@@ -37,6 +37,22 @@ Actualmente la API no requiere autenticación. En producción, se recomienda imp
 | Lifecycle | `/api/v1/lifecycle` | Ciclo de vida de patrones (rehidratado desde DB al arrancar) |
 | Models | `/api/v1/models` | Modelos ML registrados y predicciones persistidas |
 
+### Patrones detectados vs. señales confirmadas
+
+Hay dos vistas distintas según lo que quieras consultar:
+
+| Quieres ver... | Endpoint | Fuente de datos |
+|----------------|----------|-----------------|
+| Patrones detectados en vivo en **cualquier estado** (`DETECTED`, `FORMING`, `WAITING_BREAKOUT`, `CONFIRMED`, …) | `/api/v1/lifecycle/*` y `/api/v1/dashboard/*` | Estado **en memoria** del pipeline (rehidratado desde la BD al arrancar y actualizado en cada ciclo) |
+| Señales ya generadas (pasaron confirmación + scoring + estrategia) | `/api/v1/signals/*` | Tabla `signals` **persistida en PostgreSQL** |
+| Catálogo de patrones disponibles | `/api/v1/patterns/*` | Registro estático de clases (NO son instancias detectadas) |
+
+> **Importante**: cuando el sistema dice haber detectado un patrón "en
+> formación", ese patrón vive en el lifecycle en memoria del servidor y se
+> consulta con `/api/v1/lifecycle/` o `/api/v1/dashboard/`. Solo cuando se
+> **confirma** y pasa los filtros de scoring y estrategia se genera una señal,
+> que es la que persiste en BD y se consulta con `/api/v1/signals/`.
+
 ### Health Check
 
 #### `GET /api/v1/health`
@@ -177,6 +193,12 @@ Lista señales con filtros opcionales.
 > simulación. Las señales `PENDING` cuyo `expires_at` ya pasó (TTL
 > `signal_ttl_hours`, 24h por defecto) se ocultan; usa `?include_expired=true`
 > para inspeccionarlas.
+
+> **Del patrón confirmado a la señal**: una señal en `/api/v1/signals/` existe
+> solo después de que el patrón se confirmó y superó scoring + estrategia.
+> Si un patrón figura como `FORMING`/`CONFIRMED` en `/api/v1/lifecycle/` pero
+> aún no hay señal, es normal: sigue esperando su confirmación de breakout o la
+> evaluación de estrategia.
 
 **Ejemplo**:
 
@@ -528,17 +550,51 @@ curl http://localhost:8000/api/v1/lifecycle/statistics
 
 #### `GET /api/v1/lifecycle/`
 
-Lista de lifecycles con filtros opcionales.
+Lista de lifecycles con filtros opcionales. Es la forma de ver un patrón que
+el sistema acaba de detectar (p. ej. en estado `FORMING`) antes de que se
+genere una señal.
 
 ```bash
-curl "http://localhost:8000/api/v1/lifecycle/?state=OPEN&symbol=BTCUSDT&active=true"
+# Todo el lifecycle de un par
+curl "http://localhost:8000/api/v1/lifecycle/?symbol=USDJPY"
+
+# Solo patrones en formación (o confirmados) de un par
+curl "http://localhost:8000/api/v1/lifecycle/?symbol=USDJPY&state=FORMING"
+curl "http://localhost:8000/api/v1/lifecycle/?symbol=USDJPY&state=CONFIRMED"
+
+# Solo lifecycles activos de un par
+curl "http://localhost:8000/api/v1/lifecycle/?symbol=USDJPY&active=true"
 ```
+
+**Estados disponibles** (`LifecycleState`): `DETECTED`, `FORMING`,
+`WAITING_BREAKOUT`, `CONFIRMED`, `SIGNAL_SENT`, `OPEN`, `TP_HIT`, `SL_HIT`,
+`CLOSED`, `INVALIDATED`, `EXPIRED`, `CANCELLED`, `REJECTED`.
 
 | Parámetro | Tipo | Descripción |
 |-----------|------|-------------|
 | `state` | string | Filtrar por estado (DETECTED, FORMING, …) |
 | `symbol` | string | Filtrar por símbolo |
 | `active` | bool | Solo lifecycles activos |
+
+**Respuesta**:
+
+```json
+{
+  "lifecycles": [
+    {
+      "id": "0d1c2b3a-4e5f-6789-abcd-0123456789ab",
+      "pattern_id": "550e8400-e29b-41d4-a716-446655440000",
+      "symbol": "USDJPY",
+      "timeframe": "1h",
+      "pattern": "double_top",
+      "state": "FORMING",
+      "transitions": 2,
+      "is_active": true,
+      "created_at": "2024-01-15T10:30:00Z"
+    }
+  ]
+}
+```
 
 #### `GET /api/v1/lifecycle/pattern/{pattern_id}`
 

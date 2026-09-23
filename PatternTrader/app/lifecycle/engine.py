@@ -149,6 +149,12 @@ class LifecycleEngine:
         to_state = state_map.get(new_status)
         if to_state:
             await self.transition(lifecycle_id, to_state, reason)
+        await self.persist_pattern(pattern)
+
+    async def persist_pattern(self, pattern: PatternResult) -> None:
+        """Write-through del estado del patrón al repositorio persistente."""
+        if self._repository is not None:
+            await self._repository.update_pattern(pattern)
 
     def get(self, lifecycle_id: UUID) -> Optional[LifecycleEvent]:
         return self._lifecycles.get(lifecycle_id)

@@ -1,7 +1,9 @@
 # mypy: ignore-errors
 from __future__ import annotations
 
+import math
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -13,6 +15,21 @@ from app.database.models import Pattern as PatternORM
 from app.database.repositories.asset import AssetRepository
 from app.lifecycle.models import LifecycleEvent, LifecycleState, LifecycleTransition
 from app.patterns.base_pattern import PatternResult, PatternStatus, PatternType, TradeDirection
+
+
+def _json_safe(value: Any) -> Any:
+    """Convierte metadata a tipos serializables JSON (datetimes, UUIDs, floats)."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
 
 
 class LifecycleRepository:
@@ -46,7 +63,7 @@ class LifecycleRepository:
                 detected_at=pattern.detected_at,
                 updated_at=pattern.updated_at,
                 expires_at=pattern.expires_at,
-                metadata_json=pattern.metadata or {},
+                metadata_json=_json_safe(pattern.metadata or {}),
             )
             session.add(pattern_orm)
             await session.flush()
@@ -61,6 +78,30 @@ class LifecycleRepository:
                 )
             )
             await session.flush()
+
+    async def update_pattern(self, pattern: PatternResult) -> None:
+        """Persiste el estado actual de un patrón (write-through del pipeline).
+
+        Refleja status, health, score, precios y metadata (incluyendo el contador
+        de velas ``confirmation_count`` y el último candle visto ``last_candle_ts``)
+        en la fila ``patterns`` para que el conteo sobreviva a reinicios.
+        """
+        async with get_async_session() as session:
+            pattern_orm = await self._get_pattern(session, pattern.id)
+            if pattern_orm is None:
+                return
+            pattern_orm.status = pattern.status.value
+            pattern_orm.health = pattern.health
+            pattern_orm.score = pattern.score
+            pattern_orm.confidence = pattern.confidence
+            pattern_orm.entry_price = pattern.entry_price
+            pattern_orm.stop_loss = pattern.stop_loss
+            pattern_orm.take_profit = pattern.take_profit
+            pattern_orm.risk_reward_ratio = pattern.risk_reward_ratio
+            pattern_orm.key_levels = pattern.key_levels or {}
+            pattern_orm.expires_at = pattern.expires_at
+            pattern_orm.updated_at = pattern.updated_at
+            pattern_orm.metadata_json = _json_safe(pattern.metadata or {})
 
     async def update_transition(self, lifecycle: LifecycleEvent) -> None:
         async with get_async_session() as session:
@@ -122,6 +163,8 @@ class LifecycleRepository:
 
     @staticmethod
     def _pattern_to_model(pattern: PatternORM, symbol: str) -> PatternResult:
+        metadata = pattern.metadata_json or {}
+        current_candle_count = int(metadata.get("confirmation_count", 0) or 0)
         return PatternResult(
             id=UUID(pattern.pattern_uuid),
             pattern_name=pattern.pattern_name,
@@ -138,10 +181,11 @@ class LifecycleRepository:
             take_profit=pattern.take_profit,
             risk_reward_ratio=pattern.risk_reward_ratio,
             key_levels=pattern.key_levels or {},
-            metadata=pattern.metadata_json or {},
+            metadata=metadata,
             detected_at=pattern.detected_at or datetime.utcnow(),
             updated_at=pattern.updated_at or datetime.utcnow(),
             expires_at=pattern.expires_at,
+            current_candle_count=current_candle_count,
         )
 
     @staticmethod

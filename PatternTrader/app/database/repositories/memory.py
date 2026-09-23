@@ -24,6 +24,9 @@ class MemoryLifecycleRepository:
     async def update_transition(self, lifecycle: LifecycleEvent) -> None:
         self.lifecycles[str(lifecycle.pattern_id)] = self._snapshot(lifecycle)
 
+    async def update_pattern(self, pattern: PatternResult) -> None:
+        self.patterns[str(pattern.id)] = pattern
+
     @staticmethod
     def _snapshot(lifecycle: LifecycleEvent) -> dict[str, Any]:
         return {

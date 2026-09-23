@@ -366,7 +366,10 @@ class PatternPipeline:
             result = tracked.result
             detector = tracked.detector
 
+            count_before = result.current_candle_count
             detector.update(result, candles)
+            if result.current_candle_count != count_before:
+                await self._lifecycle.persist_pattern(result)
 
             self._prepare_price_levels(result)
 

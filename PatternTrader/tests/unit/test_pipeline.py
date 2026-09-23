@@ -9,7 +9,12 @@ from app.lifecycle.models import LifecycleState
 from app.market.candles.models import Candle, CandleData
 from app.ml.features import TECHNICAL_FEATURE_NAMES
 from app.patterns import pipeline as pipeline_module
-from app.patterns.base_pattern import PatternResult, PatternType, TradeDirection
+from app.patterns.base_pattern import (
+    PatternResult,
+    PatternStatus,
+    PatternType,
+    TradeDirection,
+)
 from app.patterns.pipeline import PatternPipeline
 from app.risk.models import PositionSize, RiskAssessment
 from app.signals.models import Signal, SignalPriority
@@ -86,15 +91,47 @@ async def test_pipeline_expires_without_breakout():
     pipeline = PatternPipeline(data_source=lambda symbol, timeframe: holder["candles"])
 
     await pipeline.process_symbol("BTCUSDT", "1h")
+    tracked = next(v for v in pipeline.tracked.values() if v.result.pattern_name == "double_top")
+    pattern_result = tracked.result
 
-    holder["candles"] = build_candles([51000] * 30)
+    for _ in range(25):
+        last = holder["candles"][-1].data
+        holder["candles"] = holder["candles"] + [
+            Candle(
+                symbol="BTCUSDT",
+                timeframe="1h",
+                data=CandleData(
+                    timestamp=last.timestamp + timedelta(hours=1),
+                    open=51000,
+                    high=51000 * 1.002,
+                    low=51000 * 0.998,
+                    close=51000,
+                    volume=1000,
+                ),
+            )
+        ]
+        await pipeline.process_symbol("BTCUSDT", "1h")
+
+    assert pattern_result.current_candle_count == 20
+    assert pattern_result.status == PatternStatus.EXPIRED
+    assert pipeline.stats()["expired"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_pipeline_repeated_polls_same_candle_do_not_expire():
+    holder = {"candles": build_double_top_candles()}
+    pipeline = PatternPipeline(data_source=lambda symbol, timeframe: holder["candles"])
+
+    await pipeline.process_symbol("BTCUSDT", "1h")
+    tracked = list(pipeline.tracked.values())[0]
+    assert tracked.result.current_candle_count == 1
 
     for _ in range(25):
         await pipeline.process_symbol("BTCUSDT", "1h")
 
-    stats = pipeline.stats()
-    assert stats["expired"] >= 1
-    assert stats["active"] == 0
+    assert tracked.result.current_candle_count == 1
+    assert tracked.result.is_active
+    assert pipeline.stats()["expired"] == 0
 
 
 @pytest.mark.asyncio
