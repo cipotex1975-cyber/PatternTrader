@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import calendar
 import inspect
-import re
 import time
 from dataclasses import dataclass
 from datetime import timedelta
@@ -11,6 +10,7 @@ from uuid import UUID
 
 from app.confirmation.engine import ConfirmationEngine
 from app.core.config.settings import get_settings
+from app.core.constants.market import normalize_timeframe
 from app.core.events.bus import get_event_bus
 from app.core.events.models import Event, EventType
 from app.core.logger import get_logger
@@ -42,7 +42,7 @@ logger = get_logger("PatternPipeline")
 DataSource = Callable[[str, str], Awaitable[list[Candle]] | list[Candle]]
 ProviderResolver = Callable[[str, str], Optional[IDataProvider]]
 
-_TIMEFRAME_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+_TIMEFRAME_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800, "M": 2592000}
 
 _PRIORITY_SCORES = {
     SignalPriority.LOW: 25,
@@ -53,11 +53,20 @@ _PRIORITY_SCORES = {
 
 
 def timeframe_to_seconds(timeframe: str) -> int:
-    """Convierte un timeframe (``1m``, ``4h``, ``1d``…) a segundos."""
-    match = re.fullmatch(r"(\d+)\s*([smhdw])", str(timeframe).strip().lower())
-    if not match:
+    """Convierte un timeframe (``1m``, ``4h``, ``1d``…) a segundos.
+
+    Acepta también la convención letra-primero de los ficheros OHLCV (``H1``,
+    ``M15``) gracias a ``normalize_timeframe``; antes ``H1`` no casaba con el
+    patrón y devolvía 3600 en silencio, que es el valor de ``1h`` por casualidad
+    y no por corrección.
+    """
+    canonical = normalize_timeframe(timeframe)
+    if len(canonical) < 2 or not canonical[:-1].isdigit():
         return 3600
-    return int(match.group(1)) * _TIMEFRAME_SECONDS[match.group(2)]
+    unit = canonical[-1]
+    if unit not in _TIMEFRAME_SECONDS:
+        return 3600
+    return int(canonical[:-1]) * _TIMEFRAME_SECONDS[unit]
 
 
 def ohlcv_to_candle(ohlcv: OHLCV, symbol: str, timeframe: str) -> Candle:

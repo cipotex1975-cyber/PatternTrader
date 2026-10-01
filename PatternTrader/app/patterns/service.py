@@ -55,7 +55,7 @@ class PatternService:
         self._interval_seconds = lifecycle_settings.check_interval_seconds
         self._checks_per_candle = lifecycle_settings.polling_checks_per_candle
         self._symbols = settings.market.default_symbols
-        self._timeframes = lifecycle_settings.timeframes
+        self._timeframes = list(settings.market.default_timeframes)
         self._candle_limit = lifecycle_settings.candle_limit
 
         self._providers: dict[str, IDataProvider] = {}
@@ -127,7 +127,7 @@ class PatternService:
 
         logger.info(
             f"PatternService started: {len(self._symbols)} symbols x "
-            f"{len(self._timeframes)} timeframes"
+            f"{len(self._timeframes)} timeframes {self._timeframes}"
         )
 
     async def stop(self) -> None:
@@ -191,14 +191,14 @@ class PatternService:
     async def _invalidate_orphan_timeframes(self) -> None:
         """Invalida lifecycles activos de timeframes retirados del pipeline.
 
-        En ciertos casos un timeframe suele resolverse a través de ``market.default_timeframes``
-        (velas de tamaño distinto) que no coinciden con ``patterns.lifecycle.timeframes``.
-        Para evitar falsas señales, estos lifecycles se invalidan en el arranque.
+        Tras un cambio en ``market.default_timeframes`` pueden quedar lifecycles
+        activos de timeframes que el pipeline ya no ejecuta. Para evitar falsas
+        señales, estos lifecycles se invalidan en el arranque.
         """
         try:
             count = await self._pipeline.lifecycle.invalidate_orphans(
                 set(self._timeframes),
-                reason="timeframe no longer in patterns.lifecycle.timeframes",
+                reason="timeframe no longer in market.default_timeframes",
             )
         except Exception as e:
             logger.error(f"Failed to invalidate orphan lifecycles: {e}")

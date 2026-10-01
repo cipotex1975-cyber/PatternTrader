@@ -12,6 +12,7 @@ Verifica:
 import hashlib
 import json
 import random
+from pathlib import Path
 
 import numpy as np
 
@@ -216,6 +217,7 @@ class TestSaveWinnerSidecarContext:
             selection_metric="roc_auc",
             selection_dataset="validation",
             random_seed=42,
+            timeframe="H1",
         )
         _, sidecar = save_winner(
             trained,
@@ -224,6 +226,7 @@ class TestSaveWinnerSidecarContext:
             "USDCAD",
             metric="roc_auc",
             sidecar_context=sidecar_context,
+            timeframe="1h",
         )
 
         meta = json.loads(open(sidecar, encoding="utf-8").read())
@@ -237,6 +240,10 @@ class TestSaveWinnerSidecarContext:
         # El contexto NO pisa el model_name/symbol base de save_winner.
         assert meta["model_name"] == "random_forest"
         assert meta["symbol"] == "USDCAD"
+        # El timeframe que gana es el canónico de save_winner, no el "H1" que
+        # trajo el contexto: es la clave con la que el ScoringEngine resuelve.
+        assert meta["timeframe"] == "1h"
+        assert Path(sidecar).name == "random_forest_USDCAD_1h.meta.json"
 
     def test_save_winner_without_context_unchanged(self, tmp_path):
         X = np.random.default_rng(1).normal(0, 1, (120, 12))

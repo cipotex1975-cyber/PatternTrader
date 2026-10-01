@@ -23,8 +23,8 @@ De mayor a menor prioridad:
 application:      # Configuración de la aplicación
 server:           # Servidor web
 logging:          # Sistema de logs
-market:           # Configuración del mercado
-patterns:         # Configuración de patrones
+market:           # Símbolos, timeframes, indicadores y estructura
+patterns:         # Scoring, lifecycle y health del pipeline
 strategies:       # Estrategias de trading
 scoring:          # Sistema de puntuación
 risk:             # Gestión de riesgo
@@ -253,7 +253,8 @@ pipeline resuelve el proveedor por símbolo en cada ciclo. Ver
 
 ```yaml
 market:
-  # Timeframes para análisis
+  # Timeframes que ejecuta el pipeline de patrones (una task por símbolo × timeframe).
+  # Fuente única de verdad: el scheduler recorre exactamente esta lista.
   default_timeframes:
     - "1m"
     - "5m"
@@ -308,10 +309,10 @@ patterns:
   lifecycle:
     enabled: true                 # Ejecuta el pipeline al iniciar la API
     check_interval_seconds: 5     # Intervalo mínimo de validación (s)
-    polling_checks_per_candle: 60 # Validaciones por vela (1h->60s, 1d->1440s)
+    polling_checks_per_candle: 60 # Validaciones por vela (15m->15s, 1h->60s, 1d->1440s)
     max_patterns_per_symbol: 50   # Máximo de patrones por símbolo
-    timeframes: ["1h", "1d"]  # Timeframes del pipeline
     candle_limit: 500             # Velas por símbolo en cada ciclo
+    # Los timeframes se configuran en market.default_timeframes
     max_price_deviation: 0.20     # Máx. desviación del cierre del pipeline vs. velas de trabajo
     max_bar_deviation: 0.50       # Máx. salto del último cierre vs. barra previa para descartar
                                   # una barra final corrupta (guardia de cruce de pares)
@@ -323,9 +324,10 @@ patterns:
 
 #### Cadencia de validación y descargas
 
-- El scheduler crea **una tarea por símbolo × timeframe**. Su intervalo es
+- El scheduler crea **una tarea por símbolo × timeframe**, tomando los timeframes de
+  `market.default_timeframes`. Su intervalo es
   `max(check_interval_seconds, vela / polling_checks_per_candle)`:
-  `1h`→60s, `1d`→1440s (con los valores por defecto).
+  `15m`→15s, `1h`→60s, `1d`→1440s (con los valores por defecto).
 - El pipeline **solo descarga datos cuando se espera una vela nueva**: guarda
   el timestamp de la última vela por (símbolo, timeframe) y salta la descarga
   mientras la vela actual siga abierta. La detección/revalidación continúa
@@ -453,6 +455,15 @@ ml:
       dropout: 0.2
 ```
 
+Los modelos de `ml.model_path` se indexan por **símbolo + timeframe**:
+`{model_name}_{symbol}_{tf}.{ext}` más su sidecar `{model_name}_{symbol}_{tf}.meta.json`,
+con `{tf}` canónico (`1h`, `15m`, `1d`). El `ScoringEngine` resuelve el modelo
+exacto del par que evalúa, de modo que un modelo entrenado en `1h` no se aplica
+a señales de `15m`. Un sidecar sin clave `timeframe` se ignora; si no hay modelo
+del par se usa el fallback genérico (cualquier `*.pkl` sin sidecar). Los
+timeframes que el pipeline ejecuta son los de `market.default_timeframes`. Ver
+[MODEL_TRAINING.md](MODEL_TRAINING.md).
+
 ---
 
 ## Variables de Entorno
@@ -536,7 +547,7 @@ if settings.telegram.enabled:
 else:
     print("Telegram deshabilitado")
 
-# Obtener timeframes
+# Obtener timeframes del pipeline
 timeframes = settings.market.default_timeframes
 print(f"Timeframes: {timeframes}")
 
@@ -620,8 +631,12 @@ Si no se especifica un valor, se usa el default:
 | server | port | 8000 |
 | server | workers | 4 |
 | database | pool_size | 20 |
+| market | default_timeframes | ["1m", "5m", "15m", "1h", "4h", "1d"] |
 | risk | max_risk_per_trade | 0.02 |
 | scoring | min_score_to_send | 95 |
+
+> `market.default_timeframes` es la **única** lista de timeframes del pipeline.
+> No existe un override en `patterns.lifecycle`.
 
 ---
 

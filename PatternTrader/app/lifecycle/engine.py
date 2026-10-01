@@ -56,7 +56,7 @@ class LifecycleEngine:
         """Invalida lifecycles activos cuyo timeframe ya no forma parte del pipeline.
 
         Evita que patrones persistidos de timeframes retirados de la configuración
-        (p. ej. ``4h``/``15m`` tras un cambio de ``patterns.lifecycle.timeframes``)
+        (p. ej. ``4h``/``15m`` tras un cambio de ``market.default_timeframes``)
         queden activos para siempre sin que ninguna tarea los vuelva a evaluar.
         """
         count = 0

@@ -236,17 +236,58 @@ class TestEvaluateAndSave:
             hyperparams={"random_forest": {"n_estimators": 10, "max_depth": 3}},
         )
         winner = select_winner(summary, "roc_auc")
-        artifact, sidecar = save_winner(trained, winner, str(tmp_path), "USDCAD", metric="roc_auc")
+        artifact, sidecar = save_winner(
+            trained, winner, str(tmp_path), "USDCAD", metric="roc_auc", timeframe="1h"
+        )
 
-        assert artifact == str(tmp_path / "random_forest_USDCAD.pkl")
-        assert sidecar == str(tmp_path / "random_forest_USDCAD.meta.json")
-        assert (tmp_path / "random_forest_USDCAD.pkl").exists()
-        assert (tmp_path / "random_forest_USDCAD.meta.json").exists()
+        assert artifact == str(tmp_path / "random_forest_USDCAD_1h.pkl")
+        assert sidecar == str(tmp_path / "random_forest_USDCAD_1h.meta.json")
+        assert (tmp_path / "random_forest_USDCAD_1h.pkl").exists()
+        assert (tmp_path / "random_forest_USDCAD_1h.meta.json").exists()
 
-        meta = json.loads((tmp_path / "random_forest_USDCAD.meta.json").read_text())
+        meta = json.loads((tmp_path / "random_forest_USDCAD_1h.meta.json").read_text())
         assert meta["model_name"] == "random_forest"
         assert meta["symbol"] == "USDCAD"
         assert meta["extension"] == ".pkl"
+        assert meta["timeframe"] == "1h"
+
+    def test_save_winner_canonicalizes_timeframe(self, tmp_path):
+        X, y = _make_matrix(n=120)
+        summary, trained = run_comparison(
+            X[:90],
+            y[:90],
+            X[90:],
+            y[90:],
+            model_names=["random_forest"],
+            hyperparams={"random_forest": {"n_estimators": 10, "max_depth": 3}},
+        )
+        winner = select_winner(summary, "roc_auc")
+
+        artifact, sidecar = save_winner(
+            trained, winner, str(tmp_path), "USDCAD", metric="roc_auc", timeframe="H1"
+        )
+
+        assert Path(artifact).name == "random_forest_USDCAD_1h.pkl"
+        assert Path(sidecar).name == "random_forest_USDCAD_1h.meta.json"
+        assert json.loads(Path(sidecar).read_text())["timeframe"] == "1h"
+
+    def test_save_winner_without_timeframe_keeps_legacy_name(self, tmp_path):
+        X, y = _make_matrix(n=120)
+        summary, trained = run_comparison(
+            X[:90],
+            y[:90],
+            X[90:],
+            y[90:],
+            model_names=["random_forest"],
+            hyperparams={"random_forest": {"n_estimators": 10, "max_depth": 3}},
+        )
+        winner = select_winner(summary, "roc_auc")
+        artifact, sidecar = save_winner(trained, winner, str(tmp_path), "USDCAD", metric="roc_auc")
+
+        assert Path(artifact).name == "random_forest_USDCAD.pkl"
+        assert Path(sidecar).name == "random_forest_USDCAD.meta.json"
+        # Sin timeframe el sidecar no es resoluble por par.
+        assert json.loads(Path(sidecar).read_text())["timeframe"] is None
 
     def test_save_summary_json(self, tmp_path):
         summary = pd.DataFrame([{"model": "random_forest", "status": "ok", "roc_auc": 0.7}])
@@ -277,9 +318,12 @@ class TestTrainAndCompareCLI:
 
         assert derive_symbol("USDCAD_H1_201005311000_202606010000.txt") == "USDCAD"
         assert derive_symbol("USDJPYX_1h_730d.txt") == "USDJPYX"
-        assert derive_timeframe("USDCAD_H1_201005311000_202606010000.txt") == "H1"
+        # La convención letra-primero de los ficheros antiguos se canonicaliza,
+        # porque el modelo se indexa por timeframe canónico.
+        assert derive_timeframe("USDCAD_H1_201005311000_202606010000.txt") == "1h"
         assert derive_timeframe("USDJPYX_1h_730d.txt") == "1h"
-        assert derive_timeframe("BTCUSDT.csv") == "H1"
+        assert derive_timeframe("USDCAD_M15_data.txt") == "15m"
+        assert derive_timeframe("BTCUSDT.csv") == "1h"
 
     def test_main_runs_without_saving(self, tmp_path):
         from train_and_compare import main
@@ -344,8 +388,8 @@ class TestTrainAndCompareCLI:
         )
 
         models_dir = tmp_path / "models"
-        assert (models_dir / "random_forest_USDCAD.pkl").exists()
-        assert (models_dir / "random_forest_USDCAD.meta.json").exists()
+        assert (models_dir / "random_forest_USDCAD_1h.pkl").exists()
+        assert (models_dir / "random_forest_USDCAD_1h.meta.json").exists()
         assert (models_dir / "USDCAD_comparison.json").exists()
 
 
@@ -477,8 +521,8 @@ class TestDBRegistration:
             ]
         )
 
-        assert (models_dir / "random_forest_USDCAD.pkl").exists()
-        assert (models_dir / "random_forest_USDCAD.meta.json").exists()
+        assert (models_dir / "random_forest_USDCAD_1h.pkl").exists()
+        assert (models_dir / "random_forest_USDCAD_1h.meta.json").exists()
 
     @pytest.mark.asyncio
     async def test_summary_survives_db_failure(self, sync_db, monkeypatch, tmp_path):
@@ -745,7 +789,7 @@ class TestTrainAndCompareCLIFase2:
             )
         )
 
-        meta = json.loads((models_dir / "random_forest_USDCAD.meta.json").read_text())
+        meta = json.loads((models_dir / "random_forest_USDCAD_1h.meta.json").read_text())
         assert "final_test_metrics" in meta
         assert {"roc_auc", "pr_auc", "accuracy"} <= set(meta["final_test_metrics"])
 

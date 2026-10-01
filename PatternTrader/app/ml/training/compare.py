@@ -18,9 +18,11 @@ from sklearn.metrics import (
 )
 
 from app.core.config import Settings
+from app.core.constants.market import normalize_timeframe
 from app.core.logger import get_logger
 from app.ml.base import BaseMLModel
 from app.ml.factory import MLModelFactory
+from app.ml.naming import model_artifact_name, scaler_name, sidecar_name
 from app.ml.training.data import SEQUENCE_MODELS, format_for_model
 from app.ml.training.scaling import (
     SCALER_SIDECAR_STEM,
@@ -877,11 +879,16 @@ def save_winner(
     metric: str = "roc_auc",
     final_test_metrics: dict[str, float] | None = None,
     sidecar_context: dict[str, Any] | None = None,
+    timeframe: str | None = None,
 ) -> tuple[str, str]:
     """Persiste el artefacto ganador con nomenclatura por par y su sidecar.
 
-    Nombres: ``{modelo}_{symbol}{ext}`` + ``{modelo}_{symbol}.meta.json``
+    Nombres: ``{modelo}_{symbol}_{tf}{ext}`` + ``{modelo}_{symbol}_{tf}.meta.json``
     (el sidecar permite al ScoringEngine rehidratar el modelo del par sin DB).
+    El sufijo de timeframe es lo que permite que un mismo símbolo tenga un modelo
+    distinto por timeframe. Si ``timeframe`` es ``None`` se omite el sufijo y se
+    conserva la nomenclatura legacy ``{modelo}_{symbol}{ext}``, que el
+    ScoringEngine ignora (resolución estricta: sin timeframe no hay modelo).
     Si se pasan ``final_test_metrics`` (evaluación única sobre TEST FINAL,
     FASE 2) quedan registrados en el sidecar con fines de trazabilidad.
 
@@ -891,14 +898,20 @@ def save_winner(
     fusiona en el ``.meta.json``. Un modelo existente con scaler puede
     sobreescribir el bloque ``preprocessing`` con el artefacto reproducible del
     FASE 4.
+
+    El ``timeframe`` se canonicaliza con ``normalize_timeframe`` y se escribe en
+    el sidecar DESPUÉS de fusionar ``sidecar_context``, para que el valor real
+    gane sobre cualquier placeholder del contexto.
     """
     model_name = winner["model"]
     model = trained.get(model_name)
     if model is None:
         raise ValueError(f"No hay instancia entrenada para {model_name}")
 
+    canonical_tf = normalize_timeframe(timeframe) if timeframe else ""
+
     ext = MODEL_EXTENSIONS[model_name]
-    artifact = Path(save_dir) / f"{model_name}_{symbol}{ext}"
+    artifact = Path(save_dir) / model_artifact_name(model_name, symbol, canonical_tf, ext)
     artifact.parent.mkdir(parents=True, exist_ok=True)
     model.save(str(artifact))
 
@@ -927,7 +940,10 @@ def save_winner(
     # base que coincidan con el bloque de contexto.
     if sidecar_context:
         meta.update(sidecar_context)
-    sidecar = Path(save_dir) / f"{model_name}_{symbol}.meta.json"
+    # El timeframe canónico se fija DESPUÉS de la fusión: ``sidecar_context``
+    # puede traer un placeholder ``timeframe: None`` que no debe ganar.
+    meta["timeframe"] = canonical_tf or None
+    sidecar = Path(save_dir) / sidecar_name(model_name, symbol, canonical_tf)
 
     # FASE 4 — Persistir el preprocessing reproducible. Si el ganador lleva un
     # scaler (mode=standard, fit TRAIN_ONLY) se guarda su artefacto JSON y se
@@ -937,7 +953,9 @@ def save_winner(
     scaler = getattr(model, "_scaler", None)
     feature_names = list(getattr(model, "_feature_names", []) or [])
     if scaler is not None and feature_names:
-        scaler_path = Path(save_dir) / f"{model_name}_{symbol}.{SCALER_SIDECAR_STEM}.json"
+        scaler_path = Path(save_dir) / scaler_name(
+            model_name, symbol, canonical_tf, SCALER_SIDECAR_STEM
+        )
         scaler_path.parent.mkdir(parents=True, exist_ok=True)
         scaler_path.write_text(
             json.dumps(scaler_to_artifact(scaler, feature_names), indent=2, default=str)

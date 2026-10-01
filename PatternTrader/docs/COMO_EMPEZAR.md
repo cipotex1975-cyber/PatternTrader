@@ -158,10 +158,19 @@ Más detalle y respuestas de ejemplo en [API.md](API.md).
 > defecto (usa `?data_source=all` para verlas).
 
 > **Cadencia de validación**: el scheduler crea una tarea por símbolo ×
-> timeframe. Cada tarea valida `vela / polling_checks_per_candle` (`1h`→60s,
-> `4h`→240s por defecto) y el pipeline **solo descarga datos cuando hay una
-> vela nueva**, reutilizando la caché entre ciclos. Ajustable en
-> `patterns.lifecycle` de `config/settings.yaml` (ver [CONFIGURATION.md](CONFIGURATION.md)).
+> timeframe, tomando los timeframes de `market.default_timeframes` en
+> `config/settings.yaml`. Cada tarea valida `vela /
+> polling_checks_per_candle` (`15m`→15s, `1h`→60s, `4h`→240s por defecto) y el
+> pipeline **solo descarga datos cuando hay una vela nueva**, reutilizando la
+> caché entre ciclos. El intervalo se ajusta con
+> `patterns.lifecycle.polling_checks_per_candle` (ver
+> [CONFIGURATION.md](CONFIGURATION.md)).
+>
+> Al arrancar, el log muestra la lista activa:
+> `PatternService started: 2 symbols x 1 timeframes ['15m']`, seguida de las
+> líneas `Added interval task: pattern_pipeline_<símbolo>_<timeframe>`. Si cambiaste
+> los timeframes, los lifecycles activos de los retirados se invalidan
+> automáticamente.
 
 ---
 

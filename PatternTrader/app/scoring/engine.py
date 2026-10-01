@@ -7,12 +7,14 @@ from typing import Any, Iterable
 import numpy as np
 
 from app.core.config.settings import get_settings
+from app.core.constants.market import normalize_timeframe
 from app.core.logger import get_logger
 from app.market.candles.models import Candle
 from app.ml.base import BaseMLModel
 from app.ml.factory import MLModelFactory
 from app.ml.features import extract_technical_features, features_to_dict
 from app.ml.models.random_forest import RandomForestModel
+from app.ml.naming import model_artifact_name, scaler_name
 from app.ml.training.scaling import SCALER_SIDECAR_STEM, load_scaler_sidecar
 from app.patterns.base_pattern import PatternResult
 from app.scoring.models import ScoreComponent, ScoreResult
@@ -25,28 +27,36 @@ class ScoringEngine:
         settings = get_settings()
         self._weights = settings.scoring.weights
         self._ml_model: BaseMLModel | None = None
-        self._symbol_models: dict[str, BaseMLModel] = {}
+        self._key_models: dict[tuple[str, str], BaseMLModel] = {}
         self._knowledge: Any = None
         self._model_path = model_path or settings.ml.model_path
         self._load_ml_model(self._model_path)
 
     def active_models(self) -> dict[str, str]:
-        """Devuelve {símbolo: nombre del modelo ML} cargados por par.
+        """Devuelve ``{clave_par: nombre del modelo ML}`` cargados.
 
-        Útil para reportes (p.ej. ``simulate_pipeline.py``) y para saber qué
-        modelo entrenado con ``train_and_compare.py`` se está usando en vivo.
+        La clave es ``"<símbolo>:<timeframe>"`` canónicos, porque un mismo símbolo
+        puede tener un modelo distinto por timeframe. Útil para reportes (p.ej.
+        ``simulate_pipeline.py``) y para saber qué modelo entrenado con
+        ``train_and_compare.py`` se está usando en vivo.
         """
-        return {symbol: model.name for symbol, model in self._symbol_models.items()}
+        return {
+            f"{symbol}:{timeframe}": model.name
+            for (symbol, timeframe), model in self._key_models.items()
+        }
 
-    def ensure_models(self, symbols: Iterable[str]) -> dict[str, str]:
-        """Precarga (y cachea) los modelos por par de los símbolos indicados.
+    def ensure_models(self, symbols: Iterable[str], timeframe: str | None = None) -> dict[str, str]:
+        """Precarga (y cachea) los modelos del par de los símbolos indicados.
 
-        Devuelve ``{symbol: model_name}`` para cada símbolo con un modelo
+        Devuelve ``{clave_par: model_name}`` para cada símbolo con un modelo
         entrenado disponible en ``model_path``; los símbolos sin modelo se
         omiten. Evita el coste de carga diferida en la primera predicción.
+        ``timeframe`` es obligatorio para resolver por par: sin él solo se
+        intenta el modelo genérico.
         """
         for symbol in symbols:
-            self._load_ml_model_for_symbol(symbol)
+            if timeframe:
+                self._load_ml_model_for_key(symbol, timeframe)
         return self.active_models()
 
     def attach_knowledge(self, learning_service: Any) -> None:
@@ -61,28 +71,38 @@ class ScoringEngine:
         """Load trained ML model if available.
 
         Carga un modelo genérico (fallback) desde los artefactos ``*.pkl`` que no
-        tengan sidecar por par. Los modelos específicos de símbolo se cargan bajo
-        demanda en ``_load_ml_model_for_symbol``.
+        tengan sidecar por par. Los modelos específicos de par se cargan bajo
+        demanda en ``_load_ml_model_for_key``. El modelo genérico no lleva
+        timeframe, así que sirve para cualquier par: es la red de seguridad
+        cuando no existe un modelo entrenado para ese símbolo+timeframe.
         """
         model_dir = Path(model_path)
         if not model_dir.exists():
             logger.warning(f"ML model directory not found: {model_dir}")
             return
 
-        per_symbol: set[str] = set()
+        per_key: set[str] = set()
         for meta_file in model_dir.glob("*.meta.json"):
             try:
                 meta = json.loads(meta_file.read_text())
                 model_name = meta.get("model_name")
                 symbol = meta.get("symbol")
-                ext = meta.get("extension", ".pkl")
-                if model_name and symbol:
-                    per_symbol.add(f"{model_name}_{symbol}{ext}")
+                if not model_name or not symbol:
+                    continue
+                # Se reconstruye el nombre del artefacto con la misma convención
+                # que lo guardó, timeframe incluido: si no, el modelo por par
+                # acabaría sirviendo como genérico.
+                sidecar_tf = meta.get("timeframe")
+                per_key.add(
+                    model_artifact_name(
+                        model_name, symbol, sidecar_tf, meta.get("extension", ".pkl")
+                    )
+                )
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"Sidecar ilegible {meta_file}: {e}")
 
         for model_file in model_dir.glob("*.pkl"):
-            if model_file.name in per_symbol:
+            if model_file.name in per_key:
                 continue
             try:
                 self._ml_model = RandomForestModel()
@@ -92,24 +112,31 @@ class ScoringEngine:
             except Exception as e:
                 logger.error(f"Failed to load model {model_file}: {e}")
 
-    def _load_ml_model_for_symbol(self, symbol: str) -> BaseMLModel | None:
-        """Carga (y cachea) el modelo específico de un par usando su sidecar.
+    def _load_ml_model_for_key(self, symbol: str, timeframe: str) -> BaseMLModel | None:
+        """Carga (y cachea) el modelo del par ``(símbolo, timeframe)``.
 
-        El sidecar ``{modelo}_{symbol}.meta.json`` identifica la clase del
-        artefacto para rehidratarlo correctamente sin depender de la DB.
-        Cuando coexisten varios candidatos para el mismo símbolo (p.ej. tras
-        reentrenamientos con distintos ganadores) se prioriza el más reciente
-        por ``trained_at`` y, si falla su carga, se degrada al siguiente.
+        Busca el sidecar ``{modelo}_{symbol}_{tf}.meta.json`` cuyo timeframe
+        canónico coincida exactamente con el de la señal, rehidrata la clase del
+        artefacto con ``MLModelFactory.create_new`` y cachea la instancia. La
+        resolución es **estricta**: un sidecar sin clave ``timeframe`` (nomenclatura
+        anterior a la indexación por timeframe) no se considera, de modo que un
+        modelo entrenado en un timeframe no se aplica a otro.
+
+        Cuando coexisten varios candidatos para el mismo par (p.ej. tras
+        reentrenamientos con distintos ganadores) se prioriza el más reciente por
+        ``trained_at`` y, si falla su carga, se degrada al siguiente.
         """
-        if symbol in self._symbol_models:
-            return self._symbol_models[symbol]
+        canonical_tf = normalize_timeframe(timeframe)
+        key = (symbol, canonical_tf)
+        if key in self._key_models:
+            return self._key_models[key]
 
         model_dir = Path(self._model_path)
         if not model_dir.exists():
             return None
 
         meta_files = sorted(
-            model_dir.glob(f"*_{symbol}.meta.json"),
+            model_dir.glob(f"*_{symbol}_{canonical_tf}.meta.json"),
             key=self._meta_timestamp,
             reverse=True,
         )
@@ -119,9 +146,17 @@ class ScoringEngine:
         for meta_file in meta_files:
             try:
                 meta = json.loads(meta_file.read_text())
+                # Defensa en profundidad ante símbolos con "_": el glob no puede
+                # desambiguarlos, así que se confirma con el contenido del sidecar.
+                if meta.get("symbol") != symbol:
+                    continue
+                sidecar_tf = meta.get("timeframe")
+                if not sidecar_tf or normalize_timeframe(sidecar_tf) != canonical_tf:
+                    continue
+
                 model_name = meta["model_name"]
                 ext = meta.get("extension", ".pkl")
-                artifact = model_dir / f"{model_name}_{symbol}{ext}"
+                artifact = model_dir / model_artifact_name(model_name, symbol, canonical_tf, ext)
                 model = MLModelFactory.create_new(model_name)
                 model.load(str(artifact))
 
@@ -134,19 +169,24 @@ class ScoringEngine:
                     and preprocessing.get("type") == "StandardScaler"
                     and hasattr(model, "_scaler")
                 ):
-                    scaler_path = model_dir / f"{model_name}_{symbol}.{SCALER_SIDECAR_STEM}.json"
+                    scaler_path = model_dir / scaler_name(
+                        model_name, symbol, canonical_tf, SCALER_SIDECAR_STEM
+                    )
                     if scaler_path.exists():
                         model._scaler = load_scaler_sidecar(str(scaler_path))
                         logger.info(
                             f"Adjuntado scaler de preprocesamiento a {model_name} "
-                            f"para {symbol} (fit {preprocessing.get('fitted_on')})"
+                            f"para {symbol}:{canonical_tf} (fit {preprocessing.get('fitted_on')})"
                         )
 
-                self._symbol_models[symbol] = model
-                logger.info(f"Loaded per-symbol ML model: {model_name} for {symbol}")
+                self._key_models[key] = model
+                logger.info(f"Loaded ML model: {model_name} for {symbol}:{canonical_tf}")
                 return model
             except Exception as e:  # noqa: BLE001
-                logger.error(f"Failed to load per-symbol model for {symbol}: {e}")
+                logger.error(
+                    f"Failed to load ML model for {symbol}:{canonical_tf} "
+                    f"from {meta_file.name}: {e}"
+                )
         return None
 
     @staticmethod
@@ -418,8 +458,8 @@ class ScoringEngine:
             return None
 
         model: BaseMLModel | None = None
-        if pattern is not None and pattern.symbol:
-            model = self._load_ml_model_for_symbol(pattern.symbol)
+        if pattern is not None and pattern.symbol and pattern.timeframe:
+            model = self._load_ml_model_for_key(pattern.symbol, pattern.timeframe)
 
         if model is None:
             model = self._ml_model

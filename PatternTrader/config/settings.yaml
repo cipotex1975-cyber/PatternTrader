@@ -20,11 +20,12 @@ logging:
   trades_retention: "90 days"
 
 market:
+  # Timeframes que el pipeline de patrones ejecuta (una task por símbolo x timeframe).
   default_timeframes:
     #- "1m"
-    - "5m"
-    #- "15m"
-    - "1h"
+    #- "5m"
+    - "15m"
+    #- "1h"
     #- "4h"
     #- "1d"
   default_symbols:
@@ -86,7 +87,7 @@ patterns:
     # Salto máximo (fracción) del último cierre vs la barra anterior para descartar
     # la barra final como corrupta (p. ej. close cruzado de otro símbolo por yfinance).
     max_bar_deviation: 0.50
-    timeframes: ["1h", "1d"]
+    # Los timeframes del pipeline se configuran en market.default_timeframes
     candle_limit: 500
   health:
     recalculate_interval_seconds: 10

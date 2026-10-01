@@ -14,6 +14,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent))
 
 from app.core.config.settings import get_settings  # noqa: E402
+from app.core.constants.market import normalize_timeframe  # noqa: E402
 from app.core.logger import get_logger  # noqa: E402
 from app.ml.training import (  # noqa: E402
     FEATURE_NAMES,
@@ -139,14 +140,21 @@ def derive_symbol(file_path: str) -> str:
 
 
 def derive_timeframe(file_path: str) -> str:
-    """Deriva el timeframe del nombre de archivo (H1, 1h, 4h, 1d...)."""
+    """Deriva el timeframe del nombre de archivo y lo canonicaliza.
+
+    Acepta la convención letra-primero de los ficheros históricos (``H1``,
+    ``M15``, ``D1``) y la de dígitos primero de las descargas nuevas (``1h``,
+    ``15m``), y devuelve siempre la forma canónica en minúsculas. Es necesario
+    porque el pipeline live indexa los modelos ML por timeframe canónico: un
+    modelo etiquetado ``H1`` no casaría nunca con una señal de ``1h``.
+    """
     parts = Path(file_path).stem.split("_")
     if len(parts) >= 2:
         candidate = parts[1]
         lowered = candidate.lower()
         if lowered[0] in ("h", "m", "d", "w") or lowered[-1] in ("h", "m", "d", "w"):
-            return candidate
-    return "H1"
+            return normalize_timeframe(candidate)
+    return "1h"
 
 
 async def register_in_db(
@@ -295,7 +303,14 @@ async def main(argv: list[str] | None = None) -> None:
     parser.add_argument("data_file", type=str, help="Archivo OHLCV tab-delimited (MT4/MT5)")
     parser.add_argument("--symbol", type=str, default=None, help="Símbolo (derivado del archivo)")
     parser.add_argument(
-        "--timeframe", type=str, default=None, help="Timeframe (derivado del archivo)"
+        "--timeframe",
+        type=str,
+        default=None,
+        help=(
+            "Timeframe de los datos (derivado del archivo si se omite). Se canonicaliza: "
+            "H1 y 1h equivalen. Indexa el modelo guardado, de modo que un símbolo admite "
+            "un modelo por timeframe"
+        ),
     )
     parser.add_argument(
         "--model",
@@ -722,6 +737,7 @@ async def main(argv: list[str] | None = None) -> None:
             selection_metric=args.metric,
             selection_dataset=("walk-forward" if walk_forward else "validation"),
             random_seed=args.seed,
+            timeframe=timeframe,
         )
         artifact_path, _ = save_winner(
             trained,
@@ -731,6 +747,7 @@ async def main(argv: list[str] | None = None) -> None:
             metric=args.metric,
             final_test_metrics=final_metrics or None,
             sidecar_context=sidecar_context,
+            timeframe=timeframe,
         )
         print(f"\nArtefacto guardado: {artifact_path}")
         summary_path = save_summary(summary, save_dir, symbol)

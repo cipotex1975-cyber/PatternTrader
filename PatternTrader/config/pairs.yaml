@@ -48,9 +48,9 @@ pairs:
         sl_method: flag_high
         sl_buffer: 0.002
     exclude:
-      - double_top                     # 35% WR, -$11,681
-      - inverse_head_and_shoulders     # 47.6% WR, -$3,867
-      - bull_flag                      # 0% WR (2 trades)
+      #- double_top                     # 35% WR, -$11,681
+      #- inverse_head_and_shoulders     # 47.6% WR, -$3,867
+      #- bull_flag                      # 0% WR (2 trades)
 
   USDJPY:
     timeframe: H1

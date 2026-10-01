@@ -227,7 +227,6 @@ class PatternLifecycleSettings(BaseSettings):
     max_patterns_per_symbol: int = 50
     max_price_deviation: float = 0.20
     max_bar_deviation: float = 0.50
-    timeframes: list[str] = ["1h", "1d"]
     candle_limit: int = 1200
 
 

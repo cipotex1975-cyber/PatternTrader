@@ -672,6 +672,12 @@ models/
     └── rf_v2_metrics.json
 ```
 
+Estos son nombres libres: `save()`/`load()` reciben la ruta explícita. La
+nomenclatura que el `ScoringEngine` resuelve automáticamente es otra, y la
+produce `train_and_compare.py`: `{model_name}_{symbol}_{tf}.{ext}` más su
+sidecar `{model_name}_{symbol}_{tf}.meta.json`, indexada por símbolo **y**
+timeframe. Ver [MODEL_TRAINING.md](MODEL_TRAINING.md).
+
 ### Metadatos del Modelo
 
 ```json

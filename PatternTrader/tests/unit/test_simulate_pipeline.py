@@ -73,7 +73,7 @@ async def test_memory_simulation_replays_and_detects(tmp_path):
     assert report["events"]["PATTERN_DETECTED"] >= 1
     assert "double_top" in report["patterns_by_type"]
     assert report["symbol"] == "USDCAD"
-    assert report["timeframe"] == "H1"
+    assert report["timeframe"] == "1h"
 
 
 @pytest.mark.asyncio
@@ -93,4 +93,5 @@ async def test_per_symbol_ml_model_loaded(tmp_path):
         model_dir=str(model_dir),
     )
 
-    assert report["ml_models"] == {"USDCAD": "random_forest"}
+    # La clave del reporte es "símbolo:timeframe" porque el modelo se indexa por par.
+    assert report["ml_models"] == {"USDCAD:1h": "random_forest"}

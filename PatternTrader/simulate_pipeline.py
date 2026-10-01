@@ -217,7 +217,7 @@ async def run_simulation(
         start_time = time.monotonic()
         last_log = start_time
 
-        ml_models = pipeline.scoring.ensure_models([symbol])
+        ml_models = pipeline.scoring.ensure_models([symbol], timeframe=timeframe)
 
         stats = await pipeline.process_symbol(symbol, timeframe, candles=window)
         ticks = 1
@@ -297,13 +297,13 @@ def _format_report(report: dict[str, Any]) -> str:
     )
 
     if report["ml_models"]:
-        lines.append("Modelos ML por símbolo:")
-        for sym, name in sorted(report["ml_models"].items()):
-            lines.append(f"  {sym}: {name}")
+        lines.append("Modelos ML por par (símbolo:timeframe):")
+        for key, name in sorted(report["ml_models"].items()):
+            lines.append(f"  {key}: {name}")
     else:
         lines.append(
-            "Modelos ML por símbolo: ninguno cargado (fallback neutro). "
-            "Entrena con `train_and_compare.py` para el par."
+            "Modelos ML por par: ninguno cargado (fallback neutro). "
+            "Entrena con `train_and_compare.py` para el símbolo y timeframe."
         )
 
     lines.append("")

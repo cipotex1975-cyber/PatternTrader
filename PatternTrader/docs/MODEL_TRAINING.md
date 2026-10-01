@@ -133,11 +133,14 @@ probability = model.predict_proba(features)
 
 ### Uso en ScoringEngine
 
-El `ScoringEngine` en `app/scoring/engine.py` carga automáticamente el modelo ML **específico del símbolo** que se está evaluando:
+El `ScoringEngine` en `app/scoring/engine.py` carga automáticamente el modelo ML **específico del símbolo y del timeframe** que se está evaluando:
 
-1. **Carga por par** (`_load_ml_model_for_symbol`): busca el sidecar `*_{symbol}.meta.json` en `ml.model_path`, rehidrata la clase del artefacto con `MLModelFactory.create_new` y cachea la instancia. Si existen varios candidatos para el símbolo, prioriza el más reciente por `trained_at`.
-2. **Fallback genérico**: si no hay modelo del par, usa el primer artefacto `*.pkl` sin sidecar por par (modelo estático).
-3. **Aprendizaje continuo**: si `attach_knowledge` conectó un `LearningService` entrenado, ese modelo tiene prioridad sobre el por-par.
+1. **Carga por par** (`_load_ml_model_for_key`): busca el sidecar `*_{symbol}_{tf}.meta.json` en `ml.model_path`, rehidrata la clase del artefacto con `MLModelFactory.create_new` y cachea la instancia en `{(symbol, tf): modelo}`. Si existen varios candidatos para el mismo par, prioriza el más reciente por `trained_at` y degrada al siguiente si su artefacto falla al cargar. El sidecar se valida además por contenido (`meta["symbol"]`, `meta["timeframe"]`), para desambiguar símbolos que contengan `_`.
+2. **Resolución estricta**: un sidecar **sin** clave `timeframe` (nomenclatura anterior a la indexación por timeframe) se **ignora**. Un modelo entrenado en `1h` no se aplica a una señal de `15m`. Para tener modelo por par hay que entrenar con el timeframe del pipeline.
+3. **Fallback genérico**: si no hay modelo del par, usa el primer artefacto `*.pkl` sin sidecar por par (modelo estático). Al no llevar timeframe, sirve para cualquier par: es la red de seguridad cuando falta el modelo de ese símbolo+timeframe.
+4. **Aprendizaje continuo**: si `attach_knowledge` conectó un `LearningService` entrenado, ese modelo tiene prioridad sobre el por-par.
+
+Los timeframes se **canonicalizan** con `normalize_timeframe` (`app/core/constants/market.py`), que admite tanto la convención de dígitos primero del pipeline (`15m`, `1h`, `1d`) como la letra primero de los ficheros OHLCV y de `config/pairs.yaml` (`H1`, `M15`, `D1`). `H1` y `1h` producen el mismo artefacto y resuelven el mismo modelo; el mes (`1M`, `MN1`) no se confunde con el minuto (`1m`).
 
 ```python
 from app.scoring.engine import ScoringEngine
@@ -147,6 +150,12 @@ engine = ScoringEngine()
 
 # Directorio alternativo (útil para testing/despliegue)
 engine = ScoringEngine(model_path="/ruta/a/models/")
+
+# Precarga explícita: el timeframe es necesario para resolver por par
+engine.ensure_models(["USDCAD"], timeframe="1h")
+
+# Claves de active_models(): "símbolo:timeframe"
+engine.active_models()   # {'USDCAD:1h': 'random_forest', 'USDCAD:15m': 'lstm'}
 ```
 
 ---
@@ -227,7 +236,7 @@ Implementado a partir del plan de mejoras (`docs/gap_mejoraS_ml.md`), este scrip
 1. **Soporte Multi-Modelo**: Evalúa en una misma corrida modelos tabulares (`random_forest`, `xgboost`, `lightgbm`, `catboost`), secuenciales (`lstm`, `transformer`, `cnn`) y de anomalías (`isolation_forest`, `autoencoder`).
 2. **Separación Cronológica**: Divide los datos respetando el orden temporal sin mezclar (`shuffle=False`).
 3. **Métricas Profesionales**: Compara Accuracy, Precision, Recall, F1-Score, ROC-AUC y PR-AUC.
-4. **Selección y Persistencia por Par**: Identifica automáticamente el mejor modelo según la métrica objetivo (ej. `--metric roc_auc`) y guarda el artefacto ganador en `models/` con sufijo de par (`{model_name}_{symbol}.{ext}`) junto a un archivo sidecar de metadatos (`.meta.json`).
+4. **Selección y Persistencia por Par**: Identifica automáticamente el mejor modelo según la métrica objetivo (ej. `--metric roc_auc`) y guarda el artefacto ganador en `models/` indexado por símbolo **y timeframe** (`{model_name}_{symbol}_{tf}.{ext}`) junto a un archivo sidecar de metadatos (`{model_name}_{symbol}_{tf}.meta.json`). El sufijo `{tf}` es el timeframe canónico (`1h`, `15m`, `1d`): un mismo símbolo admite un modelo distinto por timeframe. Si se entrena sin `--timeframe` y el nombre del fichero no lo aporta, se deriva de él.
 5. **Integración con DB y Scoring**: Con la bandera `--db` registra el modelo ganador en la base de datos (`ml_models`) como INACTIVO (Fase 11); para activarlo se debe usar `--db --promote`. El `ScoringEngine` utiliza automáticamente este sidecar para rehidratar el modelo específico del activo en tiempo de ejecución.
 
 ### Ejemplo de Uso
@@ -241,6 +250,16 @@ python train_and_compare.py app/datos_test/USDCAD_H1_201005311000_202606010000.t
   --db
 ```
 
+El timeframe se deriva del nombre del fichero (`H1` → `1h`) o se fija con `--timeframe`. Fíjalo explícitamente cuando el nombre no sea concluyente o quieras desacoplar el etiquetado del fichero:
+
+```bash
+# Un modelo por timeframe para el mismo símbolo
+python train_and_compare.py datos/USDCAD_15m.txt --model all --metric roc_auc --timeframe 15m
+python train_and_compare.py datos/USDCAD_H1.txt  --model all --metric roc_auc --timeframe 1h
+```
+
+Ambos escriben artefactos distintos (`*_USDCAD_15m.*` y `*_USDCAD_1h.*`) y conviven sin sobrescribirse. Los timeframes que se ejecuten en el pipeline deben estar en `market.default_timeframes` (`config/settings.yaml`); los sidecars sin clave `timeframe` no los usa el `ScoringEngine`.
+
 ### Parámetros Principales
 
 | Parámetro | Default | Descripción |
@@ -248,6 +267,7 @@ python train_and_compare.py app/datos_test/USDCAD_H1_201005311000_202606010000.t
 | `data_file` | (requerido) | Ruta al archivo de datos OHLCV (tab-delimited) |
 | `--model` | `all` | Modelo(s) a entrenar o `all` |
 | `--metric` | `roc_auc` | Métrica objetivo (`accuracy`, `precision`, `recall`, `f1`, `roc_auc`, `pr_auc`) |
+| `--timeframe` | derivado del fichero | Timeframe de los datos; se canonicaliza (`H1` ≡ `1h`). Indexa el artefacto guardado (`{modelo}_{symbol}_{tf}.*`), de modo que un símbolo admite un modelo por timeframe. Si se omite, se deriva del nombre del fichero y el default es `1h` |
 | `--forward-periods` | 5 | Velas hacia adelante para etiquetado |
 | `--threshold` | 0.001 | Retorno mínimo para label positivo |
 | `--sequence-length` | 30 | Longitud de ventana temporal para modelos secuenciales |
@@ -283,7 +303,7 @@ La infraestructura de preprocessing reproducible está integrada en `train_and_c
 - **Flag** `--feature-scaling {none|standard}` (default `none`). Con `standard` se aplica un `StandardScaler` cuyo `fit` se hace **exclusivamente con TRAIN**; VALIDATION y TEST usan únicamente `scaler.transform()` (sin leakage). Con `none` las matrices pasan intactas (default de producción, respeta la conclusión de la Fase 3.2).
 - **Orden documentado**: `raw features → scaler.transform → build sequences → model` (el scaling se aplica antes de construir las ventanas).
 - **Modelos a los que aplica**: sensibles (LSTM, CNN, Transformer, AutoEncoder). No se fuerza en Random Forest, XGBoost, LightGBM ni CatBoost.
-- **Persistencia**: al entrenar con `standard`, el ganador guarda un artefacto `{modelo}_{symbol}.scaler.json` y el sidecar `*.meta.json` registra un bloque `preprocessing`:
+- **Persistencia**: al entrenar con `standard`, el ganador guarda un artefacto `{modelo}_{symbol}_{tf}.scaler.json` y el sidecar `{modelo}_{symbol}_{tf}.meta.json` registra un bloque `preprocessing`:
 
   ```json
   "preprocessing": {

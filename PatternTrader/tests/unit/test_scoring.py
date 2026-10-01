@@ -170,7 +170,7 @@ def _make_matrix(n: int = 120, features: int = 12, seed: int = 3):
     return X, y
 
 
-def _train_and_save_winner(save_dir, symbol, model_name="random_forest"):
+def _train_and_save_winner(save_dir, symbol, timeframe="1h", model_name="random_forest"):
     X, y = _make_matrix(n=120)
     split = 90
     summary, trained = run_comparison(
@@ -182,7 +182,9 @@ def _train_and_save_winner(save_dir, symbol, model_name="random_forest"):
         hyperparams={model_name: {"n_estimators": 20, "max_depth": 4}},
     )
     winner = select_winner(summary, "roc_auc")
-    return save_winner(trained, winner, str(save_dir), symbol, metric="roc_auc")
+    return save_winner(
+        trained, winner, str(save_dir), symbol, metric="roc_auc", timeframe=timeframe
+    )
 
 
 class TestScoringPerSymbolModel:
@@ -191,26 +193,28 @@ class TestScoringPerSymbolModel:
 
         assert Path(artifact).exists()
         assert Path(sidecar).exists()
+        assert Path(artifact).name == "random_forest_USDCAD_1h.pkl"
+        assert Path(sidecar).name == "random_forest_USDCAD_1h.meta.json"
 
         engine = ScoringEngine(model_path=str(tmp_path))
         assert engine._ml_model is None  # sin fallback genérico en este directorio
 
-        model = engine._load_ml_model_for_symbol("USDCAD")
+        model = engine._load_ml_model_for_key("USDCAD", "1h")
         assert model is not None
         assert model.is_trained
         assert model.name == "random_forest"
 
         # Caché: la segunda llamada devuelve la misma instancia.
-        assert engine._load_ml_model_for_symbol("USDCAD") is model
+        assert engine._load_ml_model_for_key("USDCAD", "1h") is model
 
     def test_unknown_symbol_returns_none(self, tmp_path):
         _train_and_save_winner(tmp_path, "USDCAD")
         engine = ScoringEngine(model_path=str(tmp_path))
-        assert engine._load_ml_model_for_symbol("EURUSD") is None
+        assert engine._load_ml_model_for_key("EURUSD", "1h") is None
 
     def test_per_symbol_chooses_newest_sidecar(self, tmp_path):
-        _, sidecar_rf = _train_and_save_winner(tmp_path, "USDCAD", "random_forest")
-        _, sidecar_xgb = _train_and_save_winner(tmp_path, "USDCAD", "xgboost")
+        _, sidecar_rf = _train_and_save_winner(tmp_path, "USDCAD", model_name="random_forest")
+        _, sidecar_xgb = _train_and_save_winner(tmp_path, "USDCAD", model_name="xgboost")
 
         meta_rf = json.loads(Path(sidecar_rf).read_text())
         meta_rf["trained_at"] = "2020-01-01T00:00:00+00:00"
@@ -221,13 +225,13 @@ class TestScoringPerSymbolModel:
         Path(sidecar_xgb).write_text(json.dumps(meta_xgb))
 
         engine = ScoringEngine(model_path=str(tmp_path))
-        model = engine._load_ml_model_for_symbol("USDCAD")
+        model = engine._load_ml_model_for_key("USDCAD", "1h")
         assert model is not None
         assert model.name == "xgboost"
 
     def test_falls_back_when_newest_artifact_missing(self, tmp_path):
-        _, sidecar_rf = _train_and_save_winner(tmp_path, "USDCAD", "random_forest")
-        _, sidecar_xgb = _train_and_save_winner(tmp_path, "USDCAD", "xgboost")
+        _, sidecar_rf = _train_and_save_winner(tmp_path, "USDCAD", model_name="random_forest")
+        _, sidecar_xgb = _train_and_save_winner(tmp_path, "USDCAD", model_name="xgboost")
 
         meta_xgb = json.loads(Path(sidecar_xgb).read_text())
         meta_xgb["trained_at"] = "2026-08-01T00:00:00+00:00"
@@ -239,11 +243,11 @@ class TestScoringPerSymbolModel:
 
         # El artefacto más reciente apunta a un archivo inexistente → degradar.
         Path(sidecar_xgb).parent.joinpath(
-            f"{meta_xgb['model_name']}_USDCAD{meta_xgb['extension']}"
+            f"{meta_xgb['model_name']}_USDCAD_1h{meta_xgb['extension']}"
         ).unlink()
 
         engine = ScoringEngine(model_path=str(tmp_path))
-        model = engine._load_ml_model_for_symbol("USDCAD")
+        model = engine._load_ml_model_for_key("USDCAD", "1h")
         assert model is not None
         assert model.name == "random_forest"
 
@@ -263,4 +267,69 @@ class TestScoringPerSymbolModel:
 
         ml = next(c for c in result.components if c.name == "ml_history")
         assert 0 <= ml.score <= 100
-        assert engine._symbol_models.get("USDCAD") is not None
+        assert engine._key_models.get(("USDCAD", "1h")) is not None
+
+
+class TestScoringPerTimeframeModel:
+    """El modelo se indexa por (símbolo, timeframe) con resolución estricta."""
+
+    def test_sidecar_without_timeframe_is_ignored(self, tmp_path):
+        _train_and_save_winner(tmp_path, "USDCAD", timeframe=None)
+        engine = ScoringEngine(model_path=str(tmp_path))
+
+        # Nomenclatura legacy {modelo}_{symbol}: sin timeframe no hay modelo.
+        assert (tmp_path / "random_forest_USDCAD.meta.json").exists()
+        assert engine._load_ml_model_for_key("USDCAD", "1h") is None
+
+    def test_model_does_not_leak_to_other_timeframe(self, tmp_path):
+        _train_and_save_winner(tmp_path, "USDCAD", timeframe="1h")
+        engine = ScoringEngine(model_path=str(tmp_path))
+
+        assert engine._load_ml_model_for_key("USDCAD", "1h") is not None
+        assert engine._load_ml_model_for_key("USDCAD", "15m") is None
+        assert engine._load_ml_model_for_key("USDCAD", "1d") is None
+
+    def test_two_timeframes_resolve_distinct_artifacts(self, tmp_path):
+        artifact_h, _ = _train_and_save_winner(tmp_path, "USDCAD", timeframe="1h")
+        artifact_m, _ = _train_and_save_winner(tmp_path, "USDCAD", timeframe="15m")
+
+        assert artifact_h != artifact_m
+        engine = ScoringEngine(model_path=str(tmp_path))
+
+        assert engine._load_ml_model_for_key("USDCAD", "1h") is not None
+        assert engine._load_ml_model_for_key("USDCAD", "15m") is not None
+        assert engine._key_models[("USDCAD", "1h")] is not engine._key_models[("USDCAD", "15m")]
+        assert engine.active_models() == {
+            "USDCAD:1h": "random_forest",
+            "USDCAD:15m": "random_forest",
+        }
+
+    def test_letter_prefix_and_canonical_resolve_same_model(self, tmp_path):
+        # Entrada letra-primero (ficheros H1) se guarda canonicalizada como 1h.
+        artifact, sidecar = _train_and_save_winner(tmp_path, "USDCAD", timeframe="H1")
+        assert Path(artifact).name == "random_forest_USDCAD_1h.pkl"
+        assert json.loads(Path(sidecar).read_text())["timeframe"] == "1h"
+
+        engine = ScoringEngine(model_path=str(tmp_path))
+        from_h1 = engine._load_ml_model_for_key("USDCAD", "H1")
+        from_1h = engine._load_ml_model_for_key("USDCAD", "1h")
+
+        assert from_h1 is not None
+        assert from_h1 is from_1h
+        # La caché se indexa por el timeframe canónico, no por el literal de entrada.
+        assert list(engine._key_models) == [("USDCAD", "1h")]
+        assert engine.active_models() == {"USDCAD:1h": "random_forest"}
+
+    def test_sidecar_symbol_must_match_despite_glob(self, tmp_path):
+        # Un símbolo con "_" podría hacer match del glob de otro símbolo.
+        _train_and_save_winner(tmp_path, "USDCAD", timeframe="1h")
+        engine = ScoringEngine(model_path=str(tmp_path))
+
+        assert engine._load_ml_model_for_key("USDCAD_1h", "1h") is None
+
+    def test_ensure_models_without_timeframe_loads_nothing(self, tmp_path):
+        _train_and_save_winner(tmp_path, "USDCAD", timeframe="1h")
+        engine = ScoringEngine(model_path=str(tmp_path))
+
+        assert engine.ensure_models(["USDCAD"]) == {}
+        assert engine.ensure_models(["USDCAD"], timeframe="1h") == {"USDCAD:1h": "random_forest"}

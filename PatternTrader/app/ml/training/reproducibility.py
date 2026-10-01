@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 
+from app.core.constants.market import normalize_timeframe
 from app.core.logger import get_logger
 from app.ml.training.compare import _model_kwargs
 from app.ml.training.data import FEATURE_NAMES, FEATURE_VERSION
@@ -176,15 +177,20 @@ def build_model_sidecar_context(
     selection_metric: str,
     selection_dataset: str,
     random_seed: int | None,
+    timeframe: str | None = None,
 ) -> dict[str, Any]:
     """Construye la metadata completa del sidecar según la FASE 9.
 
     Devuelve un dict de bloques que ``save_winner`` fusiona en el sidecar
     ``.meta.json``. No requiere cambios en los modelos.
+
+    ``timeframe`` se canonicaliza con ``normalize_timeframe`` y queda en la raíz
+    del sidecar: es la clave con la que el ScoringEngine indexa el modelo, así
+    que un mismo símbolo puede tener modelos distintos por timeframe.
     """
     features = feature_names or list(FEATURE_NAMES)
     meta: dict[str, Any] = {
-        "timeframe": None,
+        "timeframe": normalize_timeframe(timeframe) if timeframe else None,
         "dataset": _dataset_block(data_path, ranges, samples_total),
         "features": {
             "names": features,
